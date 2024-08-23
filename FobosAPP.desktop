@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Name=FobosAPP
+Comment=An example Qt application
+Exec=/usr/local/bin/FobosAPP
+Icon=utilities-terminal
+Terminal=false
+Type=Application
+Categories=Utility;
+Name[en_GB]=FobosAPP
