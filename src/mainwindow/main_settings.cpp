@@ -804,6 +804,33 @@ void YourClassName::loadPersistentSettings() {
         waterfallWidget->set3DSpectrumSliceCaptureFixed(waterfall3DSpectrumSliceCaptureFixed);
         waterfallWidget->set3DModifierFreeSliceInput(waterfall3DVncSliceInput);
     }
+    alternativeInterfaceMode =
+        settings.value("ui/alternativeInterfaceMode", alternativeInterfaceMode).toBool();
+    alternativeSpectrumGradientFill =
+        settings.value("ui/alternativeSpectrumGradientFill",
+                       alternativeSpectrumGradientFill).toBool();
+    alternativeSpectrumGradientOpacity =
+        (std::clamp)(settings.value("ui/alternativeSpectrumGradientOpacity",
+                                    alternativeSpectrumGradientOpacity).toInt(),
+                     0,
+                     100);
+    if (alternativeSpectrumGradientCheckbox) {
+        QSignalBlocker blocker(alternativeSpectrumGradientCheckbox);
+        alternativeSpectrumGradientCheckbox->setChecked(alternativeSpectrumGradientFill);
+    }
+    if (alternativeSpectrumGradientOpacitySlider) {
+        QSignalBlocker blocker(alternativeSpectrumGradientOpacitySlider);
+        alternativeSpectrumGradientOpacitySlider->setValue(alternativeSpectrumGradientOpacity);
+    }
+    if (alternativeSpectrumGradientOpacityValueLabel) {
+        alternativeSpectrumGradientOpacityValueLabel->setText(
+            QStringLiteral("%1%").arg(alternativeSpectrumGradientOpacity));
+    }
+    if (waterfallWidget) {
+        waterfallWidget->setAlternativeSpectrumGradientFill(alternativeSpectrumGradientFill);
+        waterfallWidget->setAlternativeSpectrumGradientOpacity(alternativeSpectrumGradientOpacity);
+    }
+    applyAlternativeInterfaceMode();
     experimentalGpuWaterfall = settings.value("ui/experimentalGpuWaterfall", experimentalGpuWaterfall).toBool();
     if (waterfallWidget) {
         waterfallWidget->setRenderBackend(experimentalGpuWaterfall
@@ -1462,6 +1489,9 @@ void YourClassName::savePersistentSettings() {
     settings.setValue("ui/waterfall3DSpectrumSliceCapture", waterfall3DSpectrumSliceCapture);
     settings.setValue("ui/waterfall3DSpectrumSliceCaptureFixed", waterfall3DSpectrumSliceCaptureFixed);
     settings.setValue("ui/waterfall3DVncSliceInput", waterfall3DVncSliceInput);
+    settings.setValue("ui/alternativeInterfaceMode", alternativeInterfaceMode);
+    settings.setValue("ui/alternativeSpectrumGradientFill", alternativeSpectrumGradientFill);
+    settings.setValue("ui/alternativeSpectrumGradientOpacity", alternativeSpectrumGradientOpacity);
     settings.setValue("ui/experimentalGpuWaterfall", experimentalGpuWaterfall);
     settings.setValue("ui/showSpectrumFps", showSpectrumFps);
     settings.setValue("ui/showWaterfallFps", showWaterfallFps);

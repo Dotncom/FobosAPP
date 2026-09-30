@@ -7,6 +7,8 @@
 #include <cmath>
 #include <limits>
 #include <QLabel>
+#include <QLinearGradient>
+#include <QPainterPath>
 
 bool changebit=false;
 
@@ -79,6 +81,7 @@ MyWaterfallWidget::MyWaterfallWidget(QWidget *parent)
       levelMin(-120), levelMax(0), fftLength(32768), initialized(false), secondGraph(false),
       waterfall3DRenderer(std::make_unique<Waterfall3DRenderer>()) {
 		waterfallTexture = 0;
+    setMouseTracking(true);
     fpsOverlayLabel = new QLabel(QStringLiteral("FPS --"), this);
     fpsOverlayLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
     fpsOverlayLabel->setStyleSheet(QStringLiteral(
@@ -98,6 +101,29 @@ MyWaterfallWidget::MyWaterfallWidget(QWidget *parent)
         "QLabel { color: rgb(225, 240, 255); background-color: rgba(0, 0, 0, 190); "
         "padding: 5px 7px; border: 1px solid rgba(120, 210, 255, 120); }"));
     sliceDetailsOverlayLabel->hide();
+    for (QLabel *&label : alternativeDbLabels) {
+        label = new QLabel(this);
+        label->setAttribute(Qt::WA_TransparentForMouseEvents);
+        label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+        label->setStyleSheet(QStringLiteral(
+            "QLabel { color: rgb(220, 238, 242); background-color: rgba(0, 0, 0, 190); "
+            "padding-left: 3px; }") );
+        label->hide();
+    }
+    alternativeMeasurementLabel = new QLabel(this);
+    alternativeMeasurementLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
+    alternativeMeasurementLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    alternativeMeasurementLabel->setStyleSheet(QStringLiteral(
+        "QLabel { color: rgb(220, 238, 255); background-color: rgba(4, 12, 24, 224); "
+        "padding: 0px 7px; border: 1px solid rgba(120, 190, 255, 210); }"));
+    alternativeMeasurementLabel->hide();
+    alternativeHoverLabel = new QLabel(this);
+    alternativeHoverLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
+    alternativeHoverLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    alternativeHoverLabel->setStyleSheet(QStringLiteral(
+        "QLabel { color: rgb(225, 245, 255); background-color: rgba(4, 12, 24, 218); "
+        "padding: 0px 6px; border: 1px solid rgba(120, 210, 255, 170); }"));
+    alternativeHoverLabel->hide();
 }
 
 MyWaterfallWidget::~MyWaterfallWidget() {
@@ -139,7 +165,8 @@ void MyWaterfallWidget::wheelEvent(QWheelEvent *event) {
         event->accept();
         return;
     }
-    if (activeDisplayMode != DisplayMode::Waterfall2D &&
+    if (!alternativeInterfaceMode &&
+        activeDisplayMode != DisplayMode::Waterfall2D &&
         event->modifiers().testFlag(Qt::ControlModifier)) {
         {
             QMutexLocker locker(&mutex);
@@ -198,7 +225,8 @@ void MyWaterfallWidget::mousePressEvent(QMouseEvent *event) {
         event->accept();
         return;
     }
-    if (activeDisplayMode != DisplayMode::Waterfall2D &&
+    if (!alternativeInterfaceMode &&
+        activeDisplayMode != DisplayMode::Waterfall2D &&
         event->button() == Qt::LeftButton &&
         event->modifiers().testFlag(Qt::ControlModifier)) {
         cameraOrbitActive = true;
@@ -207,12 +235,28 @@ void MyWaterfallWidget::mousePressEvent(QMouseEvent *event) {
         event->accept();
         return;
     }
-    if (activeDisplayMode != DisplayMode::Waterfall2D &&
+    if (!alternativeInterfaceMode &&
+        activeDisplayMode != DisplayMode::Waterfall2D &&
         event->button() == Qt::RightButton &&
         event->modifiers().testFlag(Qt::ControlModifier)) {
         cameraPanActive = true;
         cameraPanLastPos = event->pos();
         setCursor(Qt::SizeAllCursor);
+        event->accept();
+        return;
+    }
+    if (alternativeInterfaceMode &&
+        event->button() == Qt::LeftButton &&
+        !sliceModifier &&
+        !event->modifiers().testFlag(Qt::ControlModifier) &&
+        alternativeSpectrumPlotRect().contains(event->pos())) {
+        alternativeSpectrumMeasurementActive = true;
+        alternativeSpectrumMeasurementVisible = true;
+        alternativeSpectrumMeasureStartPos = event->pos();
+        alternativeSpectrumMeasureEndPos = event->pos();
+        alternativeSpectrumHoverVisible = true;
+        alternativeSpectrumHoverPos = event->pos();
+        update();
         event->accept();
         return;
     }
@@ -238,6 +282,17 @@ void MyWaterfallWidget::mousePressEvent(QMouseEvent *event) {
 }
 
 void MyWaterfallWidget::mouseMoveEvent(QMouseEvent *event) {
+    if (alternativeInterfaceMode) {
+        alternativeSpectrumHoverVisible = alternativeSpectrumPlotRect().contains(event->pos());
+        alternativeSpectrumHoverPos = event->pos();
+    }
+    if (alternativeSpectrumMeasurementActive) {
+        alternativeSpectrumMeasurementVisible = true;
+        alternativeSpectrumMeasureEndPos = event->pos();
+        update();
+        event->accept();
+        return;
+    }
     if (cameraPanActive) {
         const QPoint delta = event->pos() - cameraPanLastPos;
         cameraPanLastPos = event->pos();
@@ -278,10 +333,24 @@ void MyWaterfallWidget::mouseMoveEvent(QMouseEvent *event) {
         event->accept();
         return;
     }
+    if (alternativeInterfaceMode) {
+        update();
+    }
     QOpenGLWidget::mouseMoveEvent(event);
 }
 
 void MyWaterfallWidget::mouseReleaseEvent(QMouseEvent *event) {
+    if (event->button() == Qt::LeftButton && alternativeSpectrumMeasurementActive) {
+        alternativeSpectrumMeasureEndPos = event->pos();
+        alternativeSpectrumMeasurementActive = false;
+        if (std::abs(alternativeSpectrumMeasureEndPos.x() -
+                     alternativeSpectrumMeasureStartPos.x()) < 4) {
+            alternativeSpectrumMeasurementVisible = false;
+        }
+        update();
+        event->accept();
+        return;
+    }
     if (spectrumFrameSliceMouseActive && event->button() == Qt::RightButton) {
         {
             QMutexLocker locker(&mutex);
@@ -331,6 +400,8 @@ void MyWaterfallWidget::mouseReleaseEvent(QMouseEvent *event) {
 
 void MyWaterfallWidget::mouseDoubleClickEvent(QMouseEvent *event) {
     if (event->button() == Qt::LeftButton) {
+        alternativeSpectrumMeasurementActive = false;
+        alternativeSpectrumMeasurementVisible = false;
         spectrumPanActive = false;
         spectrumPanButton = Qt::NoButton;
         emit autoTuneRequested(signalCenterNearFrequency(frequencyAtX(event->x())));
@@ -338,6 +409,12 @@ void MyWaterfallWidget::mouseDoubleClickEvent(QMouseEvent *event) {
         return;
     }
     QOpenGLWidget::mouseDoubleClickEvent(event);
+}
+
+void MyWaterfallWidget::leaveEvent(QEvent *event) {
+    alternativeSpectrumHoverVisible = false;
+    update();
+    QOpenGLWidget::leaveEvent(event);
 }
 
 double MyWaterfallWidget::displayFrequencyAtX(int x) const {
@@ -545,6 +622,7 @@ void MyWaterfallWidget::resizeGL(int w, int h) {
             waterfallVbo.release();
         }
         positionInfoOverlays();
+        updateAlternativeDbLabels();
         qDebug() << "resizeGL done";
 }
 
@@ -624,6 +702,7 @@ void MyWaterfallWidget::setData(const std::vector<float> &sourceXData,
                                 double xMax,
                                 int fftLength,
                                 bool secondGraph,
+                                bool colorSpectrum,
                                 float contrast,
                                 float sensitivity,
                                 float levelMin,
@@ -637,6 +716,8 @@ void MyWaterfallWidget::setData(const std::vector<float> &sourceXData,
         this->xMax = xMax;
         this->fftLength = std::max(0, fftLength);
         this->secondGraph = secondGraph;
+        waterfall3DRenderer->setFixedFrontExpanded(alternativeInterfaceMode && !secondGraph);
+        this->colorSpectrum = colorSpectrum;
         this->contrast = contrast;
         this->sensitivity = sensitivity;
         if (std::isfinite(levelMin) && std::isfinite(levelMax) && levelMax > levelMin) {
@@ -916,6 +997,227 @@ void MyWaterfallWidget::set3DModifierFreeSliceInput(bool enabled) {
     modifierFreeSliceInput = enabled;
 }
 
+void MyWaterfallWidget::setAlternativeInterfaceMode(bool enabled) {
+    {
+        QMutexLocker locker(&mutex);
+        alternativeInterfaceMode = enabled;
+        cameraOrbitActive = false;
+        cameraPanActive = false;
+        waterfall3DRenderer->setFixedFrontPresentation(enabled);
+        waterfall3DRenderer->setFixedFrontExpanded(enabled && !secondGraph);
+    }
+    unsetCursor();
+    update();
+}
+
+void MyWaterfallWidget::setAlternativeSpectrumGradientFill(bool enabled) {
+    alternativeSpectrumGradientFill = enabled;
+    update();
+}
+
+void MyWaterfallWidget::updateAlternativeDbLabels() {
+    const bool visible = alternativeInterfaceMode &&
+                         activeDisplayMode != DisplayMode::Waterfall2D &&
+                         !secondGraph && width() >= 120 && height() >= 120;
+    if (!visible) {
+        for (QLabel *label : alternativeDbLabels) {
+            if (label) {
+                label->hide();
+            }
+        }
+        return;
+    }
+
+    const QRect plotRect = alternativeSpectrumPlotRect();
+    constexpr int LabelWidth = 56;
+    constexpr int LabelHeight = 18;
+    const int divisions = static_cast<int>(alternativeDbLabels.size()) - 1;
+    for (int division = 0; division <= divisions; ++division) {
+        QLabel *label = alternativeDbLabels[static_cast<std::size_t>(division)];
+        if (!label) {
+            continue;
+        }
+        const double ratio = 1.0 - static_cast<double>(division) / divisions;
+        const double level = levelMin + ratio * (levelMax - levelMin);
+        const int y = plotRect.top() + division * plotRect.height() / divisions;
+        label->setText(QStringLiteral("%1 dB").arg(level, 0, 'f', 0));
+        label->setGeometry(3, y - LabelHeight / 2, LabelWidth, LabelHeight);
+        label->show();
+        label->raise();
+    }
+}
+
+void MyWaterfallWidget::updateAlternativeBandLabels() {
+    const bool visible = alternativeInterfaceMode &&
+                         activeDisplayMode != DisplayMode::Waterfall2D &&
+                         !secondGraph && !bandMarkers.isEmpty() &&
+                         (generalBandMarkersEnabled || amateurBandMarkersEnabled) &&
+                         !qFuzzyCompare(xMin, xMax);
+    if (!visible) {
+        for (QLabel *label : alternativeBandLabels) {
+            if (label) label->hide();
+        }
+        return;
+    }
+
+    while (alternativeBandLabels.size() < static_cast<std::size_t>(bandMarkers.size())) {
+        auto *label = new QLabel(this);
+        label->setAttribute(Qt::WA_TransparentForMouseEvents);
+        label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+        label->setStyleSheet(QStringLiteral(
+            "QLabel { background-color: rgba(0, 0, 0, 170); padding: 0px 3px; }"));
+        label->hide();
+        alternativeBandLabels.push_back(label);
+    }
+
+    const QRect plotRect = alternativeSpectrumPlotRect();
+    const int markerTop = compactBandMarkersEnabled
+                              ? (std::max)(plotRect.top(), plotRect.bottom() - 22)
+                              : plotRect.top();
+    const double viewStart = (std::min)(xMin, xMax);
+    const double viewEnd = (std::max)(xMin, xMax);
+    const double span = xMax - xMin;
+    auto frequencyToX = [&](double frequency) {
+        return plotRect.left() +
+               (frequency - xMin) / span * static_cast<double>(plotRect.width());
+    };
+
+    std::size_t labelIndex = 0;
+    for (const GraphBandMarker &marker : bandMarkers) {
+        if ((marker.amateur && !amateurBandMarkersEnabled) ||
+            (!marker.amateur && !generalBandMarkersEnabled) ||
+            !std::isfinite(marker.startHz) || !std::isfinite(marker.endHz) ||
+            marker.endHz <= marker.startHz || marker.endHz < viewStart ||
+            marker.startHz > viewEnd || marker.label.trimmed().isEmpty()) {
+            continue;
+        }
+
+        int x1 = static_cast<int>(std::floor(frequencyToX((std::max)(marker.startHz, viewStart))));
+        int x2 = static_cast<int>(std::ceil(frequencyToX((std::min)(marker.endHz, viewEnd))));
+        x1 = std::clamp(x1, plotRect.left(), plotRect.right());
+        x2 = std::clamp(x2, plotRect.left(), plotRect.right());
+        const int markerWidth = (std::max)(1, x2 - x1);
+        if (markerWidth < 44) {
+            continue;
+        }
+
+        QLabel *label = alternativeBandLabels[labelIndex++];
+        QPalette palette = label->palette();
+        palette.setColor(QPalette::WindowText,
+                         marker.amateur ? QColor(255, 238, 178, 235)
+                                        : QColor(205, 235, 255, 225));
+        label->setPalette(palette);
+        const int labelWidth = markerWidth - 6;
+        label->setText(label->fontMetrics().elidedText(marker.label.trimmed(),
+                                                       Qt::ElideRight,
+                                                       labelWidth - 6));
+        label->setGeometry(x1 + 3, markerTop + 2, labelWidth, 16);
+        label->show();
+        label->raise();
+    }
+
+    while (labelIndex < alternativeBandLabels.size()) {
+        alternativeBandLabels[labelIndex++]->hide();
+    }
+}
+
+void MyWaterfallWidget::updateAlternativeInteractionLabels(
+    const std::vector<float> &normalizedLevels) {
+    if (!alternativeMeasurementLabel || !alternativeHoverLabel ||
+        !alternativeInterfaceMode || normalizedLevels.size() < 2) {
+        if (alternativeMeasurementLabel) alternativeMeasurementLabel->hide();
+        if (alternativeHoverLabel) alternativeHoverLabel->hide();
+        return;
+    }
+
+    const QRect plotRect = alternativeSpectrumPlotRect();
+    const int left = plotRect.left();
+    const int right = plotRect.right();
+    const int top = plotRect.top();
+    const int bottom = plotRect.bottom();
+    const int plotWidth = (std::max)(1, right - left);
+    const int plotHeight = (std::max)(1, bottom - top);
+
+    if (alternativeSpectrumMeasurementVisible) {
+        int x1 = std::clamp(alternativeSpectrumMeasureStartPos.x(), left, right);
+        int x2 = std::clamp(alternativeSpectrumMeasureEndPos.x(), left, right);
+        if (std::abs(x2 - x1) >= 4) {
+            if (x2 < x1) std::swap(x1, x2);
+            const double f1 = frequencyAtX(x1);
+            const double f2 = frequencyAtX(x2);
+            alternativeMeasurementLabel->setText(
+                QStringLiteral("BW %1  %2 - %3")
+                    .arg(formatFrequencySpanLabel(std::abs(f2 - f1)))
+                    .arg(formatFrequencyLabel((std::min)(f1, f2)))
+                    .arg(formatFrequencyLabel((std::max)(f1, f2))));
+            alternativeMeasurementLabel->adjustSize();
+            const int labelWidth = alternativeMeasurementLabel->width();
+            const int labelX = std::clamp(x1 + (x2 - x1 - labelWidth) / 2,
+                                          left + 2,
+                                          (std::max)(left + 2, right - labelWidth - 2));
+            alternativeMeasurementLabel->move(labelX, top + 5);
+            alternativeMeasurementLabel->show();
+            alternativeMeasurementLabel->raise();
+        } else {
+            alternativeMeasurementLabel->hide();
+        }
+    } else {
+        alternativeMeasurementLabel->hide();
+    }
+
+    if (alternativeSpectrumHoverVisible && plotRect.contains(alternativeSpectrumHoverPos)) {
+        const int x = std::clamp(alternativeSpectrumHoverPos.x(), left, right);
+        const int pointCount = static_cast<int>(normalizedLevels.size());
+        const int dataIndex = std::clamp((x - left) * (pointCount - 1) / plotWidth,
+                                         0,
+                                         pointCount - 1);
+        const float normalized = std::clamp(normalizedLevels[static_cast<std::size_t>(dataIndex)],
+                                            0.0f,
+                                            1.0f);
+        const float level = levelMin + normalized * (levelMax - levelMin);
+        const int y = bottom - static_cast<int>(std::lround(normalized * plotHeight));
+        alternativeHoverLabel->setText(
+            QStringLiteral("%1   %2 dB")
+                .arg(formatFrequencyLabel(frequencyAtX(x)))
+                .arg(level, 0, 'f', 1));
+        alternativeHoverLabel->adjustSize();
+        const int labelWidth = alternativeHoverLabel->width();
+        const int labelHeight = alternativeHoverLabel->height();
+        int labelX = x + 8;
+        if (labelX + labelWidth > right) labelX = x - labelWidth - 8;
+        labelX = std::clamp(labelX, left + 2, (std::max)(left + 2, right - labelWidth));
+        const int labelY = std::clamp(y - labelHeight - 4,
+                                      top + 2,
+                                      (std::max)(top + 2, bottom - labelHeight - 2));
+        alternativeHoverLabel->move(labelX, labelY);
+        alternativeHoverLabel->show();
+        alternativeHoverLabel->raise();
+    } else {
+        alternativeHoverLabel->hide();
+    }
+}
+
+void MyWaterfallWidget::setAlternativeSpectrumGradientOpacity(int percent) {
+    alternativeSpectrumGradientOpacity = std::clamp(percent, 0, 100);
+    update();
+}
+
+void MyWaterfallWidget::setBandMarkersEnabled(bool generalEnabled, bool amateurEnabled) {
+    generalBandMarkersEnabled = generalEnabled;
+    amateurBandMarkersEnabled = amateurEnabled;
+    update();
+}
+
+void MyWaterfallWidget::setBandMarkersCompact(bool compact) {
+    compactBandMarkersEnabled = compact;
+    update();
+}
+
+void MyWaterfallWidget::setBandMarkers(const QVector<GraphBandMarker> &markers) {
+    bandMarkers = markers;
+    update();
+}
+
 bool MyWaterfallWidget::ensureGpuWaterfallProgram() {
     if (waterfallProgramReady) {
         return true;
@@ -1006,10 +1308,10 @@ void MyWaterfallWidget::drawMiniWaterfallOverlay(float vStart) {
     const float margin = 12.0f;
     const float overlayWidth = std::clamp(width() * 0.34f, 220.0f, 520.0f);
     const float overlayHeight = std::clamp(height() * 0.30f, 90.0f, 260.0f);
-    const float left = static_cast<float>(width()) - overlayWidth - margin;
-    const float right = static_cast<float>(width()) - margin;
-    const float bottom = margin;
-    const float top = margin + overlayHeight;
+    const float left = margin;
+    const float right = margin + overlayWidth;
+    const float top = static_cast<float>(height()) - margin;
+    const float bottom = top - overlayHeight;
     const float border = 3.0f;
 
     glViewport(0, 0, width(), height());
@@ -1223,16 +1525,19 @@ void MyWaterfallWidget::computeLineData() {
 
 void MyWaterfallWidget::paintGL() {
 	updateFpsCounter();
+	updateAlternativeDbLabels();
+	if (width() <= 0 || height() <= 0) {
+		return;
+	}
+	QPainter painter(this);
+	painter.beginNativePainting();
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     bool drawSegmentOverlay = true;
     std::vector<float> secondGraphLevels;
+    std::vector<float> alternativeSpectrumLevels;
     {
         QMutexLocker locker(&mutex);
         updateQueued = false;
-        if (width() <= 0 || height() <= 0) {
-            return;
-        }
-
         if (textureClearRequested) {
             ensureLineBuffer();
             std::fill(lineData.begin(), lineData.end(), 0);
@@ -1246,6 +1551,12 @@ void MyWaterfallWidget::paintGL() {
         if (activeDisplayMode != DisplayMode::Waterfall2D) {
             drawSegmentOverlay = false;
             waterfall3DRenderer->render(width(), height());
+            if (alternativeInterfaceMode) {
+                alternativeSpectrumLevels.reserve(pixelLevelData.size());
+                for (const float level : pixelLevelData) {
+                    alternativeSpectrumLevels.push_back(normalizedLevel(level));
+                }
+            }
             if (activeDisplayMode == DisplayMode::Waterfall3DWithMini) {
                 const float vStart = static_cast<float>(waterfallWriteRow) /
                                      static_cast<float>((std::max)(1, textureHeight));
@@ -1284,8 +1595,14 @@ void MyWaterfallWidget::paintGL() {
             glBindTexture(GL_TEXTURE_2D, 0);
 	    }
     }
-    if (!secondGraphLevels.empty() || drawSegmentOverlay) {
-        QPainter painter(this);
+    painter.endNativePainting();
+    updateAlternativeBandLabels();
+    updateAlternativeInteractionLabels(alternativeSpectrumLevels);
+    if (!secondGraphLevels.empty() || !alternativeSpectrumLevels.empty() || drawSegmentOverlay) {
+        painter.resetTransform();
+        if (!alternativeSpectrumLevels.empty()) {
+            drawAlternativeSpectrumOverlay(painter, alternativeSpectrumLevels);
+        }
         if (!secondGraphLevels.empty()) {
             painter.setRenderHint(QPainter::Antialiasing, false);
             const int pointCount = std::min(width(), static_cast<int>(secondGraphLevels.size()));
@@ -1304,6 +1621,214 @@ void MyWaterfallWidget::paintGL() {
             drawScanSegments(painter);
         }
     }
+}
+
+void MyWaterfallWidget::drawAlternativeSpectrumOverlay(
+    QPainter &painter,
+    const std::vector<float> &normalizedLevels) const {
+    if (normalizedLevels.size() < 2 || width() < 120 || height() < 120) {
+        return;
+    }
+
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing, false);
+    painter.setRenderHint(QPainter::TextAntialiasing, true);
+    const QRect plotRect = alternativeSpectrumPlotRect();
+    const int left = plotRect.left();
+    const int right = plotRect.right();
+    const int top = plotRect.top();
+    const int bottom = plotRect.bottom();
+    const int plotWidth = (std::max)(1, right - left);
+    const int plotHeight = (std::max)(1, bottom - top);
+    const bool drawLowerGrid = !secondGraph;
+
+    if (drawLowerGrid) {
+        drawAlternativeBandMarkers(painter, plotRect);
+    }
+
+    QPen gridPen(QColor(115, 185, 205, 74));
+    gridPen.setWidth(1);
+    painter.setPen(gridPen);
+    constexpr int HorizontalDivisions = 5;
+    constexpr int VerticalDivisions = 10;
+    if (drawLowerGrid) {
+        for (int division = 0; division <= HorizontalDivisions; ++division) {
+            const int y = top + division * plotHeight / HorizontalDivisions;
+            painter.drawLine(left, y, right, y);
+        }
+        for (int division = 0; division <= VerticalDivisions; ++division) {
+            const int x = left + division * plotWidth / VerticalDivisions;
+            painter.drawLine(x, top, x, bottom);
+        }
+    }
+
+    const int pointCount = static_cast<int>(normalizedLevels.size());
+    const float first = std::clamp(normalizedLevels.front(), 0.0f, 1.0f);
+    const int firstY = bottom - static_cast<int>(std::lround(first * plotHeight));
+    QPainterPath spectrumPath;
+    spectrumPath.moveTo(left, firstY);
+    QPainterPath fillPath;
+    fillPath.moveTo(left, bottom);
+    fillPath.lineTo(left, firstY);
+    for (int point = 1; point < pointCount; ++point) {
+        const float current = std::clamp(normalizedLevels[static_cast<std::size_t>(point)],
+                                         0.0f,
+                                         1.0f);
+        const int x2 = left + point * plotWidth / (pointCount - 1);
+        const int y2 = bottom - static_cast<int>(std::lround(current * plotHeight));
+        spectrumPath.lineTo(x2, y2);
+        fillPath.lineTo(x2, y2);
+    }
+    if (alternativeSpectrumGradientFill) {
+        fillPath.lineTo(right, bottom);
+        fillPath.closeSubpath();
+        QLinearGradient fillGradient(0, bottom, 0, top);
+        const float opacity = static_cast<float>(alternativeSpectrumGradientOpacity) / 100.0f;
+        const int alpha = qRound(255.0f * opacity);
+        if (colorSpectrum) {
+            constexpr int PaletteStops = 16;
+            for (int stop = 0; stop <= PaletteStops; ++stop) {
+                const float normalized = static_cast<float>(stop) /
+                                         static_cast<float>(PaletteStops);
+                QColor color = valueToColors(normalized);
+                color.setAlpha(alpha);
+                fillGradient.setColorAt(normalized, color);
+            }
+        } else {
+            fillGradient.setColorAt(0.0, QColor(0, 70, 0, alpha));
+            fillGradient.setColorAt(0.45, QColor(0, 175, 0, alpha));
+            fillGradient.setColorAt(1.0, QColor(70, 255, 100, alpha));
+        }
+        painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
+        painter.fillPath(fillPath, fillGradient);
+    }
+    if (colorSpectrum) {
+        for (int point = 1; point < pointCount; ++point) {
+            const float previous = std::clamp(normalizedLevels[static_cast<std::size_t>(point - 1)],
+                                              0.0f,
+                                              1.0f);
+            const float current = std::clamp(normalizedLevels[static_cast<std::size_t>(point)],
+                                             0.0f,
+                                             1.0f);
+            const int x1 = left + (point - 1) * plotWidth / (pointCount - 1);
+            const int x2 = left + point * plotWidth / (pointCount - 1);
+            const int y1 = bottom - static_cast<int>(std::lround(previous * plotHeight));
+            const int y2 = bottom - static_cast<int>(std::lround(current * plotHeight));
+            painter.setPen(QPen(valueToColors(current), 1));
+            painter.drawLine(x1, y1, x2, y2);
+        }
+    } else {
+        painter.setPen(QPen(QColor(0, 255, 0, 235), 1));
+        painter.drawPath(spectrumPath);
+    }
+
+    if (drawLowerGrid) {
+        painter.setPen(QPen(QColor(220, 235, 240, 190), 1));
+        painter.drawLine(left, top, left, bottom);
+        painter.drawLine(left, bottom, right, bottom);
+    }
+
+    if (alternativeSpectrumMeasurementVisible) {
+        int x1 = std::clamp(alternativeSpectrumMeasureStartPos.x(), left, right);
+        int x2 = std::clamp(alternativeSpectrumMeasureEndPos.x(), left, right);
+        if (std::abs(x2 - x1) >= 4) {
+            if (x2 < x1) {
+                std::swap(x1, x2);
+            }
+            const QRect selectionRect(x1, top, x2 - x1, plotHeight);
+            painter.fillRect(selectionRect, QColor(70, 135, 255, 48));
+            painter.setPen(QPen(QColor(120, 190, 255, 230), 1, Qt::DashLine));
+            painter.drawRect(selectionRect.adjusted(0, 0, -1, -1));
+        }
+    }
+
+    if (alternativeSpectrumHoverVisible && plotRect.contains(alternativeSpectrumHoverPos)) {
+        const int x = std::clamp(alternativeSpectrumHoverPos.x(), left, right);
+        const int dataIndex = std::clamp((x - left) * (pointCount - 1) / plotWidth,
+                                         0,
+                                         pointCount - 1);
+        const float normalized = std::clamp(normalizedLevels[static_cast<std::size_t>(dataIndex)],
+                                            0.0f,
+                                            1.0f);
+        const int y = bottom - static_cast<int>(std::lround(normalized * plotHeight));
+        painter.setPen(QPen(QColor(210, 240, 255, 180), 1, Qt::DashLine));
+        painter.drawLine(x, top, x, bottom);
+        painter.setBrush(QColor(120, 240, 255));
+        painter.drawEllipse(QPoint(x, y), 3, 3);
+    }
+    painter.restore();
+}
+
+QRect MyWaterfallWidget::alternativeSpectrumPlotRect() const {
+    const int top = static_cast<int>(std::lround(height() * 0.67));
+    return QRect(0, top, (std::max)(1, width()), (std::max)(1, height() - top - 4));
+}
+
+QString MyWaterfallWidget::formatFrequencyLabel(double frequencyHz) const {
+    const double absolute = std::abs(frequencyHz);
+    if (absolute >= 1.0e9) return QStringLiteral("%1 GHz").arg(frequencyHz / 1.0e9, 0, 'f', 6);
+    if (absolute >= 1.0e6) return QStringLiteral("%1 MHz").arg(frequencyHz / 1.0e6, 0, 'f', 6);
+    if (absolute >= 1.0e3) return QStringLiteral("%1 kHz").arg(frequencyHz / 1.0e3, 0, 'f', 3);
+    return QStringLiteral("%1 Hz").arg(frequencyHz, 0, 'f', 0);
+}
+
+QString MyWaterfallWidget::formatFrequencySpanLabel(double spanHz) const {
+    const double absolute = std::abs(spanHz);
+    if (absolute >= 1.0e9) return QStringLiteral("%1 GHz").arg(absolute / 1.0e9, 0, 'f', 6);
+    if (absolute >= 1.0e6) return QStringLiteral("%1 MHz").arg(absolute / 1.0e6, 0, 'f', 3);
+    if (absolute >= 1.0e3) return QStringLiteral("%1 kHz").arg(absolute / 1.0e3, 0, 'f', 3);
+    return QStringLiteral("%1 Hz").arg(absolute, 0, 'f', 0);
+}
+
+void MyWaterfallWidget::drawAlternativeBandMarkers(QPainter &painter,
+                                                    const QRect &plotRect) const {
+    if (bandMarkers.isEmpty() ||
+        (!generalBandMarkersEnabled && !amateurBandMarkersEnabled) ||
+        qFuzzyCompare(xMin, xMax)) {
+        return;
+    }
+
+    const int markerTop = compactBandMarkersEnabled
+                              ? (std::max)(plotRect.top(), plotRect.bottom() - 22)
+                              : plotRect.top();
+    const int markerBottom = plotRect.bottom();
+    const double viewStart = (std::min)(xMin, xMax);
+    const double viewEnd = (std::max)(xMin, xMax);
+    const double span = xMax - xMin;
+    auto frequencyToX = [&](double frequency) {
+        return plotRect.left() +
+               (frequency - xMin) / span * static_cast<double>(plotRect.width());
+    };
+
+    painter.save();
+    painter.setClipRect(plotRect);
+    if (compactBandMarkersEnabled) {
+        painter.fillRect(QRect(plotRect.left(), markerTop, plotRect.width(), markerBottom - markerTop),
+                         QColor(0, 0, 0, 190));
+    }
+    for (const GraphBandMarker &marker : bandMarkers) {
+        if ((marker.amateur && !amateurBandMarkersEnabled) ||
+            (!marker.amateur && !generalBandMarkersEnabled) ||
+            !std::isfinite(marker.startHz) || !std::isfinite(marker.endHz) ||
+            marker.endHz <= marker.startHz || marker.endHz < viewStart || marker.startHz > viewEnd) {
+            continue;
+        }
+        int x1 = static_cast<int>(std::floor(frequencyToX((std::max)(marker.startHz, viewStart))));
+        int x2 = static_cast<int>(std::ceil(frequencyToX((std::min)(marker.endHz, viewEnd))));
+        x1 = std::clamp(x1, plotRect.left(), plotRect.right());
+        x2 = std::clamp(x2, plotRect.left(), plotRect.right());
+        const int markerWidth = (std::max)(1, x2 - x1);
+        const QColor fill = marker.amateur
+                                ? QColor(255, 198, 66, compactBandMarkersEnabled ? 118 : 34)
+                                : QColor(76, 162, 255, compactBandMarkersEnabled ? 105 : 28);
+        const QColor edge = marker.amateur ? QColor(255, 220, 96, 170)
+                                           : QColor(112, 196, 255, 155);
+        painter.fillRect(QRect(x1, markerTop, markerWidth, markerBottom - markerTop), fill);
+        painter.setPen(edge);
+        painter.drawLine(x1, markerTop, x1, markerBottom);
+        painter.drawLine(x2, markerTop, x2, markerBottom);
+    }
+    painter.restore();
 }
 
 void MyWaterfallWidget::updateFpsCounter() {
@@ -1620,7 +2145,7 @@ float MyWaterfallWidget::normalizedLevel(float value) const {
 }
 
 
- QColor MyWaterfallWidget::valueToColors(float value) {
+ QColor MyWaterfallWidget::valueToColors(float value) const {
     if (!std::isfinite(value)) {
         value = 0.0f;
     }

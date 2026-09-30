@@ -264,23 +264,22 @@ bool Waterfall3DRenderer::beginFrequencySlice(int screenX,
         return false;
     }
 
-    const float aspect = static_cast<float>(viewportWidth) /
-                         static_cast<float>((std::max)(1, viewportHeight));
-    const float projectionScale = 1.0f / cameraZoom;
-    QMatrix4x4 projection;
-    projection.frustum(-0.72f * aspect * projectionScale,
-                       0.72f * aspect * projectionScale,
-                       -0.72f * projectionScale,
-                       0.72f * projectionScale,
-                       1.0f,
-                       12.0f);
-    QMatrix4x4 model;
-    model.translate(0.0f, -0.08f, -cameraDistance);
-    model.rotate(cameraTiltDegrees, 1.0f, 0.0f, 0.0f);
-    model.rotate(cameraYawDegrees, 0.0f, 0.0f, 1.0f);
-    model.translate(cameraPanX, cameraPanY, 0.0f);
-    model.scale(1.05f, 1.05f, 1.18f);
-    const QMatrix4x4 transform = projection * model;
+    if (fixedFrontPresentation) {
+        const double ratio = std::clamp(static_cast<double>(screenX) /
+                                            static_cast<double>((std::max)(1, viewportWidth - 1)),
+                                        0.0,
+                                        1.0);
+        selectedSliceColumn = std::clamp(
+            static_cast<int>(std::lround(ratio * static_cast<double>(columnCount - 1))),
+            0,
+            columnCount - 1);
+        frequencySliceActive = true;
+        spectrumSliceActive = false;
+        selectedSpectrumRow = -1;
+        return true;
+    }
+
+    const QMatrix4x4 transform = viewParameters(viewportWidth, viewportHeight).transform;
 
     float bestDistanceSquared = std::numeric_limits<float>::infinity();
     int bestColumn = -1;
@@ -345,23 +344,7 @@ bool Waterfall3DRenderer::beginSpectrumSlice(int screenX,
         return false;
     }
 
-    const float aspect = static_cast<float>(viewportWidth) /
-                         static_cast<float>(std::max(1, viewportHeight));
-    const float projectionScale = 1.0f / cameraZoom;
-    QMatrix4x4 projection;
-    projection.frustum(-0.72f * aspect * projectionScale,
-                       0.72f * aspect * projectionScale,
-                       -0.72f * projectionScale,
-                       0.72f * projectionScale,
-                       1.0f,
-                       12.0f);
-    QMatrix4x4 model;
-    model.translate(0.0f, -0.08f, -cameraDistance);
-    model.rotate(cameraTiltDegrees, 1.0f, 0.0f, 0.0f);
-    model.rotate(cameraYawDegrees, 0.0f, 0.0f, 1.0f);
-    model.translate(cameraPanX, cameraPanY, 0.0f);
-    model.scale(1.05f, 1.05f, 1.18f);
-    const QMatrix4x4 transform = projection * model;
+    const QMatrix4x4 transform = viewParameters(viewportWidth, viewportHeight).transform;
 
     float bestDistanceSquared = std::numeric_limits<float>::infinity();
     int bestRow = -1;
@@ -400,9 +383,12 @@ bool Waterfall3DRenderer::beginSpectrumSlice(int screenX,
         }
     }
 
-    constexpr float MaxPickDistancePixels = 36.0f;
+    const float maxPickDistancePixels = fixedFrontPresentation
+                                            ? static_cast<float>((std::max)(viewportWidth,
+                                                                           viewportHeight))
+                                            : 36.0f;
     if (bestRow < 0 ||
-        bestDistanceSquared > MaxPickDistancePixels * MaxPickDistancePixels) {
+        bestDistanceSquared > maxPickDistancePixels * maxPickDistancePixels) {
         return false;
     }
     selectedSpectrumRow = bestRow;
@@ -614,6 +600,9 @@ bool Waterfall3DRenderer::spectrumSliceStatistics(SliceStatistics &statistics) c
 }
 
 void Waterfall3DRenderer::orbitCamera(float deltaX, float deltaY) {
+    if (fixedFrontPresentation) {
+        return;
+    }
     cameraYawDegrees = std::fmod(cameraYawDegrees + deltaX * 0.4f, 360.0f);
     cameraTiltDegrees = std::clamp(cameraTiltDegrees + deltaY * 0.35f, -82.0f, -5.0f);
 }
@@ -622,6 +611,9 @@ void Waterfall3DRenderer::panCamera(float deltaX,
                                     float deltaY,
                                     int viewportWidth,
                                     int viewportHeight) {
+    if (fixedFrontPresentation) {
+        return;
+    }
     if (viewportWidth <= 0 || viewportHeight <= 0 ||
         (!std::isfinite(deltaX) || !std::isfinite(deltaY))) {
         return;
@@ -647,12 +639,23 @@ void Waterfall3DRenderer::panCamera(float deltaX,
 }
 
 void Waterfall3DRenderer::zoomCamera(int wheelDelta) {
+    if (fixedFrontPresentation) {
+        return;
+    }
     if (wheelDelta == 0) {
         return;
     }
     const float wheelSteps = static_cast<float>(wheelDelta) / 120.0f;
     cameraZoom *= std::pow(1.18f, wheelSteps);
     cameraZoom = std::clamp(cameraZoom, 0.35f, 8.0f);
+}
+
+void Waterfall3DRenderer::setFixedFrontPresentation(bool enabled) {
+    fixedFrontPresentation = enabled;
+}
+
+void Waterfall3DRenderer::setFixedFrontExpanded(bool enabled) {
+    fixedFrontExpanded = enabled;
 }
 
 bool Waterfall3DRenderer::ensureSurfaceProgram() {
@@ -958,6 +961,66 @@ void Waterfall3DRenderer::releaseGpuResources() {
     resetGpuSurfaceData();
 }
 
+Waterfall3DRenderer::ViewParameters Waterfall3DRenderer::viewParameters(
+    int viewportWidth,
+    int viewportHeight) const {
+    ViewParameters parameters;
+    const float aspect = static_cast<float>(viewportWidth) /
+                         static_cast<float>((std::max)(1, viewportHeight));
+
+    if (fixedFrontPresentation) {
+        constexpr float Distance = 3.25f;
+        constexpr float Zoom = 1.10f;
+        constexpr float TiltDegrees = 58.0f;
+        const float verticalTimeScale = fixedFrontExpanded ? 2.50f : 2.0f;
+        const float depthTimeScale = fixedFrontExpanded ? 1.20f : 2.0f;
+        constexpr float PlotTopRatio = 0.67f;
+        constexpr float PlotBottomMarginPixels = 5.0f;
+        const float projectionScale = 1.0f / Zoom;
+        const float tiltRadians = TiltDegrees * 3.14159265358979323846f / 180.0f;
+        const float timeCos = verticalTimeScale * std::cos(tiltRadians);
+        const float timeSin = depthTimeScale * std::sin(tiltRadians);
+        const float frontDepth = Distance - timeSin;
+        const float viewportHeightF = static_cast<float>((std::max)(1, viewportHeight));
+        const float bottomY = viewportHeightF - PlotBottomMarginPixels;
+        const float topY = viewportHeightF * PlotTopRatio;
+        const float bottomNdc = 1.0f - 2.0f * bottomY / viewportHeightF;
+        const float topNdc = 1.0f - 2.0f * topY / viewportHeightF;
+        const float verticalFrustum = 0.72f * projectionScale;
+        const float frequencyScale = 0.995f * frontDepth * verticalFrustum * aspect;
+        const float verticalOffset = bottomNdc * frontDepth * verticalFrustum + timeCos;
+        const float heightScale = (topNdc - bottomNdc) * frontDepth *
+                                  verticalFrustum / 0.72f;
+
+        parameters.projection.frustum(-0.72f * aspect * projectionScale,
+                                      0.72f * aspect * projectionScale,
+                                      -verticalFrustum,
+                                      verticalFrustum,
+                                      1.0f,
+                                      12.0f);
+        parameters.model.setToIdentity();
+        parameters.model.setRow(0, QVector4D(0.0f, frequencyScale, 0.0f, 0.0f));
+        parameters.model.setRow(1, QVector4D(-timeCos, 0.0f, heightScale, verticalOffset));
+        parameters.model.setRow(2, QVector4D(timeSin, 0.0f, 0.0f, -Distance));
+        parameters.model.setRow(3, QVector4D(0.0f, 0.0f, 0.0f, 1.0f));
+    } else {
+        const float projectionScale = 1.0f / cameraZoom;
+        parameters.projection.frustum(-0.72f * aspect * projectionScale,
+                                      0.72f * aspect * projectionScale,
+                                      -0.72f * projectionScale,
+                                      0.72f * projectionScale,
+                                      1.0f,
+                                      12.0f);
+        parameters.model.translate(0.0f, -0.08f, -cameraDistance);
+        parameters.model.rotate(cameraTiltDegrees, 1.0f, 0.0f, 0.0f);
+        parameters.model.rotate(cameraYawDegrees, 0.0f, 0.0f, 1.0f);
+        parameters.model.translate(cameraPanX, cameraPanY, 0.0f);
+        parameters.model.scale(1.05f, 1.05f, 1.18f);
+    }
+    parameters.transform = parameters.projection * parameters.model;
+    return parameters;
+}
+
 void Waterfall3DRenderer::render(int viewportWidth, int viewportHeight) {
     if (viewportWidth <= 0 || viewportHeight <= 0) {
         return;
@@ -970,40 +1033,12 @@ void Waterfall3DRenderer::render(int viewportWidth, int viewportHeight) {
     glDepthFunc(GL_LEQUAL);
     glShadeModel(GL_SMOOTH);
 
-    const double aspect = static_cast<double>(viewportWidth) /
-                          static_cast<double>((std::max)(1, viewportHeight));
+    const ViewParameters parameters = viewParameters(viewportWidth, viewportHeight);
     glMatrixMode(GL_PROJECTION);
-    glLoadIdentity();
-    const double projectionScale = 1.0 / static_cast<double>(cameraZoom);
-    glFrustum(-0.72 * aspect * projectionScale,
-              0.72 * aspect * projectionScale,
-              -0.72 * projectionScale,
-              0.72 * projectionScale,
-              1.0,
-              12.0);
+    glLoadMatrixf(parameters.projection.constData());
 
     glMatrixMode(GL_MODELVIEW);
-    glLoadIdentity();
-    glTranslatef(0.0f, -0.08f, -cameraDistance);
-    glRotatef(cameraTiltDegrees, 1.0f, 0.0f, 0.0f);
-    glRotatef(cameraYawDegrees, 0.0f, 0.0f, 1.0f);
-    glTranslatef(cameraPanX, cameraPanY, 0.0f);
-    glScalef(1.05f, 1.05f, 1.18f);
-
-    QMatrix4x4 projection;
-    projection.frustum(static_cast<float>(-0.72 * aspect * projectionScale),
-                       static_cast<float>(0.72 * aspect * projectionScale),
-                       static_cast<float>(-0.72 * projectionScale),
-                       static_cast<float>(0.72 * projectionScale),
-                       1.0f,
-                       12.0f);
-    QMatrix4x4 model;
-    model.translate(0.0f, -0.08f, -cameraDistance);
-    model.rotate(cameraTiltDegrees, 1.0f, 0.0f, 0.0f);
-    model.rotate(cameraYawDegrees, 0.0f, 0.0f, 1.0f);
-    model.translate(cameraPanX, cameraPanY, 0.0f);
-    model.scale(1.05f, 1.05f, 1.18f);
-    const QMatrix4x4 transform = projection * model;
+    glLoadMatrixf(parameters.model.constData());
 
     glColor3f(0.16f, 0.18f, 0.21f);
     glBegin(GL_LINES);
@@ -1058,7 +1093,8 @@ void Waterfall3DRenderer::render(int viewportWidth, int viewportHeight) {
 
         if (!spectrumSliceVisible) {
             // A captured spectrum row has left the rolling 3D history.
-        } else if (!frequencySliceActive && !spectrumSliceActive && renderGpuSurface(transform)) {
+        } else if (!frequencySliceActive && !spectrumSliceActive &&
+                   renderGpuSurface(parameters.transform)) {
             // The normal full surface is submitted as one GPU batch.
         } else if (frequencySliceActive && firstColumn == lastColumn) {
             glLineWidth(3.0f);

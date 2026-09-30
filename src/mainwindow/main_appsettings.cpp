@@ -26,9 +26,102 @@
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSpinBox>
+#include <QStandardItem>
+#include <QStandardItemModel>
 #include <QVBoxLayout>
 
 #include <algorithm>
+
+extern bool secondGraph;
+
+void YourClassName::applyAlternativeInterfaceMode() {
+    if (!graphLayout || !graphWidget || !scaleWidget || !waterfallWidget) {
+        return;
+    }
+
+    graphLayout->removeWidget(graphWidget);
+    graphLayout->removeWidget(scaleWidget);
+    graphLayout->removeWidget(waterfallWidget);
+
+    if (alternativeInterfaceMode) {
+        if (secondGraph) {
+            graphWidget->show();
+            graphLayout->insertWidget(0, graphWidget, 2);
+            graphLayout->insertWidget(1, waterfallWidget, 5);
+            graphLayout->insertWidget(2, scaleWidget, 0);
+        } else {
+            graphWidget->hide();
+            graphLayout->insertWidget(0, waterfallWidget, 1);
+            graphLayout->insertWidget(1, scaleWidget, 0);
+        }
+    } else {
+        graphWidget->show();
+        graphLayout->insertWidget(0, graphWidget, 2);
+        graphLayout->insertWidget(1, scaleWidget, 0);
+        graphLayout->insertWidget(2, waterfallWidget, 5);
+    }
+
+    for (int index = 0; index < graphLayout->count(); ++index) {
+        graphLayout->setStretch(index, 0);
+    }
+    if (alternativeInterfaceMode) {
+        if (secondGraph) {
+            graphLayout->setStretch(0, 2);
+            graphLayout->setStretch(1, 5);
+        } else {
+            graphLayout->setStretch(0, 1);
+        }
+    } else {
+        graphLayout->setStretch(0, 2);
+        graphLayout->setStretch(2, 5);
+    }
+
+    const bool alternativeMiniMode =
+        waterfallDisplayMode == static_cast<int>(MyWaterfallWidget::DisplayMode::Waterfall3DWithMini);
+    const int effectiveMode = alternativeInterfaceMode
+                                  ? (alternativeMiniMode
+                                         ? static_cast<int>(MyWaterfallWidget::DisplayMode::Waterfall3DWithMini)
+                                         : static_cast<int>(MyWaterfallWidget::DisplayMode::Waterfall3D))
+                                  : waterfallDisplayMode;
+    waterfallWidget->setAlternativeInterfaceMode(alternativeInterfaceMode);
+    graphWidget->setFrequencyAxisLabelsVisible(alternativeInterfaceMode && secondGraph);
+    waterfallWidget->setDisplayMode(
+        static_cast<MyWaterfallWidget::DisplayMode>(effectiveMode));
+
+    if (waterfallDisplayModeCombo) {
+        QSignalBlocker blocker(waterfallDisplayModeCombo);
+        if (auto *model = qobject_cast<QStandardItemModel*>(waterfallDisplayModeCombo->model())) {
+            for (int row = 0; row < model->rowCount(); ++row) {
+                if (QStandardItem *item = model->item(row)) {
+                    const int mode = waterfallDisplayModeCombo->itemData(row).toInt();
+                    item->setEnabled(!alternativeInterfaceMode ||
+                                     mode == static_cast<int>(MyWaterfallWidget::DisplayMode::Waterfall3D) ||
+                                     mode == static_cast<int>(MyWaterfallWidget::DisplayMode::Waterfall3DWithMini));
+                }
+            }
+        }
+        const int index = waterfallDisplayModeCombo->findData(effectiveMode);
+        if (index >= 0) {
+            waterfallDisplayModeCombo->setCurrentIndex(index);
+        }
+        waterfallDisplayModeCombo->setToolTip(alternativeInterfaceMode
+            ? uiText(QStringLiteral("alternative_interface_mode_locked"),
+                     QStringLiteral("Alternative interface supports fixed 3D and 3D with a mini waterfall."))
+            : uiText(QStringLiteral("waterfall_display_mode_tooltip"),
+                     QStringLiteral("Choose 2D waterfall, 3D waterfall, or 3D with a 2D overview.")));
+    }
+    if (alternativeSpectrumGradientCheckbox) {
+        alternativeSpectrumGradientCheckbox->setEnabled(alternativeInterfaceMode);
+    }
+    if (alternativeSpectrumGradientOpacitySlider) {
+        alternativeSpectrumGradientOpacitySlider->setEnabled(
+            alternativeInterfaceMode && alternativeSpectrumGradientFill);
+    }
+
+    centralWidget->updateGeometry();
+    waterfallWidget->updateGeometry();
+    waterfallWidget->update();
+}
 
 void YourClassName::openApplicationHelp() {
     QWidget *parentWidget = QApplication::activeWindow();
@@ -239,6 +332,12 @@ void YourClassName::openApplicationSettings() {
     gpuWaterfallOption->setToolTip(uiText(
         QStringLiteral("gpu_waterfall_tooltip"),
         QStringLiteral("Experimental: prepare the waterfall for GPU-backed rendering. CPU texture rendering remains the safe fallback.")));
+    QCheckBox *alternativeInterfaceOption = new QCheckBox(
+        uiText(QStringLiteral("alternative_interface"), QStringLiteral("Alternative interface")),
+        quickOptionsBox);
+    alternativeInterfaceOption->setToolTip(uiText(
+        QStringLiteral("alternative_interface_tooltip"),
+        QStringLiteral("Use a fixed front-facing 3D waterfall with the live spectrum overlaid at its near edge.")));
     QCheckBox *gnssUbxAutoEnableOption = new QCheckBox(uiText(QStringLiteral("gnss_ubx_auto_enable"),
                                                               QStringLiteral("Auto-enable UBX")),
                                                        quickOptionsBox);
@@ -276,6 +375,7 @@ void YourClassName::openApplicationSettings() {
     amateurBandMarkersOption->setChecked(showAmateurBandMarkers);
     compactBandMarkersOption->setChecked(compactBandMarkers);
     gpuWaterfallOption->setChecked(experimentalGpuWaterfall);
+    alternativeInterfaceOption->setChecked(alternativeInterfaceMode);
     gnssUbxAutoEnableOption->setChecked(gnssUbxAutoEnable);
     loggingOption->setChecked(diagnosticVerboseLogging);
     spectrumFpsOption->setChecked(showSpectrumFps);
@@ -294,6 +394,7 @@ void YourClassName::openApplicationSettings() {
     quickOptionsLayout->addWidget(spectrumFpsOption, 4, 0);
     quickOptionsLayout->addWidget(waterfallFpsOption, 4, 1);
     quickOptionsLayout->addWidget(extendedSpectrumInfoOption, 4, 2);
+    quickOptionsLayout->addWidget(alternativeInterfaceOption, 5, 0, 1, 3);
     rootLayout->addWidget(quickOptionsBox);
 
     auto applyLanguage = [this, languageCombo]() {
@@ -449,6 +550,11 @@ void YourClassName::openApplicationSettings() {
                                                   ? MyWaterfallWidget::RenderBackend::GpuPrepared
                                                   : MyWaterfallWidget::RenderBackend::CpuTexture);
         }
+        savePersistentSettings();
+    });
+    connect(alternativeInterfaceOption, &QCheckBox::toggled, &dialog, [this](bool checked) {
+        alternativeInterfaceMode = checked;
+        applyAlternativeInterfaceMode();
         savePersistentSettings();
     });
     connect(gnssUbxAutoEnableOption, &QCheckBox::toggled, &dialog, [this](bool checked) {

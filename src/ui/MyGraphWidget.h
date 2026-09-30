@@ -13,13 +13,7 @@
 #include <QMouseEvent>
 #include <QPoint>
 #include "scanvisualassembler.h"
-
-struct GraphBandMarker {
-    double startHz = 0.0;
-    double endHz = 0.0;
-    QString label;
-    bool amateur = false;
-};
+#include "spectrumoverlaytypes.h"
 
 class MyGraphWidget : public QOpenGLWidget, protected QOpenGLFunctions {
     Q_OBJECT
@@ -44,6 +38,7 @@ public:
                              int fftWindowType);
     void setFpsOverlayEnabled(bool enabled);
     void setExtendedInfoOverlayEnabled(bool enabled);
+    void setFrequencyAxisLabelsVisible(bool visible);
     void clearData();
 
 signals:
@@ -78,6 +73,7 @@ private:
     void drawBandMarkers(QPainter &painter) const;
     void drawScanSegments(QPainter &painter) const;
     void drawYAxis(QPainter &painter) const;
+    void drawXAxis(QPainter &painter) const;
     void drawTuningMarker(QPainter &painter) const;
     void drawBandwidthMeasurement(QPainter &painter) const;
     void drawHoverCursor(QPainter &painter) const;
@@ -134,6 +130,7 @@ private:
     int metadataFftWindowType = 0;
     bool fpsOverlayEnabled = false;
     bool extendedInfoOverlayEnabled = false;
+    bool frequencyAxisLabelsVisible = false;
     QElapsedTimer fpsElapsedTimer;
     int fpsFrameCount = 0;
     double displayedFps = 0.0;

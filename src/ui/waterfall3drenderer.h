@@ -43,6 +43,8 @@ public:
     void setSpectrumSliceWidth(int rows);
     void setSpectrumSliceCapture(bool enabled);
     void setSpectrumSliceCaptureFixed(bool enabled);
+    void setFixedFrontPresentation(bool enabled);
+    void setFixedFrontExpanded(bool enabled);
     bool beginFrequencySlice(int screenX, int screenY, int viewportWidth, int viewportHeight);
     bool beginSpectrumSlice(int screenX, int screenY, int viewportWidth, int viewportHeight);
     void stepFrequencySlice(int direction);
@@ -72,6 +74,12 @@ private:
         float column = 0.0f;
     };
 
+    struct ViewParameters {
+        QMatrix4x4 projection;
+        QMatrix4x4 model;
+        QMatrix4x4 transform;
+    };
+
     using HistoryRow = std::vector<VertexSample>;
 
     std::deque<HistoryRow> historyRows;
@@ -94,6 +102,8 @@ private:
     bool spectrumSliceActive = false;
     bool spectrumSliceCapture = false;
     bool spectrumSliceCaptureFixed = false;
+    bool fixedFrontPresentation = false;
+    bool fixedFrontExpanded = false;
     std::vector<HistoryRow> capturedSpectrumRows;
     int capturedSpectrumFirstRow = -1;
     int capturedSpectrumRowsRemaining = 0;
@@ -116,6 +126,7 @@ private:
     std::vector<std::uint8_t> gpuColorScratch;
 
     void refreshCapturedSpectrumRows();
+    ViewParameters viewParameters(int viewportWidth, int viewportHeight) const;
     bool ensureSurfaceProgram();
     void resetGpuSurfaceData();
     void rebuildGpuSurface();

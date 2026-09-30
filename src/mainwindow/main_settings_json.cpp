@@ -161,6 +161,9 @@ QJsonObject YourClassName::settingsToJson() const {
     settings["waterfall3DSpectrumSliceCapture"] = waterfall3DSpectrumSliceCapture;
     settings["waterfall3DSpectrumSliceCaptureFixed"] = waterfall3DSpectrumSliceCaptureFixed;
     settings["waterfall3DVncSliceInput"] = waterfall3DVncSliceInput;
+    settings["alternativeInterfaceMode"] = alternativeInterfaceMode;
+    settings["alternativeSpectrumGradientFill"] = alternativeSpectrumGradientFill;
+    settings["alternativeSpectrumGradientOpacity"] = alternativeSpectrumGradientOpacity;
     settings["experimentalGpuWaterfall"] = experimentalGpuWaterfall;
     settings["spurSuppressionEnabled"] = spurSuppressionEnabled;
     QJsonArray spurMask;
@@ -549,6 +552,31 @@ void YourClassName::applySettingsFromJson(const QJsonObject &settingsJson, bool 
         waterfallWidget->set3DSpectrumSliceCaptureFixed(waterfall3DSpectrumSliceCaptureFixed);
         waterfallWidget->set3DModifierFreeSliceInput(waterfall3DVncSliceInput);
     }
+    alternativeInterfaceMode = readBool("alternativeInterfaceMode", alternativeInterfaceMode);
+    alternativeSpectrumGradientFill =
+        readBool("alternativeSpectrumGradientFill", alternativeSpectrumGradientFill);
+    alternativeSpectrumGradientOpacity =
+        (std::clamp)(readInt("alternativeSpectrumGradientOpacity",
+                             alternativeSpectrumGradientOpacity),
+                     0,
+                     100);
+    if (alternativeSpectrumGradientCheckbox) {
+        QSignalBlocker blocker(alternativeSpectrumGradientCheckbox);
+        alternativeSpectrumGradientCheckbox->setChecked(alternativeSpectrumGradientFill);
+    }
+    if (alternativeSpectrumGradientOpacitySlider) {
+        QSignalBlocker blocker(alternativeSpectrumGradientOpacitySlider);
+        alternativeSpectrumGradientOpacitySlider->setValue(alternativeSpectrumGradientOpacity);
+    }
+    if (alternativeSpectrumGradientOpacityValueLabel) {
+        alternativeSpectrumGradientOpacityValueLabel->setText(
+            QStringLiteral("%1%").arg(alternativeSpectrumGradientOpacity));
+    }
+    if (waterfallWidget) {
+        waterfallWidget->setAlternativeSpectrumGradientFill(alternativeSpectrumGradientFill);
+        waterfallWidget->setAlternativeSpectrumGradientOpacity(alternativeSpectrumGradientOpacity);
+    }
+    applyAlternativeInterfaceMode();
     experimentalGpuWaterfall = readBool("experimentalGpuWaterfall", experimentalGpuWaterfall);
     if (waterfallWidget) {
         waterfallWidget->setRenderBackend(experimentalGpuWaterfall

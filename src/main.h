@@ -344,6 +344,7 @@ private:
     void ensureDefaultBandMarkers();
     void updateFrequencyPresetControls();
     void updateGraphBandMarkers();
+    void applyAlternativeInterfaceMode();
     void setControlsPanelVisible(bool visible);
     QVector<QPair<QString, double>> presetMapToVector(const QMap<QString, double> &presets,
                                                       const QStringList &order) const;
@@ -559,6 +560,7 @@ private:
     QComboBox *sampleBox = nullptr;
     QComboBox *fftComboBox = nullptr;
     QComboBox *waterfallDisplayModeCombo = nullptr;
+    QCheckBox *alternativeSpectrumGradientCheckbox = nullptr;
     QComboBox *waterfall3DResolutionCombo = nullptr;
     QComboBox *audioDeviceComboBox = nullptr;
     QComboBox *recordingModeCombo = nullptr;
@@ -693,6 +695,7 @@ private:
     QSlider *sensitivitySlider = nullptr;
     QSlider *levelMinSlider = nullptr;
     QSlider *levelMaxSlider = nullptr;
+    QSlider *alternativeSpectrumGradientOpacitySlider = nullptr;
     QDial *fineTuneDial = nullptr;
     FineTuneScaleWidget *fineTuneScaleWidget = nullptr;
     QStackedWidget *fineTuneStack = nullptr;
@@ -734,6 +737,7 @@ private:
     QLabel *waterfall3DSliceWidthLabel = nullptr;
     QLabel *waterfall3DSpectrumSliceStepLabel = nullptr;
     QLabel *waterfall3DSpectrumSliceRowsLabel = nullptr;
+    QLabel *alternativeSpectrumGradientOpacityValueLabel = nullptr;
     QLabel *contrastLabel = nullptr;
     QLabel *sensitivityLabel = nullptr;
     QLabel *levelMinLabel = nullptr;
@@ -865,6 +869,7 @@ private:
     MyGraphWidget *graphWidget = nullptr;
     MyWaterfallWidget *waterfallWidget = nullptr;
     ScaleWidget *scaleWidget = nullptr;
+    QVBoxLayout *graphLayout = nullptr;
     QDockWidget *controlsDock = nullptr;
     QDockWidget *digitalDock = nullptr;
     QDockWidget *videoDock = nullptr;
@@ -972,6 +977,9 @@ private:
     double amplitudeCalibrationOffsetDb = 0.0;
     int waterfallRowsPerFrame = 1;
     int waterfallDisplayMode = static_cast<int>(MyWaterfallWidget::DisplayMode::Waterfall2D);
+    bool alternativeInterfaceMode = false;
+    bool alternativeSpectrumGradientFill = false;
+    int alternativeSpectrumGradientOpacity = 70;
     int waterfall3DResolutionDivisor = 4;
     int waterfall3DHistoryRows = 128;
     int waterfall3DSliceScrollStep = 1;

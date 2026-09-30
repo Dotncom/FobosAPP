@@ -397,7 +397,7 @@ void YourClassName::displayNetworkSpectrumFrame(const QJsonObject &frame) {
     }
     if (waterfallWidget && frameFresh) {
         waterfallWidget->setData(frequencies, magnitudes, frameMinFrequency, frameMaxFrequency, frameFftLength,
-                                 secondGraph, contrast, sensitivity, displayLevelMin, displayLevelMax);
+                                 secondGraph, colorf, contrast, sensitivity, displayLevelMin, displayLevelMax);
     }
     if (waterfallWidget) {
         waterfallWidget->setScanSegments(frameScanSegments);
@@ -577,7 +577,7 @@ void YourClassName::displayNetworkSpectrumFrameBinary(const QJsonObject &frame, 
     }
     if (waterfallWidget && frameFresh) {
         waterfallWidget->setData(frequencies, magnitudes, frameMinFrequency, frameMaxFrequency, frameFftLength,
-                                 secondGraph, contrast, sensitivity, displayLevelMin, displayLevelMax);
+                                 secondGraph, colorf, contrast, sensitivity, displayLevelMin, displayLevelMax);
     }
     if (waterfallWidget) {
         waterfallWidget->setScanSegments(frameScanSegments);

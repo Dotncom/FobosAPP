@@ -517,6 +517,7 @@ void YourClassName::doubleGraphEnable(bool checked) {
         secondGraph = false;
         qDebug()<<"secondgraph disabled";
     }
+    applyAlternativeInterfaceMode();
 }
 
 void YourClassName::colorGraphEnable(bool checked) {

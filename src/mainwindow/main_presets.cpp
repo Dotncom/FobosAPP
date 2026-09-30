@@ -246,4 +246,9 @@ void YourClassName::updateGraphBandMarkers() {
     graphWidget->setBandMarkers(bandMarkers);
     graphWidget->setBandMarkersEnabled(showGeneralBandMarkers, showAmateurBandMarkers);
     graphWidget->setBandMarkersCompact(compactBandMarkers);
+    if (waterfallWidget) {
+        waterfallWidget->setBandMarkers(bandMarkers);
+        waterfallWidget->setBandMarkersEnabled(showGeneralBandMarkers, showAmateurBandMarkers);
+        waterfallWidget->setBandMarkersCompact(compactBandMarkers);
+    }
 }

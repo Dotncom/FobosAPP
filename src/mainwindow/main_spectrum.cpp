@@ -1199,6 +1199,7 @@ void YourClassName::updateSpectrum() {
                                      displayMaxFrequency,
                                      static_cast<int>(preparedDisplayFrame.levels.size()),
                                      secondGraph,
+                                     colorf,
                                      contrast,
                                      sensitivity,
                                      displayLevelMin,

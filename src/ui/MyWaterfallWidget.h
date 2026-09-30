@@ -8,6 +8,7 @@
 #include <QOpenGLShader>
 #include <QOpenGLShaderProgram>
 #include <vector>
+#include <array>
 #include <QColor>
 #include <QElapsedTimer>
 #include <QOpenGLTexture>
@@ -19,6 +20,7 @@
 #include <cmath>
 #include <memory>
 #include "scanvisualassembler.h"
+#include "spectrumoverlaytypes.h"
 
 class Waterfall3DRenderer;
 class QLabel;
@@ -40,7 +42,7 @@ public:
     explicit MyWaterfallWidget(QWidget *parent = nullptr);
     ~MyWaterfallWidget();
     bool initialized;
-    void setData(const std::vector<float> &xData, const std::vector<float> &yData, double minFrequency, double maxFrequency, int fftLength, bool secondGraph, float contrast, float sensitivity, float levelMin, float levelMax, bool displayOrdered = false);
+    void setData(const std::vector<float> &xData, const std::vector<float> &yData, double minFrequency, double maxFrequency, int fftLength, bool secondGraph, bool colorSpectrum, float contrast, float sensitivity, float levelMin, float levelMax, bool displayOrdered = false);
     void setRowsPerFrame(int rows);
     void setRenderBackend(RenderBackend backend);
     RenderBackend renderBackend() const;
@@ -55,7 +57,13 @@ public:
     void set3DSpectrumSliceCapture(bool enabled);
     void set3DSpectrumSliceCaptureFixed(bool enabled);
     void set3DModifierFreeSliceInput(bool enabled);
+    void setAlternativeInterfaceMode(bool enabled);
+    void setAlternativeSpectrumGradientFill(bool enabled);
+    void setAlternativeSpectrumGradientOpacity(int percent);
     void setLevelRange(float minLevel, float maxLevel);
+    void setBandMarkersEnabled(bool generalEnabled, bool amateurEnabled);
+    void setBandMarkersCompact(bool compact);
+    void setBandMarkers(const QVector<GraphBandMarker> &markers);
     void setScanSegments(const QVector<ScanVisualSegment> &segments);
     void setScanSegmentMarkersVisible(bool visible);
     void setSpectrumMetadata(double centerFrequencyHz,
@@ -81,6 +89,7 @@ protected:
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;
+    void leaveEvent(QEvent *event) override;
 private:
     void ensureLineBuffer();
     void resetWaterfallTexture(int w, int h);
@@ -90,10 +99,19 @@ private:
     void drawMiniWaterfallOverlay(float vStart);
     void uploadPendingTextureLine();
     void drawScanSegments(QPainter &painter) const;
+    void drawAlternativeSpectrumOverlay(QPainter &painter,
+                                        const std::vector<float> &normalizedLevels) const;
+    void drawAlternativeBandMarkers(QPainter &painter, const QRect &plotRect) const;
+    QRect alternativeSpectrumPlotRect() const;
+    QString formatFrequencyLabel(double frequencyHz) const;
+    QString formatFrequencySpanLabel(double spanHz) const;
     void updateFpsCounter();
     void positionInfoOverlays();
     void updateSliceOverlay(const QPoint &anchor);
     void hideSliceOverlay();
+    void updateAlternativeDbLabels();
+    void updateAlternativeBandLabels();
+    void updateAlternativeInteractionLabels(const std::vector<float> &normalizedLevels);
     double displayFrequencyAtX(int x) const;
     double actualFrequencyForDisplayFrequency(double displayFrequency) const;
     double displayFrequencyForActualFrequency(double actualFrequency) const;
@@ -109,7 +127,7 @@ private:
     std::vector<float> pixelFrequencyData;
     std::vector<float> pixelLevelData;
     QColor valueToColor(float value, float contrastFactor, float sensitivityFactor);
-    QColor valueToColors(float value);
+    QColor valueToColors(float value) const;
     float normalizedLevel(float value) const;
     float yMin, yMax, contrast, sensitivity, levelMin, levelMax;
     double xMin, xMax;
@@ -129,6 +147,7 @@ private:
     bool waterfallProgramReady = false;
     bool waterfallProgramTried = false;
     bool secondGraph;
+    bool colorSpectrum = true;
     bool changebit;
     bool spectrumPanActive = false;
     bool spectrumPanMoved = false;
@@ -141,10 +160,23 @@ private:
     bool frequencySliceMouseActive = false;
     bool spectrumFrameSliceMouseActive = false;
     bool modifierFreeSliceInput = false;
+    bool alternativeInterfaceMode = false;
+    bool alternativeSpectrumGradientFill = false;
+    int alternativeSpectrumGradientOpacity = 70;
+    bool alternativeSpectrumHoverVisible = false;
+    QPoint alternativeSpectrumHoverPos;
+    bool alternativeSpectrumMeasurementActive = false;
+    bool alternativeSpectrumMeasurementVisible = false;
+    QPoint alternativeSpectrumMeasureStartPos;
+    QPoint alternativeSpectrumMeasureEndPos;
     bool pendingTextureLine = false;
     bool textureClearRequested = false;
     bool updateQueued = false;
     QVector<ScanVisualSegment> scanSegments;
+    QVector<GraphBandMarker> bandMarkers;
+    bool generalBandMarkersEnabled = false;
+    bool amateurBandMarkersEnabled = false;
+    bool compactBandMarkersEnabled = false;
     bool scanSegmentMarkersVisible = true;
     bool fpsOverlayEnabled = false;
     bool extendedInfoOverlayEnabled = false;
@@ -155,6 +187,10 @@ private:
     QLabel *fpsOverlayLabel = nullptr;
     QLabel *sliceOverlayLabel = nullptr;
     QLabel *sliceDetailsOverlayLabel = nullptr;
+    std::array<QLabel*, 6> alternativeDbLabels{};
+    std::vector<QLabel*> alternativeBandLabels;
+    QLabel *alternativeMeasurementLabel = nullptr;
+    QLabel *alternativeHoverLabel = nullptr;
     QPoint sliceOverlayAnchor;
 };
 

@@ -510,7 +510,7 @@ YourClassName::YourClassName(QWidget *parent)
     QVBoxLayout *levelMaxLayout = new QVBoxLayout();
     QVBoxLayout *layout = new QVBoxLayout();
     QGridLayout *checkboxLayout = new QGridLayout();
-    QVBoxLayout *graphLayout = new QVBoxLayout();
+    graphLayout = new QVBoxLayout();
     QHBoxLayout *graphToolLayout = new QHBoxLayout();
     
     for (int i = 0; i < 8; ++i) {
@@ -779,6 +779,8 @@ YourClassName::YourClassName(QWidget *parent)
     waterfallWidget->set3DSpectrumSliceCapture(waterfall3DSpectrumSliceCapture);
     waterfallWidget->set3DSpectrumSliceCaptureFixed(waterfall3DSpectrumSliceCaptureFixed);
     waterfallWidget->set3DModifierFreeSliceInput(waterfall3DVncSliceInput);
+    waterfallWidget->setAlternativeSpectrumGradientFill(alternativeSpectrumGradientFill);
+    waterfallWidget->setAlternativeSpectrumGradientOpacity(alternativeSpectrumGradientOpacity);
     waterfallWidget->setRenderBackend(experimentalGpuWaterfall
                                           ? MyWaterfallWidget::RenderBackend::GpuPrepared
                                           : MyWaterfallWidget::RenderBackend::CpuTexture);
@@ -935,6 +937,36 @@ YourClassName::YourClassName(QWidget *parent)
     waterfall3DVncSliceInputCheckbox->setToolTip(uiText(
         QStringLiteral("waterfall_3d_vnc_slice_input_tooltip"),
         QStringLiteral("Use left/right mouse buttons for frequency/time slices without keyboard modifiers. Disable it to restore normal tuning, panning and context-menu actions.")));
+    alternativeSpectrumGradientCheckbox = new QCheckBox(
+        uiText(QStringLiteral("alternative_spectrum_gradient"),
+               QStringLiteral("Fill spectrum area with gradient")),
+        this);
+    markTranslatable(alternativeSpectrumGradientCheckbox,
+                     QStringLiteral("alternative_spectrum_gradient"),
+                     QStringLiteral("Fill spectrum area with gradient"));
+    alternativeSpectrumGradientCheckbox->setChecked(alternativeSpectrumGradientFill);
+    alternativeSpectrumGradientCheckbox->setToolTip(uiText(
+        QStringLiteral("alternative_spectrum_gradient_tooltip"),
+        QStringLiteral("Fill the area below the transparent spectrum contour in Alternative interface mode.")));
+    QLabel *alternativeSpectrumGradientOpacityLabel = new QLabel(
+        uiText(QStringLiteral("alternative_spectrum_gradient_opacity"),
+               QStringLiteral("Gradient opacity:")),
+        this);
+    markTranslatable(alternativeSpectrumGradientOpacityLabel,
+                     QStringLiteral("alternative_spectrum_gradient_opacity"),
+                     QStringLiteral("Gradient opacity:"));
+    alternativeSpectrumGradientOpacitySlider = new QSlider(Qt::Horizontal, this);
+    alternativeSpectrumGradientOpacitySlider->setRange(0, 100);
+    alternativeSpectrumGradientOpacitySlider->setValue(alternativeSpectrumGradientOpacity);
+    alternativeSpectrumGradientOpacitySlider->setMinimumWidth(150);
+    alternativeSpectrumGradientOpacitySlider->setSizePolicy(QSizePolicy::Expanding,
+                                                              QSizePolicy::Fixed);
+    alternativeSpectrumGradientOpacitySlider->setToolTip(uiText(
+        QStringLiteral("alternative_spectrum_gradient_opacity_tooltip"),
+        QStringLiteral("Set spectrum gradient opacity from transparent to solid.")));
+    alternativeSpectrumGradientOpacityValueLabel = new QLabel(
+        QStringLiteral("%1%").arg(alternativeSpectrumGradientOpacity), this);
+    alternativeSpectrumGradientOpacityValueLabel->setMinimumWidth(38);
     QHBoxLayout *waterfall3DSpectrumSliceRowsLayout = new QHBoxLayout();
     waterfall3DSpectrumSliceRowsLayout->setContentsMargins(0, 0, 0, 0);
     waterfall3DSpectrumSliceRowsLayout->addWidget(waterfall3DSpectrumSliceRowsLabel);
@@ -945,7 +977,23 @@ YourClassName::YourClassName(QWidget *parent)
     QHBoxLayout *waterfall3DVncSliceInputLayout = new QHBoxLayout();
     waterfall3DVncSliceInputLayout->setContentsMargins(0, 0, 0, 0);
     waterfall3DVncSliceInputLayout->addWidget(waterfall3DVncSliceInputCheckbox);
+    waterfall3DVncSliceInputLayout->addWidget(alternativeSpectrumGradientCheckbox);
     waterfall3DVncSliceInputLayout->addStretch(1);
+    QGridLayout *alternativeSpectrumGradientOpacityLayout = new QGridLayout();
+    alternativeSpectrumGradientOpacityLayout->setContentsMargins(0, 0, 0, 0);
+    alternativeSpectrumGradientOpacityLayout->addWidget(alternativeSpectrumGradientOpacityLabel,
+                                                         0,
+                                                         0);
+    alternativeSpectrumGradientOpacityLayout->addWidget(alternativeSpectrumGradientOpacityValueLabel,
+                                                         0,
+                                                         1,
+                                                         Qt::AlignRight);
+    alternativeSpectrumGradientOpacityLayout->addWidget(alternativeSpectrumGradientOpacitySlider,
+                                                         1,
+                                                         0,
+                                                         1,
+                                                         2);
+    alternativeSpectrumGradientOpacityLayout->setColumnStretch(0, 1);
     
     refreshButton = new QPushButton("Refresh USB Devices", this);
     markTranslatable(refreshButton, QStringLiteral("refresh_usb"), QStringLiteral("Refresh USB Devices"));
@@ -2620,6 +2668,7 @@ YourClassName::YourClassName(QWidget *parent)
     waterfall3DSection.contentLayout->addLayout(waterfall3DSpectrumSliceStepLayout);
     waterfall3DSection.contentLayout->addLayout(waterfall3DSpectrumSliceRowsLayout);
     waterfall3DSection.contentLayout->addLayout(waterfall3DVncSliceInputLayout);
+    waterfall3DSection.contentLayout->addLayout(alternativeSpectrumGradientOpacityLayout);
 
     layout->addWidget(deviceSection.widget);
     layout->addWidget(receiverSection.widget);
@@ -4445,7 +4494,13 @@ YourClassName::YourClassName(QWidget *parent)
                 if (!waterfallDisplayModeCombo || !waterfallWidget || index < 0) {
                     return;
                 }
-                waterfallDisplayMode = waterfallDisplayModeCombo->itemData(index).toInt();
+                const int requestedMode = waterfallDisplayModeCombo->itemData(index).toInt();
+                if (alternativeInterfaceMode &&
+                    requestedMode == static_cast<int>(MyWaterfallWidget::DisplayMode::Waterfall2D)) {
+                    applyAlternativeInterfaceMode();
+                    return;
+                }
+                waterfallDisplayMode = requestedMode;
                 waterfallWidget->setDisplayMode(
                     static_cast<MyWaterfallWidget::DisplayMode>(waterfallDisplayMode));
                 savePersistentSettings();
@@ -4541,6 +4596,34 @@ YourClassName::YourClassName(QWidget *parent)
                 waterfall3DVncSliceInput = checked;
                 if (waterfallWidget) {
                     waterfallWidget->set3DModifierFreeSliceInput(checked);
+                }
+                savePersistentSettings();
+            });
+    connect(alternativeSpectrumGradientCheckbox,
+            &QCheckBox::toggled,
+            this,
+            [this](bool checked) {
+                alternativeSpectrumGradientFill = checked;
+                if (alternativeSpectrumGradientOpacitySlider) {
+                    alternativeSpectrumGradientOpacitySlider->setEnabled(
+                        alternativeInterfaceMode && checked);
+                }
+                if (waterfallWidget) {
+                    waterfallWidget->setAlternativeSpectrumGradientFill(checked);
+                }
+                savePersistentSettings();
+            });
+    connect(alternativeSpectrumGradientOpacitySlider,
+            &QSlider::valueChanged,
+            this,
+            [this](int value) {
+                alternativeSpectrumGradientOpacity = value;
+                if (alternativeSpectrumGradientOpacityValueLabel) {
+                    alternativeSpectrumGradientOpacityValueLabel->setText(
+                        QStringLiteral("%1%").arg(value));
+                }
+                if (waterfallWidget) {
+                    waterfallWidget->setAlternativeSpectrumGradientOpacity(value);
                 }
                 savePersistentSettings();
             });
@@ -7536,7 +7619,13 @@ int main(int argc, char *argv[]) {
     logFobosApiInfo();
     logReceiverBackendRegistry();
     YourClassName window;
-    window.show(); 
+#ifdef _WIN32
+    window.showNormal();
+    window.raise();
+    window.activateWindow();
+#else
+    window.show();
+#endif
 
     qDebug() << "App started";
 #ifdef _WIN32

@@ -194,9 +194,21 @@ void YourClassName::applyUiLanguage() {
                      QStringLiteral("waterfall_display_3d_mini"),
                      QStringLiteral("3D + mini waterfall"));
     if (waterfallDisplayModeCombo) {
-        waterfallDisplayModeCombo->setToolTip(uiText(
-            QStringLiteral("waterfall_display_mode_tooltip"),
-            QStringLiteral("Choose the main waterfall visualization mode.")));
+        waterfallDisplayModeCombo->setToolTip(alternativeInterfaceMode
+            ? uiText(QStringLiteral("alternative_interface_mode_locked"),
+                     QStringLiteral("Alternative interface supports fixed 3D and 3D with a mini waterfall."))
+            : uiText(QStringLiteral("waterfall_display_mode_tooltip"),
+                     QStringLiteral("Choose the main waterfall visualization mode.")));
+    }
+    if (alternativeSpectrumGradientCheckbox) {
+        alternativeSpectrumGradientCheckbox->setToolTip(uiText(
+            QStringLiteral("alternative_spectrum_gradient_tooltip"),
+            QStringLiteral("Fill the area below the transparent spectrum contour in Alternative interface mode.")));
+    }
+    if (alternativeSpectrumGradientOpacitySlider) {
+        alternativeSpectrumGradientOpacitySlider->setToolTip(uiText(
+            QStringLiteral("alternative_spectrum_gradient_opacity_tooltip"),
+            QStringLiteral("Set spectrum gradient opacity from transparent to solid.")));
     }
     if (waterfall3DResolutionCombo) {
         waterfall3DResolutionCombo->setToolTip(uiText(

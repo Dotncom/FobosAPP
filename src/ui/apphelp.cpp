@@ -40,6 +40,8 @@ FobosAPP - SDR-програма для Fobos SDR, Fobos Agile, RTL-SDR, rtl_tcp 
 
 3D-водоспад
 - У розділі 3D waterfall можна обрати звичайний 2D-водоспад, 3D або 3D з мініатюрою 2D-водоспаду.
+- Альтернативний інтерфейс у загальних налаштуваннях ховає окремий спектр і показує його прозорий контур перед фіксованим 3D-водоспадом. Камера і звичайний 2D-режим при цьому заблоковані, але доступні 3D та 3D з малим водоспадом зліва вгорі; шкала частот розташована знизу.
+- Нижня спектральна область альтернативного інтерфейсу зберігає вимір смуги лівим перетягуванням, підказку частоти/рівня, автоцентрування та контекстне меню. Підписи діапазонів також переносяться на цей шар; градієнт під контуром вмикається окремою галочкою, а його прозорість задається слайдером.
 - Роздільна здатність 1/1...1/64 визначає кількість частотних точок у 3D. Для дробних значень сусідні точки усереднюються, а не просто відкидаються.
 - Пам'ять задає кількість рядків історії у 3D-моделі. Великі значення потребують більше GPU-пам'яті й часу на відмальовування.
 - Ctrl + колесо наближає або віддаляє 3D-камеру. Ctrl + перетягування лівою кнопкою обертає камеру, Ctrl + правою кнопкою рухає її паралельно площині водоспаду.
@@ -48,6 +50,8 @@ FobosAPP - SDR-програма для Fobos SDR, Fobos Agile, RTL-SDR, rtl_tcp 
 - Якщо VNC не передає Alt/Shift, увімкніть VNC-керування зрізами: тоді ліва/права кнопка працюють зі зрізами без клавіатури. Вимкніть галочку, щоб повернути звичайне налаштування частоти, перетягування та контекстне меню.
 - Без галочки Захват часовий зріз залишається на обраному місці, а дані в ньому оновлюються. Захват веде вибраний епізод разом із рухом історії. Зафіксувати захват додатково заморожує копію вибраного епізоду для розглядання.
 - Ці самі 3D-режими, камера і зрізи доступні у вікні перегляду spectrum-frame записів.
+
+)HELP") + QString::fromUtf8(R"HELP(
 
 Калібрування
 - Frequency calibration offset у загальних налаштуваннях компенсує сталу похибку частоти приймача і додається до апаратного налаштування.
@@ -158,6 +162,8 @@ Spectrum and waterfall
 
 3D waterfall
 - The 3D waterfall section selects the normal 2D waterfall, 3D, or 3D with a small 2D waterfall overlay.
+- Alternative interface in Settings hides the separate spectrum and overlays its transparent contour at the front of a fixed 3D waterfall. Camera controls and normal 2D mode are locked, but both 3D and 3D with a top-left mini waterfall remain available; the frequency scale is placed below the scene.
+- Its lower spectrum area retains left-drag bandwidth measurement, frequency/level hover data, auto-centering and the tuning context menu. Band labels are preserved there, while a checkbox enables gradient fill below the contour and a slider controls its opacity.
 - Resolution 1/1...1/64 controls the number of frequency points in 3D. Fractional modes average neighboring points instead of merely discarding them.
 - Memory controls the number of history rows in the 3D model. Larger values require more GPU memory and rendering time.
 - Ctrl + wheel moves the 3D camera closer or farther. Ctrl + left-drag orbits the camera; Ctrl + right-drag pans it parallel to the waterfall plane.
@@ -166,6 +172,8 @@ Spectrum and waterfall
 - If VNC does not forward Alt/Shift, enable VNC slice control: left/right buttons then operate slices without a keyboard modifier. Disable it to restore normal tuning, panning and the context menu.
 - With Capture disabled, the time slice stays at the selected place while its data changes. Capture follows the selected episode through the scrolling history. Fix capture additionally freezes a copy of that episode for inspection.
 - The same 3D modes, camera and slice tools are available in the spectrum-frame replay window.
+
+)HELP") + QString::fromUtf8(R"HELP(
 
 Calibration
 - Frequency calibration offset in Settings compensates a stable receiver frequency error and is added to hardware tuning.

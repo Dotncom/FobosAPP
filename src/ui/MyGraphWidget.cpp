@@ -147,6 +147,14 @@ void MyGraphWidget::setExtendedInfoOverlayEnabled(bool enabled) {
     update();
 }
 
+void MyGraphWidget::setFrequencyAxisLabelsVisible(bool visible) {
+    if (frequencyAxisLabelsVisible == visible) {
+        return;
+    }
+    frequencyAxisLabelsVisible = visible;
+    update();
+}
+
 void MyGraphWidget::clearData() {
     xData.clear();
     yData.clear();
@@ -335,6 +343,7 @@ void MyGraphWidget::paintGL() {
     drawScanSegments(painter);
     drawBandMarkers(painter);
     drawYAxis(painter);
+    drawXAxis(painter);
     drawTuningMarker(painter);
     drawBandwidthMeasurement(painter);
     drawHoverCursor(painter);
@@ -954,7 +963,7 @@ double MyGraphWidget::displayFrequencyAt(int index, int count) const {
 }
 
 int MyGraphWidget::bottomMargin() const {
-    int margin = GRAPH_BOTTOM_MARGIN;
+    int margin = frequencyAxisLabelsVisible ? 34 : GRAPH_BOTTOM_MARGIN;
     if (compactBandMarkersEnabled && (generalBandMarkersEnabled || amateurBandMarkersEnabled)) {
         margin = (std::max)(margin, GRAPH_COMPACT_BAND_BOTTOM_MARGIN);
     }
@@ -962,6 +971,66 @@ int MyGraphWidget::bottomMargin() const {
         margin = (std::max)(margin, GRAPH_SCAN_SEGMENT_BOTTOM_MARGIN);
     }
     return margin;
+}
+
+void MyGraphWidget::drawXAxis(QPainter &painter) const {
+    if (!frequencyAxisLabelsVisible || width() <= 0 || height() <= 0 ||
+        !std::isfinite(xMin) || !std::isfinite(xMax) || qFuzzyCompare(xMin, xMax)) {
+        return;
+    }
+
+    const int plotLeft = GRAPH_LEFT_MARGIN;
+    const int plotRight = (std::max)(plotLeft + 1, width() - GRAPH_RIGHT_MARGIN);
+    const int plotTop = GRAPH_TOP_MARGIN;
+    const int plotBottom = (std::max)(GRAPH_TOP_MARGIN + 1, height() - bottomMargin());
+    const int divisions = width() >= 1600 ? 18 : (width() >= 1100 ? 14 : 10);
+    const double maximumAbsoluteFrequency = (std::max)(std::abs(xMin), std::abs(xMax));
+    double unitScale = 1.0;
+    QString unitSuffix = QStringLiteral(" Hz");
+    if (maximumAbsoluteFrequency >= 1.0e9) {
+        unitScale = 1.0e9;
+        unitSuffix = QStringLiteral("G");
+    } else if (maximumAbsoluteFrequency >= 1.0e6) {
+        unitScale = 1.0e6;
+        unitSuffix = QStringLiteral("M");
+    } else if (maximumAbsoluteFrequency >= 1.0e3) {
+        unitScale = 1.0e3;
+        unitSuffix = QStringLiteral("k");
+    }
+    const double stepInUnits = std::abs(xMax - xMin) /
+                               static_cast<double>(divisions) / unitScale;
+    const int decimals = stepInUnits >= 10.0 ? 1 : (stepInUnits >= 1.0 ? 2 : 3);
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing, false);
+    painter.setRenderHint(QPainter::TextAntialiasing, true);
+    const QFontMetrics metrics = painter.fontMetrics();
+    for (int tick = 0; tick <= divisions; ++tick) {
+        const double ratio = static_cast<double>(tick) / divisions;
+        const int x = plotLeft + static_cast<int>(std::lround(
+                                     ratio * static_cast<double>(plotRight - plotLeft)));
+        const double displayFrequency = xMin + ratio * (xMax - xMin);
+        const double actualFrequency = actualFrequencyForDisplayFrequency(displayFrequency);
+        const QString label = QStringLiteral("%1%2")
+                                  .arg(actualFrequency / unitScale, 0, 'f', decimals)
+                                  .arg(unitSuffix);
+        const int textWidth = metrics.horizontalAdvance(label);
+        int textX = x - textWidth / 2;
+        if (tick == 0) {
+            textX = plotLeft + 3;
+        } else if (tick == divisions) {
+            textX = plotRight - textWidth - 3;
+        }
+        painter.setPen(QColor(80, 110, 98, 190));
+        painter.drawLine(x, plotTop, x, plotBottom + 5);
+        painter.setPen(QColor(195, 220, 205));
+        painter.drawText(textX,
+                         plotBottom + 7,
+                         textWidth + 2,
+                         metrics.height() + 2,
+                         Qt::AlignHCenter | Qt::AlignTop,
+                         label);
+    }
+    painter.restore();
 }
 
 void MyGraphWidget::drawScanSegments(QPainter &painter) const {
@@ -1261,7 +1330,11 @@ void MyGraphWidget::drawYAxis(QPainter &painter) const {
     }
 
     painter.setPen(QColor(185, 210, 195));
-    painter.drawText(4, height() - 4, "dBFS");
+    if (frequencyAxisLabelsVisible) {
+        painter.drawText(4, plotTop + painter.fontMetrics().height(), "dBFS");
+    } else {
+        painter.drawText(4, height() - 4, "dBFS");
+    }
 }
 
 void MyGraphWidget::drawTuningMarker(QPainter &painter) const {

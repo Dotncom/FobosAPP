@@ -1,5 +1,40 @@
 # Changelog
 
+## 4.7.2 - 2026-10-01
+
+### Added
+
+- Added an optional Alternative interface that combines a fixed front-facing
+  3D waterfall with a transparent live spectrum along its near edge.
+- Added Alternative-interface gradient fill with adjustable opacity, optional
+  upper second spectrum, and support for the 3D plus mini-waterfall mode.
+- Added frequency-axis labels to the upper spectrum used by the Alternative
+  interface.
+
+### Changed
+
+- Reworked the fixed 3D projection so its near edge aligns with the lower
+  spectrum while the far edge is taller and wider for better use of the
+  available viewport.
+- Preserved spectrum tuning, hover inspection, bandwidth measurement, band
+  overlays, mouse navigation, and 3D slice controls in the new layout.
+- Added settings persistence, settings import/export, translations, and help
+  text for the Alternative interface and its gradient controls.
+
+### Fixed
+
+- Fixed upside-down or fragmented lower-spectrum labels in the OpenGL-backed
+  Alternative interface by moving dB, hover, measurement, and band text to
+  native Qt labels.
+- Fixed Alternative-interface spectrum geometry and picking so visible mouse
+  positions match the rendered frequency and time slices.
+- Improved normal Windows startup activation without changing Linux startup.
+
+### Notes
+
+- Android is unchanged and is not published with this desktop and Raspberry
+  source patch.
+
 ## 4.7.1 - 2026-09-30
 
 ### Added
