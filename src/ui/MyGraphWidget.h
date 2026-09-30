@@ -5,6 +5,7 @@
 #include <QOpenGLFunctions>
 #include <QVector>
 #include <QColor>
+#include <QElapsedTimer>
 #include <QString>
 #include <vector>
 #include <QWheelEvent>
@@ -27,8 +28,8 @@ public:
     explicit MyGraphWidget(QWidget *parent = nullptr);
     ~MyGraphWidget();
 
-    void setData(const std::vector<float> &xData, const std::vector<float> &yData, double xMin, double xMax, int fftLength, bool colorf);
-    void setOverlayData(const std::vector<float> &yData, bool enabled);
+    void setData(const std::vector<float> &xData, const std::vector<float> &yData, double xMin, double xMax, int fftLength, bool colorf, bool displayOrdered = false);
+    void setOverlayData(const std::vector<float> &yData, bool enabled, bool displayOrdered = false);
     void setLevelRange(float minLevel, float maxLevel);
     void setBandMarkersEnabled(bool generalEnabled, bool amateurEnabled);
     void setBandMarkersCompact(bool compact);
@@ -36,6 +37,13 @@ public:
     void setScanSegments(const QVector<ScanVisualSegment> &segments);
     void setScanSegmentMarkersVisible(bool visible);
     void setTuningMarker(double frequencyHz, bool visible);
+    void setSpectrumMetadata(double centerFrequencyHz,
+                             double listeningFrequencyHz,
+                             double sampleRateHz,
+                             int sourceFftLength,
+                             int fftWindowType);
+    void setFpsOverlayEnabled(bool enabled);
+    void setExtendedInfoOverlayEnabled(bool enabled);
     void clearData();
 
 signals:
@@ -61,6 +69,8 @@ private:
         double frequency = 0.0;
         double displayFrequency = 0.0;
         float level = 0.0f;
+        int dataIndex = -1;
+        bool fromOverlay = false;
         int x = 0;
         int y = 0;
     };
@@ -71,7 +81,12 @@ private:
     void drawTuningMarker(QPainter &painter) const;
     void drawBandwidthMeasurement(QPainter &painter) const;
     void drawHoverCursor(QPainter &painter) const;
+    void updateFpsCounter();
+    void drawFpsOverlay(QPainter &painter) const;
+    void drawExtendedInfoOverlay(QPainter &painter) const;
     float normalizedLevel(float value) const;
+    float displayLevelAt(const std::vector<float> &levels, int index, int count, bool ordered) const;
+    double displayFrequencyAt(int index, int count) const;
     int bottomMargin() const;
     double displayFrequencyAtX(int x) const;
     double actualFrequencyForDisplayFrequency(double displayFrequency) const;
@@ -93,6 +108,8 @@ private:
     std::vector<float> renderLevelScratch;
     std::vector<float> renderOverlayLevelScratch;
     bool overlayEnabled = false;
+    bool dataDisplayOrdered = false;
+    bool overlayDisplayOrdered = false;
     bool generalBandMarkersEnabled = false;
     bool amateurBandMarkersEnabled = false;
     bool compactBandMarkersEnabled = false;
@@ -110,6 +127,16 @@ private:
     bool scanSegmentMarkersVisible = true;
     bool tuningMarkerVisible = false;
     double tuningMarkerFrequencyHz = 0.0;
+    double metadataCenterFrequencyHz = 0.0;
+    double metadataListeningFrequencyHz = 0.0;
+    double metadataSampleRateHz = 0.0;
+    int metadataFftLength = 0;
+    int metadataFftWindowType = 0;
+    bool fpsOverlayEnabled = false;
+    bool extendedInfoOverlayEnabled = false;
+    QElapsedTimer fpsElapsedTimer;
+    int fpsFrameCount = 0;
+    double displayedFps = 0.0;
     QColor valueToColor(float value);
 };
 

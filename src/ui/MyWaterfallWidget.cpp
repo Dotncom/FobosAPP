@@ -1,10 +1,12 @@
 #include "MyWaterfallWidget.h"
+#include "radiosettings.h"
 #include "waterfall3drenderer.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <limits>
+#include <QLabel>
 
 bool changebit=false;
 
@@ -77,10 +79,30 @@ MyWaterfallWidget::MyWaterfallWidget(QWidget *parent)
       levelMin(-120), levelMax(0), fftLength(32768), initialized(false), secondGraph(false),
       waterfall3DRenderer(std::make_unique<Waterfall3DRenderer>()) {
 		waterfallTexture = 0;
+    fpsOverlayLabel = new QLabel(QStringLiteral("FPS --"), this);
+    fpsOverlayLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
+    fpsOverlayLabel->setStyleSheet(QStringLiteral(
+        "QLabel { color: rgb(120, 255, 150); background-color: rgba(0, 0, 0, 180); "
+        "padding: 3px 6px; border: 1px solid rgba(120, 255, 150, 100); }"));
+    fpsOverlayLabel->adjustSize();
+    fpsOverlayLabel->hide();
+    sliceOverlayLabel = new QLabel(this);
+    sliceOverlayLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
+    sliceOverlayLabel->setStyleSheet(QStringLiteral(
+        "QLabel { color: white; background-color: rgba(12, 16, 22, 215); "
+        "padding: 4px 7px; border: 1px solid rgba(120, 210, 255, 180); }"));
+    sliceOverlayLabel->hide();
+    sliceDetailsOverlayLabel = new QLabel(this);
+    sliceDetailsOverlayLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
+    sliceDetailsOverlayLabel->setStyleSheet(QStringLiteral(
+        "QLabel { color: rgb(225, 240, 255); background-color: rgba(0, 0, 0, 190); "
+        "padding: 5px 7px; border: 1px solid rgba(120, 210, 255, 120); }"));
+    sliceDetailsOverlayLabel->hide();
 }
 
 MyWaterfallWidget::~MyWaterfallWidget() {
     makeCurrent();
+    waterfall3DRenderer->releaseGpuResources();
     if (waterfallTexture != 0) {
         glDeleteTextures(1, &waterfallTexture);
         waterfallTexture = 0;
@@ -112,6 +134,7 @@ void MyWaterfallWidget::wheelEvent(QWheelEvent *event) {
                 waterfall3DRenderer->stepSpectrumSlice(signedDelta > 0 ? 1 : -1);
             }
         }
+        updateSliceOverlay(sliceOverlayAnchor);
         update();
         event->accept();
         return;
@@ -149,6 +172,7 @@ void MyWaterfallWidget::mousePressEvent(QMouseEvent *event) {
         if (selected) {
             spectrumFrameSliceMouseActive = false;
             frequencySliceMouseActive = true;
+            updateSliceOverlay(event->pos());
             update();
         }
         event->accept();
@@ -168,6 +192,7 @@ void MyWaterfallWidget::mousePressEvent(QMouseEvent *event) {
         if (selected) {
             frequencySliceMouseActive = false;
             spectrumFrameSliceMouseActive = true;
+            updateSliceOverlay(event->pos());
             update();
         }
         event->accept();
@@ -263,6 +288,7 @@ void MyWaterfallWidget::mouseReleaseEvent(QMouseEvent *event) {
             waterfall3DRenderer->endSpectrumSlice();
         }
         spectrumFrameSliceMouseActive = false;
+        hideSliceOverlay();
         update();
         event->accept();
         return;
@@ -273,6 +299,7 @@ void MyWaterfallWidget::mouseReleaseEvent(QMouseEvent *event) {
             waterfall3DRenderer->endFrequencySlice();
         }
         frequencySliceMouseActive = false;
+        hideSliceOverlay();
         update();
         event->accept();
         return;
@@ -517,6 +544,7 @@ void MyWaterfallWidget::resizeGL(int w, int h) {
             waterfallVbo.allocate(static_cast<int>(16 * sizeof(GLfloat)));
             waterfallVbo.release();
         }
+        positionInfoOverlays();
         qDebug() << "resizeGL done";
 }
 
@@ -599,17 +627,12 @@ void MyWaterfallWidget::setData(const std::vector<float> &sourceXData,
                                 float contrast,
                                 float sensitivity,
                                 float levelMin,
-                                float levelMax) {
+                                 float levelMax,
+                                 bool displayOrdered) {
     bool shouldScheduleUpdate = false;
+    bool shouldRefreshSliceOverlay = false;
     {
         QMutexLocker locker(&mutex);
-        if (secondGraph) {
-            this->xData = sourceXData;
-            this->yData = sourceYData;
-        } else {
-            this->xData.clear();
-            this->yData.clear();
-        }
         this->xMin = xMin;
         this->xMax = xMax;
         this->fftLength = std::max(0, fftLength);
@@ -654,16 +677,22 @@ void MyWaterfallWidget::setData(const std::vector<float> &sourceXData,
                       std::numeric_limits<float>::quiet_NaN());
 
             for (int id = 0; id < dataCount; ++id) {
-                if (!std::isfinite(sourceXData[static_cast<std::size_t>(id)])) {
+                if (!displayOrdered && !std::isfinite(sourceXData[static_cast<std::size_t>(id)])) {
                     continue;
                 }
-                const int x1 = static_cast<int>((sourceXData[static_cast<std::size_t>(id)] - this->xMin) *
-                                                lineWidth /
-                                                (this->xMax - this->xMin));
+                const int x1 = displayOrdered
+                                   ? std::clamp(static_cast<int>(
+                                                    static_cast<long long>(id) * lineWidth /
+                                                    (std::max)(1, dataCount)),
+                                                0,
+                                                lineWidth - 1)
+                                   : static_cast<int>((sourceXData[static_cast<std::size_t>(id)] - this->xMin) *
+                                                      lineWidth /
+                                                      (this->xMax - this->xMin));
                 if (x1 < 0 || x1 >= lineWidth) {
                     continue;
                 }
-                const int shiftedIndex = (id + dataCount / 2) % dataCount;
+                const int shiftedIndex = displayOrdered ? id : (id + dataCount / 2) % dataCount;
                 const float value = sourceYData[static_cast<std::size_t>(shiftedIndex)];
                 if (std::isfinite(value)) {
                     float &pixelValue = pixelMaxData[static_cast<std::size_t>(x1)];
@@ -731,8 +760,16 @@ void MyWaterfallWidget::setData(const std::vector<float> &sourceXData,
             updateQueued = true;
             shouldScheduleUpdate = true;
         }
+        if ((frequencySliceMouseActive || spectrumFrameSliceMouseActive) &&
+            (!sliceOverlayUpdateTimer.isValid() || sliceOverlayUpdateTimer.elapsed() >= 200)) {
+            sliceOverlayUpdateTimer.restart();
+            shouldRefreshSliceOverlay = true;
+        }
     }
 
+    if (shouldRefreshSliceOverlay) {
+        updateSliceOverlay(sliceOverlayAnchor);
+    }
     if (shouldScheduleUpdate) {
         QMetaObject::invokeMethod(this, "update", Qt::QueuedConnection);
     }
@@ -742,6 +779,51 @@ void MyWaterfallWidget::setRowsPerFrame(int rows) {
     const int clampedRows = (std::clamp)(rows, 1, 8);
     QMutexLocker locker(&mutex);
     rowsPerFrame = clampedRows;
+}
+
+void MyWaterfallWidget::setSpectrumMetadata(double centerFrequencyHz,
+                                            double listeningFrequencyHz,
+                                            double sampleRateHz,
+                                            int sourceFftLength,
+                                            int fftWindowType) {
+    QMutexLocker locker(&mutex);
+    metadataCenterFrequencyHz = centerFrequencyHz;
+    metadataListeningFrequencyHz = listeningFrequencyHz;
+    metadataSampleRateHz = sampleRateHz;
+    metadataFftLength = (std::max)(0, sourceFftLength);
+    metadataFftWindowType = normalizedFftWindowType(fftWindowType);
+}
+
+void MyWaterfallWidget::setFpsOverlayEnabled(bool enabled) {
+    if (fpsOverlayEnabled == enabled) {
+        return;
+    }
+    fpsOverlayEnabled = enabled;
+    fpsElapsedTimer.invalidate();
+    fpsFrameCount = 0;
+    displayedFps = 0.0;
+    if (fpsOverlayLabel) {
+        fpsOverlayLabel->setText(QStringLiteral("FPS --"));
+        fpsOverlayLabel->adjustSize();
+        positionInfoOverlays();
+        fpsOverlayLabel->setVisible(enabled);
+        fpsOverlayLabel->raise();
+    }
+    update();
+}
+
+void MyWaterfallWidget::setExtendedInfoOverlayEnabled(bool enabled) {
+    if (extendedInfoOverlayEnabled == enabled) {
+        return;
+    }
+    extendedInfoOverlayEnabled = enabled;
+    if (!enabled && sliceDetailsOverlayLabel) {
+        sliceDetailsOverlayLabel->hide();
+    } else if (frequencySliceMouseActive || spectrumFrameSliceMouseActive) {
+        updateSliceOverlay(sliceOverlayAnchor);
+    }
+    positionInfoOverlays();
+    update();
 }
 
 void MyWaterfallWidget::setRenderBackend(RenderBackend backend) {
@@ -771,6 +853,9 @@ void MyWaterfallWidget::setDisplayMode(DisplayMode mode) {
         waterfall3DRenderer->endSpectrumSlice();
         frequencySliceMouseActive = false;
         spectrumFrameSliceMouseActive = false;
+    }
+    if (mode == DisplayMode::Waterfall2D) {
+        hideSliceOverlay();
     }
     update();
 }
@@ -1012,8 +1097,6 @@ void MyWaterfallWidget::setScanSegmentMarkersVisible(bool visible) {
 void MyWaterfallWidget::clearData() {
     {
         QMutexLocker locker(&mutex);
-        xData.clear();
-        yData.clear();
         pixelFrequencyData.clear();
         pixelLevelData.clear();
         fftLength = 0;
@@ -1139,8 +1222,10 @@ void MyWaterfallWidget::computeLineData() {
 }
 
 void MyWaterfallWidget::paintGL() {
+	updateFpsCounter();
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     bool drawSegmentOverlay = true;
+    std::vector<float> secondGraphLevels;
     {
         QMutexLocker locker(&mutex);
         updateQueued = false;
@@ -1167,32 +1252,13 @@ void MyWaterfallWidget::paintGL() {
                 drawMiniWaterfallOverlay(vStart);
             }
         } else if (secondGraph == true) {
-        if (qFuzzyCompare(xMin, xMax)) {
-            return;
-        }
-	    //additional color graph
-	    glViewport(0, 0, width(), height());
-        glMatrixMode(GL_PROJECTION);
-        glLoadIdentity();
-        glOrtho(xMin, xMax, 0, height(), -1, 1);
-
-        glColor3f(1.0f, 1.0f, 1.0f);
-	    glBegin(GL_LINE_STRIP);
-        const int dataCount = std::min({fftLength, static_cast<int>(xData.size()), static_cast<int>(yData.size())});
-	    for (int i = 0; i < dataCount; ++i) {
-        if (!std::isfinite(xData[i])) {
-            continue;
-        }
-        float intensityS = yData[(i + dataCount / 2) % dataCount];
-        if (!std::isfinite(intensityS)) {
-            intensityS = 0.0f;
-        }
-        QColor colors = valueToColors(normalizedLevel(intensityS));
-        glColor3f(colors.redF(), colors.greenF(), colors.blueF());
-        float yPos = normalizedLevel(intensityS) * (height() * 3 / 4);
-        glVertex2f(xData[i], yPos);
-	    }
-	    glEnd();
+	        // Draw the secondary spectrum with QPainter below. The old fixed-function
+	        // OpenGL path was not portable to Raspberry Pi and inherited stale state
+	        // after switching back from the 3D renderer.
+            secondGraphLevels.reserve(pixelLevelData.size());
+            for (const float level : pixelLevelData) {
+                secondGraphLevels.push_back(normalizedLevel(level));
+            }
 	    } else {
         //waterfall
 
@@ -1218,9 +1284,266 @@ void MyWaterfallWidget::paintGL() {
             glBindTexture(GL_TEXTURE_2D, 0);
 	    }
     }
-    if (drawSegmentOverlay) {
+    if (!secondGraphLevels.empty() || drawSegmentOverlay) {
         QPainter painter(this);
-        drawScanSegments(painter);
+        if (!secondGraphLevels.empty()) {
+            painter.setRenderHint(QPainter::Antialiasing, false);
+            const int pointCount = std::min(width(), static_cast<int>(secondGraphLevels.size()));
+            const float graphHeight = static_cast<float>(height()) * 0.75f;
+            for (int x = 1; x < pointCount; ++x) {
+                const float previousLevel = secondGraphLevels[static_cast<std::size_t>(x - 1)];
+                const float currentLevel = secondGraphLevels[static_cast<std::size_t>(x)];
+                painter.setPen(valueToColors(currentLevel));
+                painter.drawLine(x - 1,
+                                 height() - 1 - qRound(previousLevel * graphHeight),
+                                 x,
+                                 height() - 1 - qRound(currentLevel * graphHeight));
+            }
+        }
+        if (drawSegmentOverlay) {
+            drawScanSegments(painter);
+        }
+    }
+}
+
+void MyWaterfallWidget::updateFpsCounter() {
+    if (!fpsOverlayEnabled) {
+        return;
+    }
+    if (!fpsElapsedTimer.isValid()) {
+        fpsElapsedTimer.start();
+        fpsFrameCount = 0;
+    }
+    ++fpsFrameCount;
+    const qint64 elapsedMs = fpsElapsedTimer.elapsed();
+    if (elapsedMs >= 500) {
+        displayedFps = static_cast<double>(fpsFrameCount) * 1000.0 /
+                       static_cast<double>(elapsedMs);
+        fpsFrameCount = 0;
+        fpsElapsedTimer.restart();
+        if (fpsOverlayLabel) {
+            fpsOverlayLabel->setText(QStringLiteral("FPS %1").arg(displayedFps, 0, 'f', 1));
+            fpsOverlayLabel->adjustSize();
+            positionInfoOverlays();
+            fpsOverlayLabel->raise();
+        }
+    }
+}
+
+void MyWaterfallWidget::positionInfoOverlays() {
+    int nextY = 8;
+    if (fpsOverlayLabel) {
+        fpsOverlayLabel->move((std::max)(8, width() - fpsOverlayLabel->width() - 8), nextY);
+        if (fpsOverlayLabel->isVisible()) {
+            nextY += fpsOverlayLabel->height() + 4;
+        }
+    }
+    if (sliceDetailsOverlayLabel) {
+        sliceDetailsOverlayLabel->move(
+            (std::max)(8, width() - sliceDetailsOverlayLabel->width() - 8),
+            nextY);
+    }
+}
+
+void MyWaterfallWidget::updateSliceOverlay(const QPoint &anchor) {
+    if (!sliceOverlayLabel) {
+        return;
+    }
+
+    QString text;
+    QString detailsText;
+    {
+        QMutexLocker locker(&mutex);
+        if (frequencySliceMouseActive) {
+            double centerRatio = 0.0;
+            double firstRatio = 0.0;
+            double lastRatio = 0.0;
+            Waterfall3DRenderer::SliceStatistics statistics;
+            if (waterfall3DRenderer->frequencySliceRange(centerRatio, firstRatio, lastRatio)) {
+                const double span = xMax - xMin;
+                const double centerHz = xMin + centerRatio * span;
+                const double firstHz = xMin + firstRatio * span;
+                const double lastHz = xMin + lastRatio * span;
+                const bool hasStatistics =
+                    waterfall3DRenderer->frequencySliceStatistics(statistics);
+                const QString maximumText = hasStatistics
+                                                ? QStringLiteral("\nmax  %1 dBFS")
+                                                      .arg(statistics.maximumLevelDb, 0, 'f', 1)
+                                                : QString();
+                text = qFuzzyCompare(firstHz, lastHz)
+                           ? QStringLiteral("f  %1 MHz%2")
+                                 .arg(centerHz / 1.0e6, 0, 'f', 6)
+                                 .arg(maximumText)
+                           : QStringLiteral("f  %1 MHz\n%2 - %3 MHz%4")
+                                 .arg(centerHz / 1.0e6, 0, 'f', 6)
+                                 .arg(firstHz / 1.0e6, 0, 'f', 6)
+                                 .arg(lastHz / 1.0e6, 0, 'f', 6)
+                                 .arg(maximumText);
+                if (extendedInfoOverlayEnabled && hasStatistics) {
+                    const int selectedColumns = statistics.lastColumn -
+                                                statistics.firstColumn + 1;
+                    const double peakRatio = statistics.columnCount > 1
+                                                 ? static_cast<double>(statistics.peakColumn) /
+                                                       static_cast<double>(statistics.columnCount - 1)
+                                                 : 0.0;
+                    const double peakHz = xMin + peakRatio * span;
+                    const double rawBinWidthHz = metadataFftLength > 0 && metadataSampleRateHz > 0.0
+                                                     ? metadataSampleRateHz / metadataFftLength
+                                                     : 0.0;
+                    const double resolutionBandwidthHz =
+                        rawBinWidthHz * fftWindowEnbwBins(metadataFftWindowType);
+                    const double displayPointWidthHz = statistics.columnCount > 1
+                                                           ? span / (statistics.columnCount - 1)
+                                                           : span;
+                    detailsText = QStringLiteral(
+                                      "FREQUENCY SLICE\n"
+                                      "f       %1 MHz\n"
+                                      "range   %2 - %3 MHz\n"
+                                      "width   %4 kHz / %5 pt\n"
+                                      "level   %6 / %7 / %8 dBFS\n"
+                                      "peak    %9 MHz\n"
+                                      "center  %10 MHz\n"
+                                      "listen  %11 MHz\n"
+                                      "SR      %12 MHz\n"
+                                      "FFT     %13\n"
+                                      "window  %14\n"
+                                      "RBW     %15 Hz\n"
+                                      "bin     %16 Hz\n"
+                                      "display %17 Hz / pt\n"
+                                      "history %18 rows")
+                                      .arg(centerHz / 1.0e6, 0, 'f', 6)
+                                      .arg(firstHz / 1.0e6, 0, 'f', 6)
+                                      .arg(lastHz / 1.0e6, 0, 'f', 6)
+                                      .arg(std::abs(lastHz - firstHz) / 1.0e3, 0, 'f', 3)
+                                      .arg(selectedColumns)
+                                      .arg(statistics.minimumLevelDb, 0, 'f', 1)
+                                      .arg(statistics.averageLevelDb, 0, 'f', 1)
+                                      .arg(statistics.maximumLevelDb, 0, 'f', 1)
+                                      .arg(peakHz / 1.0e6, 0, 'f', 6)
+                                      .arg(metadataCenterFrequencyHz / 1.0e6, 0, 'f', 6)
+                                      .arg(metadataListeningFrequencyHz / 1.0e6, 0, 'f', 6)
+                                      .arg(metadataSampleRateHz / 1.0e6, 0, 'f', 3)
+                                      .arg(metadataFftLength)
+                                      .arg(QString::fromLatin1(fftWindowTypeName(metadataFftWindowType)))
+                                      .arg(resolutionBandwidthHz, 0, 'f', 3)
+                                      .arg(rawBinWidthHz, 0, 'f', 3)
+                                      .arg(displayPointWidthHz, 0, 'f', 3)
+                                      .arg(statistics.rowCount);
+                }
+            }
+        } else if (spectrumFrameSliceMouseActive) {
+            int firstRow = 0;
+            int lastRow = 0;
+            int rowCount = 0;
+            Waterfall3DRenderer::SliceStatistics statistics;
+            if (waterfall3DRenderer->spectrumSliceRange(firstRow, lastRow, rowCount)) {
+                const bool hasStatistics =
+                    waterfall3DRenderer->spectrumSliceStatistics(statistics);
+                const QString maximumText = hasStatistics
+                                                ? QStringLiteral("\nmax  %1 dBFS")
+                                                      .arg(statistics.maximumLevelDb, 0, 'f', 1)
+                                                : QString();
+                text = QStringLiteral("rows  %1 - %2 / %3\n%4 - %5 MHz%6")
+                           .arg(firstRow + 1)
+                           .arg(lastRow + 1)
+                           .arg(rowCount)
+                           .arg(xMin / 1.0e6, 0, 'f', 6)
+                           .arg(xMax / 1.0e6, 0, 'f', 6)
+                           .arg(maximumText);
+                if (extendedInfoOverlayEnabled && hasStatistics) {
+                    const double peakRatio = statistics.columnCount > 1
+                                                 ? static_cast<double>(statistics.peakColumn) /
+                                                       static_cast<double>(statistics.columnCount - 1)
+                                                 : 0.0;
+                    const double peakHz = xMin + peakRatio * (xMax - xMin);
+                    const double rawBinWidthHz = metadataFftLength > 0 && metadataSampleRateHz > 0.0
+                                                     ? metadataSampleRateHz / metadataFftLength
+                                                     : 0.0;
+                    const double resolutionBandwidthHz =
+                        rawBinWidthHz * fftWindowEnbwBins(metadataFftWindowType);
+                    const double displayPointWidthHz = statistics.columnCount > 1
+                                                           ? (xMax - xMin) / (statistics.columnCount - 1)
+                                                           : (xMax - xMin);
+                    detailsText = QStringLiteral(
+                                      "SPECTRUM SLICE\n"
+                                      "rows    %1 - %2 / %3\n"
+                                      "count   %4 rows / %5 pt\n"
+                                      "f       %6 - %7 MHz\n"
+                                      "level   %8 / %9 / %10 dBFS\n"
+                                      "peak    %11 MHz\n"
+                                      "peak row %12\n"
+                                      "center  %13 MHz\n"
+                                      "listen  %14 MHz\n"
+                                      "SR      %15 MHz\n"
+                                      "FFT     %16\n"
+                                      "window  %17\n"
+                                      "RBW     %18 Hz\n"
+                                      "bin     %19 Hz\n"
+                                      "display %20 Hz / pt")
+                                      .arg(statistics.firstRow + 1)
+                                      .arg(statistics.lastRow + 1)
+                                      .arg(statistics.rowCount)
+                                      .arg(statistics.lastRow - statistics.firstRow + 1)
+                                      .arg(statistics.columnCount)
+                                      .arg(xMin / 1.0e6, 0, 'f', 6)
+                                      .arg(xMax / 1.0e6, 0, 'f', 6)
+                                      .arg(statistics.minimumLevelDb, 0, 'f', 1)
+                                      .arg(statistics.averageLevelDb, 0, 'f', 1)
+                                      .arg(statistics.maximumLevelDb, 0, 'f', 1)
+                                      .arg(peakHz / 1.0e6, 0, 'f', 6)
+                                      .arg(statistics.peakRow + 1)
+                                      .arg(metadataCenterFrequencyHz / 1.0e6, 0, 'f', 6)
+                                      .arg(metadataListeningFrequencyHz / 1.0e6, 0, 'f', 6)
+                                      .arg(metadataSampleRateHz / 1.0e6, 0, 'f', 3)
+                                      .arg(metadataFftLength)
+                                      .arg(QString::fromLatin1(fftWindowTypeName(metadataFftWindowType)))
+                                      .arg(resolutionBandwidthHz, 0, 'f', 3)
+                                      .arg(rawBinWidthHz, 0, 'f', 3)
+                                      .arg(displayPointWidthHz, 0, 'f', 3);
+                }
+            }
+        }
+    }
+
+    if (text.isEmpty()) {
+        hideSliceOverlay();
+        return;
+    }
+
+    sliceOverlayAnchor = anchor;
+    sliceOverlayLabel->setText(text);
+    sliceOverlayLabel->adjustSize();
+    int overlayX = anchor.x() + 14;
+    int overlayY = anchor.y() + 14;
+    if (overlayX + sliceOverlayLabel->width() > width() - 6) {
+        overlayX = anchor.x() - sliceOverlayLabel->width() - 14;
+    }
+    if (overlayY + sliceOverlayLabel->height() > height() - 6) {
+        overlayY = anchor.y() - sliceOverlayLabel->height() - 14;
+    }
+    sliceOverlayLabel->move((std::clamp)(overlayX, 6, (std::max)(6, width() - sliceOverlayLabel->width() - 6)),
+                            (std::clamp)(overlayY, 6, (std::max)(6, height() - sliceOverlayLabel->height() - 6)));
+    sliceOverlayLabel->show();
+    sliceOverlayLabel->raise();
+    if (sliceDetailsOverlayLabel) {
+        if (extendedInfoOverlayEnabled && !detailsText.isEmpty()) {
+            sliceDetailsOverlayLabel->setText(detailsText);
+            sliceDetailsOverlayLabel->adjustSize();
+            sliceDetailsOverlayLabel->show();
+            sliceDetailsOverlayLabel->raise();
+            positionInfoOverlays();
+        } else {
+            sliceDetailsOverlayLabel->hide();
+        }
+    }
+}
+
+void MyWaterfallWidget::hideSliceOverlay() {
+    if (sliceOverlayLabel) {
+        sliceOverlayLabel->hide();
+    }
+    if (sliceDetailsOverlayLabel) {
+        sliceDetailsOverlayLabel->hide();
     }
 }
 

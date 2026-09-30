@@ -53,6 +53,8 @@ void applyRadioMetadata(const QByteArray &metadata, PlaybackManager::WavInfo &in
     settings.bandwidth = root.value(QStringLiteral("bandwidth")).toDouble(settings.bandwidth);
     settings.modulationType = root.value(QStringLiteral("modulationType")).toInt(settings.modulationType);
     settings.fftLength = root.value(QStringLiteral("fftLength")).toInt(settings.fftLength);
+    settings.fftWindowType = normalizedFftWindowType(
+        root.value(QStringLiteral("fftWindowType")).toInt(settings.fftWindowType));
     settings.lnaGain = root.value(QStringLiteral("lnaGain")).toInt(settings.lnaGain);
     settings.vgaGain = root.value(QStringLiteral("vgaGain")).toInt(settings.vgaGain);
     settings.audioLowPassHz = root.value(QStringLiteral("audioLowPassHz")).toDouble(settings.audioLowPassHz);

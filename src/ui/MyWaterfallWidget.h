@@ -9,6 +9,7 @@
 #include <QOpenGLShaderProgram>
 #include <vector>
 #include <QColor>
+#include <QElapsedTimer>
 #include <QOpenGLTexture>
 #include <QMutex>
 #include <QWheelEvent>
@@ -20,6 +21,7 @@
 #include "scanvisualassembler.h"
 
 class Waterfall3DRenderer;
+class QLabel;
 
 class MyWaterfallWidget : public QOpenGLWidget, protected QOpenGLFunctions {
     Q_OBJECT
@@ -38,7 +40,7 @@ public:
     explicit MyWaterfallWidget(QWidget *parent = nullptr);
     ~MyWaterfallWidget();
     bool initialized;
-    void setData(const std::vector<float> &xData, const std::vector<float> &yData, double minFrequency, double maxFrequency, int fftLength, bool secondGraph, float contrast, float sensitivity, float levelMin, float levelMax);
+    void setData(const std::vector<float> &xData, const std::vector<float> &yData, double minFrequency, double maxFrequency, int fftLength, bool secondGraph, float contrast, float sensitivity, float levelMin, float levelMax, bool displayOrdered = false);
     void setRowsPerFrame(int rows);
     void setRenderBackend(RenderBackend backend);
     RenderBackend renderBackend() const;
@@ -56,6 +58,13 @@ public:
     void setLevelRange(float minLevel, float maxLevel);
     void setScanSegments(const QVector<ScanVisualSegment> &segments);
     void setScanSegmentMarkersVisible(bool visible);
+    void setSpectrumMetadata(double centerFrequencyHz,
+                             double listeningFrequencyHz,
+                             double sampleRateHz,
+                             int sourceFftLength,
+                             int fftWindowType);
+    void setFpsOverlayEnabled(bool enabled);
+    void setExtendedInfoOverlayEnabled(bool enabled);
     void clearData();
     void computeLineData();
 signals:
@@ -81,6 +90,10 @@ private:
     void drawMiniWaterfallOverlay(float vStart);
     void uploadPendingTextureLine();
     void drawScanSegments(QPainter &painter) const;
+    void updateFpsCounter();
+    void positionInfoOverlays();
+    void updateSliceOverlay(const QPoint &anchor);
+    void hideSliceOverlay();
     double displayFrequencyAtX(int x) const;
     double actualFrequencyForDisplayFrequency(double displayFrequency) const;
     double displayFrequencyForActualFrequency(double actualFrequency) const;
@@ -98,10 +111,13 @@ private:
     QColor valueToColor(float value, float contrastFactor, float sensitivityFactor);
     QColor valueToColors(float value);
     float normalizedLevel(float value) const;
-    std::vector<float> xData;
-    std::vector<float> yData;
     float yMin, yMax, contrast, sensitivity, levelMin, levelMax;
     double xMin, xMax;
+    double metadataCenterFrequencyHz = 0.0;
+    double metadataListeningFrequencyHz = 0.0;
+    double metadataSampleRateHz = 0.0;
+    int metadataFftLength = 0;
+    int metadataFftWindowType = 0;
     int fftLength;
     int textureWidth = 0;
     int textureHeight = 0;
@@ -130,6 +146,16 @@ private:
     bool updateQueued = false;
     QVector<ScanVisualSegment> scanSegments;
     bool scanSegmentMarkersVisible = true;
+    bool fpsOverlayEnabled = false;
+    bool extendedInfoOverlayEnabled = false;
+    QElapsedTimer fpsElapsedTimer;
+    QElapsedTimer sliceOverlayUpdateTimer;
+    int fpsFrameCount = 0;
+    double displayedFps = 0.0;
+    QLabel *fpsOverlayLabel = nullptr;
+    QLabel *sliceOverlayLabel = nullptr;
+    QLabel *sliceDetailsOverlayLabel = nullptr;
+    QPoint sliceOverlayAnchor;
 };
 
 #endif // MYWATERFALLWIDGET_H

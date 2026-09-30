@@ -106,7 +106,7 @@ void YourClassName::settingRange() {
     }
 
     const double availableRange = (std::max)(1.0, overallMax - overallMin);
-    double newRange = availableRange * (currentScale / 100.0);
+    double newRange = availableRange * (effectiveScalePercent() / 100.0);
     newRange = (std::clamp)(newRange, 1.0, availableRange);
 
     if (!std::isfinite(spectrumDisplayCenterHz) ||

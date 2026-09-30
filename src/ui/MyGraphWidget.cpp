@@ -1,8 +1,10 @@
 #include "MyGraphWidget.h"
+#include "radiosettings.h"
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <QStringList>
 
 namespace {
 constexpr int GRAPH_LEFT_MARGIN = 0;
@@ -46,19 +48,21 @@ void MyGraphWidget::resizeGL(int w, int h) {
     glViewport(0, 0, w, h);
 }
 
-void MyGraphWidget::setData(const std::vector<float> &xData, const std::vector<float> &yData, double xMin, double xMax, int fftLength, bool colorf) {
+void MyGraphWidget::setData(const std::vector<float> &xData, const std::vector<float> &yData, double xMin, double xMax, int fftLength, bool colorf, bool displayOrdered) {
     this->xData = xData;
     this->yData = yData;
     this->xMin = xMin;
     this->xMax = xMax;
     this->fftLength = std::max(0, fftLength);
     this->colorf = colorf;
+    this->dataDisplayOrdered = displayOrdered;
     update();
 }
 
-void MyGraphWidget::setOverlayData(const std::vector<float> &yData, bool enabled) {
+void MyGraphWidget::setOverlayData(const std::vector<float> &yData, bool enabled, bool displayOrdered) {
     overlayYData = enabled ? yData : std::vector<float>();
     overlayEnabled = enabled && !overlayYData.empty();
+    overlayDisplayOrdered = overlayEnabled && displayOrdered;
     update();
 }
 
@@ -112,16 +116,50 @@ void MyGraphWidget::setTuningMarker(double frequencyHz, bool visible) {
     update();
 }
 
+void MyGraphWidget::setSpectrumMetadata(double centerFrequencyHz,
+                                        double listeningFrequencyHz,
+                                        double sampleRateHz,
+                                        int sourceFftLength,
+                                        int fftWindowType) {
+    metadataCenterFrequencyHz = centerFrequencyHz;
+    metadataListeningFrequencyHz = listeningFrequencyHz;
+    metadataSampleRateHz = sampleRateHz;
+    metadataFftLength = (std::max)(0, sourceFftLength);
+    metadataFftWindowType = normalizedFftWindowType(fftWindowType);
+}
+
+void MyGraphWidget::setFpsOverlayEnabled(bool enabled) {
+    if (fpsOverlayEnabled == enabled) {
+        return;
+    }
+    fpsOverlayEnabled = enabled;
+    fpsElapsedTimer.invalidate();
+    fpsFrameCount = 0;
+    displayedFps = 0.0;
+    update();
+}
+
+void MyGraphWidget::setExtendedInfoOverlayEnabled(bool enabled) {
+    if (extendedInfoOverlayEnabled == enabled) {
+        return;
+    }
+    extendedInfoOverlayEnabled = enabled;
+    update();
+}
+
 void MyGraphWidget::clearData() {
     xData.clear();
     yData.clear();
     overlayYData.clear();
     overlayEnabled = false;
+    dataDisplayOrdered = false;
+    overlayDisplayOrdered = false;
     fftLength = 0;
     update();
 }
 
 void MyGraphWidget::paintGL() {
+    updateFpsCounter();
     QPainter painter(this);
     painter.beginNativePainting();
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -147,7 +185,7 @@ void MyGraphWidget::paintGL() {
             renderLevelScratch.assign(static_cast<std::size_t>(pixelCount),
                                       -std::numeric_limits<float>::infinity());
             for (int i = 0; i < dataCount; ++i) {
-                const float frequency = xData[static_cast<std::size_t>(i)];
+                const double frequency = displayFrequencyAt(i, dataCount);
                 if (!std::isfinite(frequency)) {
                     continue;
                 }
@@ -155,7 +193,7 @@ void MyGraphWidget::paintGL() {
                 if (xNorm < 0.0f || xNorm > 1.0f) {
                     continue;
                 }
-                float intensity = yData[static_cast<std::size_t>((i + dataCount / 2) % dataCount)];
+                float intensity = displayLevelAt(yData, i, dataCount, dataDisplayOrdered);
                 if (!std::isfinite(intensity)) {
                     intensity = yMin;
                 }
@@ -199,14 +237,15 @@ void MyGraphWidget::paintGL() {
         } else {
             glBegin(GL_LINE_STRIP);
             for (int i = 0; i < dataCount; ++i) {
-                if (!std::isfinite(xData[static_cast<std::size_t>(i)])) {
+                const double frequency = displayFrequencyAt(i, dataCount);
+                if (!std::isfinite(frequency)) {
                     continue;
                 }
-                const float xNorm = static_cast<float>((xData[static_cast<std::size_t>(i)] - xMin) / (xMax - xMin));
+                const float xNorm = static_cast<float>((frequency - xMin) / (xMax - xMin));
                 if (xNorm < 0.0f || xNorm > 1.0f) {
                     continue;
                 }
-                float intensity = yData[static_cast<std::size_t>((i + dataCount / 2) % dataCount)];
+                float intensity = displayLevelAt(yData, i, dataCount, dataDisplayOrdered);
                 if (!std::isfinite(intensity)) {
                     intensity = 0.0f;
                 }
@@ -231,7 +270,7 @@ void MyGraphWidget::paintGL() {
                 renderOverlayLevelScratch.assign(static_cast<std::size_t>(pixelCount),
                                                  -std::numeric_limits<float>::infinity());
                 for (int i = 0; i < overlayCount; ++i) {
-                    const float frequency = xData[static_cast<std::size_t>(i)];
+                    const double frequency = displayFrequencyAt(i, dataCount);
                     if (!std::isfinite(frequency)) {
                         continue;
                     }
@@ -239,7 +278,7 @@ void MyGraphWidget::paintGL() {
                     if (xNorm < 0.0f || xNorm > 1.0f) {
                         continue;
                     }
-                    float intensity = overlayYData[static_cast<std::size_t>((i + overlayCount / 2) % overlayCount)];
+                    float intensity = displayLevelAt(overlayYData, i, overlayCount, overlayDisplayOrdered);
                     if (!std::isfinite(intensity)) {
                         intensity = yMin;
                     }
@@ -271,14 +310,15 @@ void MyGraphWidget::paintGL() {
             } else {
                 glBegin(GL_LINE_STRIP);
                 for (int i = 0; i < overlayCount; ++i) {
-                    if (!std::isfinite(xData[static_cast<std::size_t>(i)])) {
+                    const double frequency = displayFrequencyAt(i, dataCount);
+                    if (!std::isfinite(frequency)) {
                         continue;
                     }
-                    const float xNorm = static_cast<float>((xData[static_cast<std::size_t>(i)] - xMin) / (xMax - xMin));
+                    const float xNorm = static_cast<float>((frequency - xMin) / (xMax - xMin));
                     if (xNorm < 0.0f || xNorm > 1.0f) {
                         continue;
                     }
-                    float intensity = overlayYData[static_cast<std::size_t>((i + overlayCount / 2) % overlayCount)];
+                    float intensity = displayLevelAt(overlayYData, i, overlayCount, overlayDisplayOrdered);
                     if (!std::isfinite(intensity)) {
                         intensity = yMin;
                     }
@@ -298,6 +338,162 @@ void MyGraphWidget::paintGL() {
     drawTuningMarker(painter);
     drawBandwidthMeasurement(painter);
     drawHoverCursor(painter);
+    drawFpsOverlay(painter);
+    drawExtendedInfoOverlay(painter);
+}
+
+void MyGraphWidget::updateFpsCounter() {
+    if (!fpsOverlayEnabled) {
+        return;
+    }
+    if (!fpsElapsedTimer.isValid()) {
+        fpsElapsedTimer.start();
+        fpsFrameCount = 0;
+    }
+    ++fpsFrameCount;
+    const qint64 elapsedMs = fpsElapsedTimer.elapsed();
+    if (elapsedMs >= 500) {
+        displayedFps = static_cast<double>(fpsFrameCount) * 1000.0 /
+                       static_cast<double>(elapsedMs);
+        fpsFrameCount = 0;
+        fpsElapsedTimer.restart();
+    }
+}
+
+void MyGraphWidget::drawFpsOverlay(QPainter &painter) const {
+    if (!fpsOverlayEnabled) {
+        return;
+    }
+    const QString text = displayedFps > 0.0
+                             ? QStringLiteral("FPS %1").arg(displayedFps, 0, 'f', 1)
+                             : QStringLiteral("FPS --");
+    const QFontMetrics metrics(painter.font());
+    const QRect textRect = metrics.boundingRect(text).adjusted(-6, -3, 6, 3);
+    const QRect overlayRect(width() - textRect.width() - 8,
+                            8,
+                            textRect.width(),
+                            textRect.height());
+    painter.fillRect(overlayRect, QColor(0, 0, 0, 180));
+    painter.setPen(QColor(120, 255, 150));
+    painter.drawText(overlayRect, Qt::AlignCenter, text);
+}
+
+void MyGraphWidget::drawExtendedInfoOverlay(QPainter &painter) const {
+    if (!extendedInfoOverlayEnabled || !hoverCursorVisible) {
+        return;
+    }
+
+    const CursorPeak peak = cursorPeakAtX(hoverCursorPos.x());
+    const int dataCount = std::min({fftLength,
+                                    static_cast<int>(xData.size()),
+                                    static_cast<int>(yData.size())});
+    if (!peak.valid || peak.dataIndex < 0 || peak.dataIndex >= dataCount) {
+        return;
+    }
+
+    const double pointResolutionHz = std::abs(xMax - xMin) /
+                                     static_cast<double>((std::max)(1, dataCount));
+    const int localRadius = 5;
+    const int localFirst = (std::max)(0, peak.dataIndex - localRadius);
+    const int localLast = (std::min)(dataCount - 1, peak.dataIndex + localRadius);
+    float localMinimum = std::numeric_limits<float>::infinity();
+    float localMaximum = -std::numeric_limits<float>::infinity();
+    double localSum = 0.0;
+    int localCount = 0;
+    for (int index = localFirst; index <= localLast; ++index) {
+        const float level = displayLevelAt(yData, index, dataCount, dataDisplayOrdered);
+        if (!std::isfinite(level)) {
+            continue;
+        }
+        localMinimum = (std::min)(localMinimum, level);
+        localMaximum = (std::max)(localMaximum, level);
+        localSum += level;
+        ++localCount;
+    }
+
+    QStringList lines;
+    lines << QStringLiteral("f       %1").arg(formatFrequencyLabel(peak.frequency));
+    lines << QStringLiteral("level   %1 dBFS%2")
+                 .arg(peak.level, 0, 'f', 1)
+                 .arg(peak.fromOverlay ? QStringLiteral("  overlay") : QString());
+    if (std::isfinite(metadataCenterFrequencyHz)) {
+        lines << QStringLiteral("center  %1")
+                     .arg(formatFrequencyLabel(metadataCenterFrequencyHz));
+    }
+    if (std::isfinite(metadataListeningFrequencyHz)) {
+        lines << QStringLiteral("listen  %1")
+                     .arg(formatFrequencyLabel(metadataListeningFrequencyHz));
+    }
+    if (std::isfinite(metadataSampleRateHz) && metadataSampleRateHz > 0.0) {
+        lines << QStringLiteral("SR      %1")
+                     .arg(formatFrequencySpanLabel(metadataSampleRateHz));
+    }
+    if (metadataFftLength > 0) {
+        const double rawBinWidthHz = metadataSampleRateHz > 0.0
+                                         ? metadataSampleRateHz / metadataFftLength
+                                         : 0.0;
+        const double resolutionBandwidthHz =
+            rawBinWidthHz * fftWindowEnbwBins(metadataFftWindowType);
+        lines << QStringLiteral("FFT     %1").arg(metadataFftLength);
+        lines << QStringLiteral("window  %1")
+                     .arg(QString::fromLatin1(fftWindowTypeName(metadataFftWindowType)));
+        if (rawBinWidthHz > 0.0 && std::isfinite(rawBinWidthHz)) {
+            lines << QStringLiteral("RBW     %1")
+                         .arg(formatFrequencySpanLabel(resolutionBandwidthHz));
+            lines << QStringLiteral("bin     %1")
+                         .arg(formatFrequencySpanLabel(rawBinWidthHz));
+        }
+    }
+    if (tuningMarkerVisible && std::isfinite(tuningMarkerFrequencyHz)) {
+        lines << QStringLiteral("dTune   %1")
+                     .arg(formatFrequencySpanLabel(peak.frequency - tuningMarkerFrequencyHz));
+    }
+    lines << QStringLiteral("point   %1 / %2")
+                 .arg(peak.dataIndex + 1)
+                 .arg(dataCount);
+    lines << QStringLiteral("display %1 / pt")
+                 .arg(formatFrequencySpanLabel(pointResolutionHz));
+    if (localCount > 0) {
+        lines << QStringLiteral("local   %1 / %2 / %3 dBFS")
+                     .arg(localMinimum, 0, 'f', 1)
+                     .arg(localSum / localCount, 0, 'f', 1)
+                     .arg(localMaximum, 0, 'f', 1);
+    }
+    if (overlayEnabled && static_cast<int>(overlayYData.size()) >= dataCount) {
+        const float overlayLevel = displayLevelAt(overlayYData,
+                                                  peak.dataIndex,
+                                                  dataCount,
+                                                  overlayDisplayOrdered);
+        if (std::isfinite(overlayLevel)) {
+            lines << QStringLiteral("overlay %1 dBFS").arg(overlayLevel, 0, 'f', 1);
+        }
+    }
+
+    const QString text = lines.join(QLatin1Char('\n'));
+    const QFontMetrics metrics(painter.font());
+    const QRect textBounds = metrics.boundingRect(QRect(0, 0, width(), height()),
+                                                   Qt::AlignLeft | Qt::AlignTop,
+                                                   text);
+    const int panelWidth = textBounds.width() + 14;
+    const int panelHeight = textBounds.height() + 10;
+    int panelY = 8;
+    if (fpsOverlayEnabled) {
+        const QString fpsText = displayedFps > 0.0
+                                    ? QStringLiteral("FPS %1").arg(displayedFps, 0, 'f', 1)
+                                    : QStringLiteral("FPS --");
+        panelY += metrics.boundingRect(fpsText).adjusted(-6, -3, 6, 3).height() + 4;
+    }
+    const QRect panelRect((std::max)(8, width() - panelWidth - 8),
+                          panelY,
+                          panelWidth,
+                          panelHeight);
+    painter.fillRect(panelRect, QColor(0, 0, 0, 190));
+    painter.setPen(QColor(255, 224, 140, 180));
+    painter.drawRect(panelRect.adjusted(0, 0, -1, -1));
+    painter.setPen(QColor(235, 245, 235));
+    painter.drawText(panelRect.adjusted(7, 5, -7, -5),
+                     Qt::AlignLeft | Qt::AlignTop,
+                     text);
 }
 
 void MyGraphWidget::wheelEvent(QWheelEvent *event) {
@@ -475,7 +671,10 @@ MyGraphWidget::CursorPeak MyGraphWidget::cursorPeakAtX(int x) const {
     const double binSpanHz = std::abs(xMax - xMin) / (std::max)(1, dataCount);
     const double halfWindowHz = (std::max)(hzPerPixel * 5.0, binSpanHz * 2.0);
 
-    auto considerLevel = [&](double displayFrequency, float level) {
+    auto considerLevel = [&](int index,
+                             double displayFrequency,
+                             float level,
+                             bool fromOverlay) {
         if (!std::isfinite(displayFrequency) || !std::isfinite(level) ||
             std::abs(displayFrequency - cursorDisplayFrequency) > halfWindowHz) {
             return;
@@ -485,17 +684,19 @@ MyGraphWidget::CursorPeak MyGraphWidget::cursorPeakAtX(int x) const {
             peak.displayFrequency = displayFrequency;
             peak.frequency = actualFrequencyForDisplayFrequency(displayFrequency);
             peak.level = level;
+            peak.dataIndex = index;
+            peak.fromOverlay = fromOverlay;
         }
     };
 
     for (int i = 0; i < dataCount; ++i) {
-        const double frequency = xData[static_cast<std::size_t>(i)];
-        const float level = yData[static_cast<std::size_t>((i + dataCount / 2) % dataCount)];
-        considerLevel(frequency, level);
+        const double frequency = displayFrequencyAt(i, dataCount);
+        const float level = displayLevelAt(yData, i, dataCount, dataDisplayOrdered);
+        considerLevel(i, frequency, level, false);
         if (overlayEnabled && static_cast<int>(overlayYData.size()) >= dataCount) {
-            const float overlayLevel = overlayYData[static_cast<std::size_t>((i + dataCount / 2) % dataCount)];
+            const float overlayLevel = displayLevelAt(overlayYData, i, dataCount, overlayDisplayOrdered);
             if (overlayLevel > yMin + 0.5f) {
-                considerLevel(frequency, overlayLevel);
+                considerLevel(i, frequency, overlayLevel, true);
             }
         }
     }
@@ -503,8 +704,8 @@ MyGraphWidget::CursorPeak MyGraphWidget::cursorPeakAtX(int x) const {
     if (!peak.valid) {
         double bestDistance = std::numeric_limits<double>::infinity();
         for (int i = 0; i < dataCount; ++i) {
-            const double frequency = xData[static_cast<std::size_t>(i)];
-            const float level = yData[static_cast<std::size_t>((i + dataCount / 2) % dataCount)];
+            const double frequency = displayFrequencyAt(i, dataCount);
+            const float level = displayLevelAt(yData, i, dataCount, dataDisplayOrdered);
             if (!std::isfinite(frequency) || !std::isfinite(level)) {
                 continue;
             }
@@ -515,6 +716,8 @@ MyGraphWidget::CursorPeak MyGraphWidget::cursorPeakAtX(int x) const {
                 peak.displayFrequency = frequency;
                 peak.frequency = actualFrequencyForDisplayFrequency(frequency);
                 peak.level = level;
+                peak.dataIndex = i;
+                peak.fromOverlay = false;
             }
         }
     }
@@ -578,12 +781,12 @@ double MyGraphWidget::signalCenterNearFrequency(double frequency) const {
     std::vector<SignalSample> samples;
     samples.reserve(256);
     for (int i = 0; i < dataCount; ++i) {
-        const double sampleFrequency = xData[i];
+        const double sampleFrequency = displayFrequencyAt(i, dataCount);
         if (!std::isfinite(sampleFrequency) ||
             std::abs(sampleFrequency - targetDisplayFrequency) > halfWindow) {
             continue;
         }
-        const float level = yData[(i + dataCount / 2) % dataCount];
+        const float level = displayLevelAt(yData, i, dataCount, dataDisplayOrdered);
         if (!std::isfinite(level)) {
             continue;
         }
@@ -720,6 +923,34 @@ float MyGraphWidget::normalizedLevel(float value) const {
         return 0.0f;
     }
     return qBound(0.0f, static_cast<float>((value - yMin) / (yMax - yMin)), 1.0f);
+}
+
+float MyGraphWidget::displayLevelAt(const std::vector<float> &levels,
+                                    int index,
+                                    int count,
+                                    bool ordered) const {
+    if (index < 0 || count <= 0 || levels.empty()) {
+        return yMin;
+    }
+    const int sourceIndex = ordered ? index : (index + count / 2) % count;
+    if (sourceIndex < 0 || sourceIndex >= static_cast<int>(levels.size())) {
+        return yMin;
+    }
+    return levels[static_cast<std::size_t>(sourceIndex)];
+}
+
+double MyGraphWidget::displayFrequencyAt(int index, int count) const {
+    if (index < 0 || count <= 0 || index >= count) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    if (dataDisplayOrdered && std::isfinite(xMin) && std::isfinite(xMax) && xMax > xMin) {
+        return xMin + (static_cast<double>(index) + 0.5) *
+                          (xMax - xMin) / static_cast<double>(count);
+    }
+    if (index >= static_cast<int>(xData.size())) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    return static_cast<double>(xData[static_cast<std::size_t>(index)]);
 }
 
 int MyGraphWidget::bottomMargin() const {

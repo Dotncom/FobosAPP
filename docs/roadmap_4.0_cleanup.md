@@ -62,8 +62,8 @@ Before every public upload:
 
 Current release recommendation:
 
-1. Publish the current cleanup as `4.5.1`, not by overwriting `4.5.0`.
-2. Describe it as a stability/privacy/visual-performance patch.
+1. Publish the current spectrum/FFT optimization checkpoint as `4.7.1`.
+2. Describe it as a performance and spectrum-analysis patch over `4.7.0`.
 3. Do not publish Android unless rebuilt and smoke-tested.
 
 ## Privacy Rules

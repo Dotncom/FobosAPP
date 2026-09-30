@@ -134,6 +134,52 @@ inline const char *dmrAmbeLayoutName(int layout) {
     }
 }
 
+enum FftWindowType {
+    FFT_WINDOW_RECTANGULAR = 0,
+    FFT_WINDOW_HANN = 1,
+    FFT_WINDOW_HAMMING = 2,
+    FFT_WINDOW_BLACKMAN_HARRIS = 3,
+    FFT_WINDOW_FLAT_TOP = 4
+};
+
+inline int normalizedFftWindowType(int windowType) {
+    return (std::clamp)(windowType,
+                        static_cast<int>(FFT_WINDOW_RECTANGULAR),
+                        static_cast<int>(FFT_WINDOW_FLAT_TOP));
+}
+
+inline const char *fftWindowTypeName(int windowType) {
+    switch (normalizedFftWindowType(windowType)) {
+    case FFT_WINDOW_HANN:
+        return "Hann";
+    case FFT_WINDOW_HAMMING:
+        return "Hamming";
+    case FFT_WINDOW_BLACKMAN_HARRIS:
+        return "Blackman-Harris";
+    case FFT_WINDOW_FLAT_TOP:
+        return "Flat-top";
+    case FFT_WINDOW_RECTANGULAR:
+    default:
+        return "Rectangular";
+    }
+}
+
+inline double fftWindowEnbwBins(int windowType) {
+    switch (normalizedFftWindowType(windowType)) {
+    case FFT_WINDOW_HANN:
+        return 1.5;
+    case FFT_WINDOW_HAMMING:
+        return 1.362826;
+    case FFT_WINDOW_BLACKMAN_HARRIS:
+        return 2.004353;
+    case FFT_WINDOW_FLAT_TOP:
+        return 3.770246;
+    case FFT_WINDOW_RECTANGULAR:
+    default:
+        return 1.0;
+    }
+}
+
 struct RadioSettings {
     int deviceIndex = 0;
     int clockSource = 0;
@@ -145,6 +191,7 @@ struct RadioSettings {
     double bandwidth = 200000.0;
     int modulationType = MOD_WFM;
     int fftLength = 65536;
+    int fftWindowType = FFT_WINDOW_RECTANGULAR;
     int lnaGain = 1;
     int vgaGain = 3;
     bool rtlAgc = true;

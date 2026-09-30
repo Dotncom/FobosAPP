@@ -120,7 +120,7 @@ void YourClassName::tuneSignalCenterAt(double frequency) {
     }
     const double visibleSpanHz = std::isfinite(maxFrequency) && std::isfinite(minFrequency) && maxFrequency > minFrequency
                                      ? maxFrequency - minFrequency
-                                     : pendingSettings.sampleRate * (currentScale / 100.0);
+                                     : pendingSettings.sampleRate * (effectiveScalePercent() / 100.0);
     const double roundedTarget = roundAutoTuneFrequencyHz(listeningTarget, visibleSpanHz);
     qDebug() << "[Tune] auto center"
              << "detected" << frequency
@@ -402,6 +402,23 @@ void YourClassName::onScaleChanged(int value) {
 
     scaleLabel->setText(QStringLiteral("%1: %2").arg(uiText(QStringLiteral("scale"), QStringLiteral("Scale")),
                                                     formatScalePercent(currentScale)));
+    settingRange();
+    savePersistentSettings();
+}
+
+double YourClassName::effectiveScalePercent() const {
+    const int divisor = (std::clamp)(additionalScaleDivisor, 1, 20);
+    return currentScale / static_cast<double>(divisor);
+}
+
+void YourClassName::onAdditionalScaleDivisorChanged(int value) {
+    additionalScaleDivisor = (std::clamp)(value, 1, 20);
+    if (additionalScaleDivisorLabel) {
+        additionalScaleDivisorLabel->setText(
+            QStringLiteral("%1: 1:%2")
+                .arg(uiText(QStringLiteral("additional_scale"), QStringLiteral("Extra zoom")))
+                .arg(additionalScaleDivisor));
+    }
     settingRange();
     savePersistentSettings();
 }
@@ -916,7 +933,7 @@ void YourClassName::onSampleRateChanged(int index) {
 double YourClassName::fineTuneRangeHz() const {
     double visibleSpan = maxFrequency - minFrequency;
     if (!std::isfinite(visibleSpan) || visibleSpan <= 0.0) {
-        visibleSpan = pendingSettings.sampleRate * (currentScale / 100.0);
+        visibleSpan = pendingSettings.sampleRate * (effectiveScalePercent() / 100.0);
     }
     if (!std::isfinite(visibleSpan) || visibleSpan <= 0.0) {
         visibleSpan = 100000.0;

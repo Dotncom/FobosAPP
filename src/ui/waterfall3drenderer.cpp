@@ -1,10 +1,14 @@
 #include "waterfall3drenderer.h"
 
 #include <QtGui/qopengl.h>
+#include <QDebug>
 #include <QMatrix4x4>
+#include <QOpenGLContext>
+#include <QOpenGLFunctions>
 #include <QVector4D>
 
 #include <algorithm>
+#include <cstddef>
 #include <cmath>
 #include <limits>
 
@@ -37,6 +41,7 @@ void Waterfall3DRenderer::appendRow(const std::vector<float> &levels,
         frequencySliceActive = false;
         selectedSpectrumRow = -1;
         spectrumSliceActive = false;
+        resetGpuSurfaceData();
     }
     HistoryRow row(static_cast<std::size_t>(outputColumns));
 
@@ -72,15 +77,24 @@ void Waterfall3DRenderer::appendRow(const std::vector<float> &levels,
 
         VertexSample &sample = row[static_cast<std::size_t>(column)];
         sample.height = normalizedHeight(averageLevel, levelMin, levelMax);
+        sample.levelDb = averageLevel;
         const std::size_t colorOffset = static_cast<std::size_t>(representativeIndex) * 3U;
         if (colorOffset + 2U < rgb.size()) {
             sample.color = {{rgb[colorOffset], rgb[colorOffset + 1U], rgb[colorOffset + 2U]}};
         }
     }
 
+    const int previousRowCount = static_cast<int>(historyRows.size());
     const int copies = (std::clamp)(repeatRows, 1, 8);
     for (int copy = 0; copy < copies; ++copy) {
         historyRows.push_back(row);
+        if (!gpuTexturesResetRequired) {
+            pendingGpuRows.push_back(row);
+            if (static_cast<int>(pendingGpuRows.size()) > maxHistoryRows) {
+                pendingGpuRows.clear();
+                gpuTexturesResetRequired = true;
+            }
+        }
         while (static_cast<int>(historyRows.size()) > maxHistoryRows) {
             historyRows.pop_front();
             if (highlightedHistoryRow >= 0) {
@@ -99,6 +113,9 @@ void Waterfall3DRenderer::appendRow(const std::vector<float> &levels,
             }
         }
     }
+    if (previousRowCount != static_cast<int>(historyRows.size())) {
+        gpuMeshDirty = true;
+    }
 }
 
 void Waterfall3DRenderer::clear() {
@@ -111,6 +128,7 @@ void Waterfall3DRenderer::clear() {
     capturedSpectrumRows.clear();
     capturedSpectrumFirstRow = -1;
     capturedSpectrumRowsRemaining = 0;
+    resetGpuSurfaceData();
 }
 
 bool Waterfall3DRenderer::hasData() const {
@@ -131,6 +149,7 @@ void Waterfall3DRenderer::setResolutionDivisor(int divisor) {
     capturedSpectrumRows.clear();
     capturedSpectrumFirstRow = -1;
     capturedSpectrumRowsRemaining = 0;
+    resetGpuSurfaceData();
 }
 
 void Waterfall3DRenderer::setHistoryCapacity(int rows) {
@@ -160,6 +179,7 @@ void Waterfall3DRenderer::setHistoryCapacity(int rows) {
                                          static_cast<int>(historyRows.size()) - 1);
     }
     highlightedHistoryRow = -1;
+    resetGpuSurfaceData();
 }
 
 void Waterfall3DRenderer::setHighlightedHistoryRow(int row) {
@@ -439,6 +459,160 @@ double Waterfall3DRenderer::selectedFrequencyRatio() const {
            static_cast<double>(historyRows.front().size() - 1);
 }
 
+bool Waterfall3DRenderer::frequencySliceRange(double &centerRatio,
+                                              double &firstRatio,
+                                              double &lastRatio) const {
+    if (!frequencySliceActive || selectedSliceColumn < 0 || historyRows.empty() ||
+        historyRows.front().size() < 2) {
+        return false;
+    }
+    const int columnCount = static_cast<int>(historyRows.front().size());
+    const int halfWidth = sliceWidth / 2;
+    int firstColumn = std::max(0, selectedSliceColumn - halfWidth);
+    int lastColumn = std::min(columnCount - 1, firstColumn + sliceWidth - 1);
+    firstColumn = std::max(0, lastColumn - sliceWidth + 1);
+    const double denominator = static_cast<double>(columnCount - 1);
+    centerRatio = static_cast<double>(selectedSliceColumn) / denominator;
+    firstRatio = static_cast<double>(firstColumn) / denominator;
+    lastRatio = static_cast<double>(lastColumn) / denominator;
+    return true;
+}
+
+bool Waterfall3DRenderer::spectrumSliceRange(int &firstRow,
+                                             int &lastRow,
+                                             int &rowCount) const {
+    if (!spectrumSliceActive || selectedSpectrumRow < 0 || historyRows.empty()) {
+        return false;
+    }
+    rowCount = static_cast<int>(historyRows.size());
+    const int halfWidth = spectrumSliceWidth / 2;
+    firstRow = std::max(0, selectedSpectrumRow - halfWidth);
+    lastRow = std::min(rowCount - 1, firstRow + spectrumSliceWidth - 1);
+    firstRow = std::max(0, lastRow - spectrumSliceWidth + 1);
+    return firstRow <= lastRow;
+}
+
+bool Waterfall3DRenderer::frequencySliceStatistics(SliceStatistics &statistics) const {
+    statistics = SliceStatistics{};
+    if (!frequencySliceActive || selectedSliceColumn < 0 || historyRows.empty() ||
+        historyRows.front().empty()) {
+        return false;
+    }
+
+    statistics.columnCount = static_cast<int>(historyRows.front().size());
+    statistics.rowCount = static_cast<int>(historyRows.size());
+    const int halfWidth = sliceWidth / 2;
+    statistics.firstColumn = std::max(0, selectedSliceColumn - halfWidth);
+    statistics.lastColumn = std::min(statistics.columnCount - 1,
+                                     statistics.firstColumn + sliceWidth - 1);
+    statistics.firstColumn = std::max(0,
+                                      statistics.lastColumn - sliceWidth + 1);
+    statistics.firstRow = 0;
+    statistics.lastRow = statistics.rowCount - 1;
+
+    double levelSum = 0.0;
+    float minimumLevel = std::numeric_limits<float>::infinity();
+    float maximumLevel = -std::numeric_limits<float>::infinity();
+    for (int row = 0; row < statistics.rowCount; ++row) {
+        const HistoryRow &historyRow = historyRows[static_cast<std::size_t>(row)];
+        if (static_cast<int>(historyRow.size()) != statistics.columnCount) {
+            continue;
+        }
+        for (int column = statistics.firstColumn;
+             column <= statistics.lastColumn;
+             ++column) {
+            const float level = historyRow[static_cast<std::size_t>(column)].levelDb;
+            if (!std::isfinite(level)) {
+                continue;
+            }
+            minimumLevel = std::min(minimumLevel, level);
+            levelSum += level;
+            ++statistics.sampleCount;
+            if (level > maximumLevel) {
+                maximumLevel = level;
+                statistics.peakColumn = column;
+                statistics.peakRow = row;
+            }
+        }
+    }
+
+    if (statistics.sampleCount <= 0) {
+        return false;
+    }
+    statistics.minimumLevelDb = minimumLevel;
+    statistics.maximumLevelDb = maximumLevel;
+    statistics.averageLevelDb = static_cast<float>(levelSum / statistics.sampleCount);
+    statistics.valid = true;
+    return true;
+}
+
+bool Waterfall3DRenderer::spectrumSliceStatistics(SliceStatistics &statistics) const {
+    statistics = SliceStatistics{};
+    if (!spectrumSliceActive || selectedSpectrumRow < 0 || historyRows.empty() ||
+        historyRows.front().empty()) {
+        return false;
+    }
+
+    statistics.columnCount = static_cast<int>(historyRows.front().size());
+    statistics.rowCount = static_cast<int>(historyRows.size());
+    statistics.firstColumn = 0;
+    statistics.lastColumn = statistics.columnCount - 1;
+
+    const bool useCapturedRows = spectrumSliceCapture && spectrumSliceCaptureFixed &&
+                                 !capturedSpectrumRows.empty();
+    if (useCapturedRows) {
+        statistics.firstRow = capturedSpectrumFirstRow;
+        statistics.lastRow = statistics.firstRow +
+                             static_cast<int>(capturedSpectrumRows.size()) - 1;
+    } else {
+        const int halfWidth = spectrumSliceWidth / 2;
+        statistics.firstRow = std::max(0, selectedSpectrumRow - halfWidth);
+        statistics.lastRow = std::min(statistics.rowCount - 1,
+                                      statistics.firstRow + spectrumSliceWidth - 1);
+        statistics.firstRow = std::max(0,
+                                       statistics.lastRow - spectrumSliceWidth + 1);
+    }
+
+    double levelSum = 0.0;
+    float minimumLevel = std::numeric_limits<float>::infinity();
+    float maximumLevel = -std::numeric_limits<float>::infinity();
+    const int rowsToRead = useCapturedRows
+                               ? static_cast<int>(capturedSpectrumRows.size())
+                               : statistics.lastRow - statistics.firstRow + 1;
+    for (int rowOffset = 0; rowOffset < rowsToRead; ++rowOffset) {
+        const int displayedRow = statistics.firstRow + rowOffset;
+        const HistoryRow &historyRow = useCapturedRows
+                                           ? capturedSpectrumRows[static_cast<std::size_t>(rowOffset)]
+                                           : historyRows[static_cast<std::size_t>(displayedRow)];
+        if (static_cast<int>(historyRow.size()) != statistics.columnCount) {
+            continue;
+        }
+        for (int column = 0; column < statistics.columnCount; ++column) {
+            const float level = historyRow[static_cast<std::size_t>(column)].levelDb;
+            if (!std::isfinite(level)) {
+                continue;
+            }
+            minimumLevel = std::min(minimumLevel, level);
+            levelSum += level;
+            ++statistics.sampleCount;
+            if (level > maximumLevel) {
+                maximumLevel = level;
+                statistics.peakColumn = column;
+                statistics.peakRow = displayedRow;
+            }
+        }
+    }
+
+    if (statistics.sampleCount <= 0) {
+        return false;
+    }
+    statistics.minimumLevelDb = minimumLevel;
+    statistics.maximumLevelDb = maximumLevel;
+    statistics.averageLevelDb = static_cast<float>(levelSum / statistics.sampleCount);
+    statistics.valid = true;
+    return true;
+}
+
 void Waterfall3DRenderer::orbitCamera(float deltaX, float deltaY) {
     cameraYawDegrees = std::fmod(cameraYawDegrees + deltaX * 0.4f, 360.0f);
     cameraTiltDegrees = std::clamp(cameraTiltDegrees + deltaY * 0.35f, -82.0f, -5.0f);
@@ -481,7 +655,310 @@ void Waterfall3DRenderer::zoomCamera(int wheelDelta) {
     cameraZoom = std::clamp(cameraZoom, 0.35f, 8.0f);
 }
 
-void Waterfall3DRenderer::render(int viewportWidth, int viewportHeight) const {
+bool Waterfall3DRenderer::ensureSurfaceProgram() {
+    if (surfaceProgramReady) {
+        return true;
+    }
+    if (surfaceProgramTried) {
+        return false;
+    }
+    surfaceProgramTried = true;
+
+    static const char *vertexSource =
+        "attribute vec2 gridPosition;\n"
+        "uniform mat4 transform;\n"
+        "uniform sampler2D heightMap;\n"
+        "uniform sampler2D colorMap;\n"
+        "uniform float rowCount;\n"
+        "uniform float columnCount;\n"
+        "uniform float textureRows;\n"
+        "uniform float oldestRow;\n"
+        "varying vec3 vertexColor;\n"
+        "void main() {\n"
+        "    float physicalRow = mod(oldestRow + gridPosition.x, textureRows);\n"
+        "    vec2 texCoord = vec2((gridPosition.y + 0.5) / columnCount,\n"
+        "                         (physicalRow + 0.5) / textureRows);\n"
+        "    float time = -1.0 + 2.0 * gridPosition.x / max(1.0, rowCount - 1.0);\n"
+        "    float frequency = -1.0 + 2.0 * gridPosition.y / max(1.0, columnCount - 1.0);\n"
+        "    float height = texture2D(heightMap, texCoord).r * 0.72;\n"
+        "    gl_Position = transform * vec4(time, frequency, height, 1.0);\n"
+        "    vertexColor = texture2D(colorMap, texCoord).rgb;\n"
+        "}\n";
+    static const char *fragmentSource =
+        "varying vec3 vertexColor;\n"
+        "void main() {\n"
+        "    gl_FragColor = vec4(vertexColor, 1.0);\n"
+        "}\n";
+
+    if (!surfaceProgram.addShaderFromSourceCode(QOpenGLShader::Vertex, vertexSource) ||
+        !surfaceProgram.addShaderFromSourceCode(QOpenGLShader::Fragment, fragmentSource) ||
+        !surfaceProgram.link()) {
+        qWarning() << "[Waterfall3D] streamed texture renderer unavailable; using legacy fallback"
+                   << surfaceProgram.log();
+        surfaceProgram.removeAllShaders();
+        return false;
+    }
+    if (!surfaceVbo.isCreated()) {
+        surfaceVbo.create();
+        surfaceVbo.setUsagePattern(QOpenGLBuffer::DynamicDraw);
+    }
+    surfaceProgramReady = surfaceVbo.isCreated();
+    if (surfaceProgramReady) {
+        qDebug() << "[Waterfall3D] streamed texture renderer ready";
+    }
+    return surfaceProgramReady;
+}
+
+void Waterfall3DRenderer::resetGpuSurfaceData() {
+    pendingGpuRows.clear();
+    gpuGridVertices.clear();
+    gpuTextureColumns = 0;
+    gpuTextureRows = 0;
+    gpuTextureRowCount = 0;
+    gpuTextureWriteRow = 0;
+    gpuTextureOldestRow = 0;
+    gpuTexturesResetRequired = true;
+    gpuMeshDirty = true;
+}
+
+void Waterfall3DRenderer::rebuildGpuSurface() {
+    gpuGridVertices.clear();
+    if (!hasData()) {
+        gpuMeshDirty = false;
+        return;
+    }
+
+    const int rowCount = static_cast<int>(historyRows.size());
+    const int columnCount = static_cast<int>(historyRows.front().size());
+    const std::size_t stripVertices = static_cast<std::size_t>(rowCount - 1) *
+                                      static_cast<std::size_t>(columnCount) * 2U;
+    const std::size_t degenerateVertices = rowCount > 2
+                                               ? static_cast<std::size_t>(rowCount - 2) * 2U
+                                               : 0U;
+    gpuGridVertices.reserve(stripVertices + degenerateVertices);
+
+    const auto vertexAt = [](int row, int column) {
+        GpuGridVertex vertex;
+        vertex.row = static_cast<float>(row);
+        vertex.column = static_cast<float>(column);
+        return vertex;
+    };
+
+    for (int row = 0; row < rowCount - 1; ++row) {
+        if (row > 0 && !gpuGridVertices.empty()) {
+            gpuGridVertices.push_back(gpuGridVertices.back());
+            gpuGridVertices.push_back(vertexAt(row, 0));
+        }
+        for (int column = 0; column < columnCount; ++column) {
+            gpuGridVertices.push_back(vertexAt(row, column));
+            gpuGridVertices.push_back(vertexAt(row + 1, column));
+        }
+    }
+    gpuMeshDirty = false;
+}
+
+bool Waterfall3DRenderer::uploadGpuSurfaceRows() {
+    if (!hasData()) {
+        return false;
+    }
+    QOpenGLContext *context = QOpenGLContext::currentContext();
+    if (!context) {
+        return false;
+    }
+    QOpenGLFunctions *functions = context->functions();
+    const int columnCount = static_cast<int>(historyRows.front().size());
+    const int textureRows = maxHistoryRows;
+    int maximumTextureSize = 0;
+    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maximumTextureSize);
+    if (columnCount <= 0 || textureRows <= 0 ||
+        columnCount > maximumTextureSize || textureRows > maximumTextureSize) {
+        return false;
+    }
+
+    if (heightTexture == 0U) {
+        glGenTextures(1, &heightTexture);
+    }
+    if (colorTexture == 0U) {
+        glGenTextures(1, &colorTexture);
+    }
+    if (heightTexture == 0U || colorTexture == 0U) {
+        return false;
+    }
+
+    const bool resetTextures = gpuTexturesResetRequired ||
+                               gpuTextureColumns != columnCount ||
+                               gpuTextureRows != textureRows;
+    if (resetTextures) {
+        functions->glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, heightTexture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(GL_TEXTURE_2D,
+                     0,
+                     GL_LUMINANCE,
+                     columnCount,
+                     textureRows,
+                     0,
+                     GL_LUMINANCE,
+                     GL_UNSIGNED_BYTE,
+                     nullptr);
+
+        functions->glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, colorTexture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(GL_TEXTURE_2D,
+                     0,
+                     GL_RGB,
+                     columnCount,
+                     textureRows,
+                     0,
+                     GL_RGB,
+                     GL_UNSIGNED_BYTE,
+                     nullptr);
+
+        gpuTextureColumns = columnCount;
+        gpuTextureRows = textureRows;
+        gpuTextureRowCount = 0;
+        gpuTextureWriteRow = 0;
+        gpuTextureOldestRow = 0;
+        pendingGpuRows.assign(historyRows.begin(), historyRows.end());
+        gpuTexturesResetRequired = false;
+    }
+
+    gpuHeightScratch.resize(static_cast<std::size_t>(columnCount));
+    gpuColorScratch.resize(static_cast<std::size_t>(columnCount) * 3U);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    for (const HistoryRow &row : pendingGpuRows) {
+        if (static_cast<int>(row.size()) != columnCount) {
+            continue;
+        }
+        for (int column = 0; column < columnCount; ++column) {
+            const VertexSample &sample = row[static_cast<std::size_t>(column)];
+            gpuHeightScratch[static_cast<std::size_t>(column)] =
+                static_cast<std::uint8_t>(std::lround(std::clamp(sample.height, 0.0f, 1.0f) * 255.0f));
+            const std::size_t colorOffset = static_cast<std::size_t>(column) * 3U;
+            gpuColorScratch[colorOffset] = sample.color[0];
+            gpuColorScratch[colorOffset + 1U] = sample.color[1];
+            gpuColorScratch[colorOffset + 2U] = sample.color[2];
+        }
+
+        const int destinationRow = gpuTextureWriteRow;
+        functions->glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, heightTexture);
+        glTexSubImage2D(GL_TEXTURE_2D,
+                        0,
+                        0,
+                        destinationRow,
+                        columnCount,
+                        1,
+                        GL_LUMINANCE,
+                        GL_UNSIGNED_BYTE,
+                        gpuHeightScratch.data());
+        functions->glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, colorTexture);
+        glTexSubImage2D(GL_TEXTURE_2D,
+                        0,
+                        0,
+                        destinationRow,
+                        columnCount,
+                        1,
+                        GL_RGB,
+                        GL_UNSIGNED_BYTE,
+                        gpuColorScratch.data());
+
+        gpuTextureWriteRow = (gpuTextureWriteRow + 1) % gpuTextureRows;
+        if (gpuTextureRowCount < gpuTextureRows) {
+            ++gpuTextureRowCount;
+            gpuTextureOldestRow = 0;
+        } else {
+            gpuTextureOldestRow = gpuTextureWriteRow;
+        }
+    }
+    pendingGpuRows.clear();
+    functions->glActiveTexture(GL_TEXTURE0);
+    return gpuTextureRowCount == static_cast<int>(historyRows.size());
+}
+
+bool Waterfall3DRenderer::renderGpuSurface(const QMatrix4x4 &transform) {
+    if (!ensureSurfaceProgram()) {
+        return false;
+    }
+    if (!uploadGpuSurfaceRows()) {
+        return false;
+    }
+    if (gpuMeshDirty) {
+        rebuildGpuSurface();
+        if (!surfaceVbo.bind()) {
+            return false;
+        }
+        surfaceVbo.allocate(gpuGridVertices.empty() ? nullptr : gpuGridVertices.data(),
+                            static_cast<int>(gpuGridVertices.size() * sizeof(GpuGridVertex)));
+        surfaceVbo.release();
+    }
+    if (gpuGridVertices.empty() || !surfaceVbo.bind() || !surfaceProgram.bind()) {
+        surfaceVbo.release();
+        return false;
+    }
+
+    surfaceProgram.setUniformValue("transform", transform);
+    surfaceProgram.setUniformValue("heightMap", 0);
+    surfaceProgram.setUniformValue("colorMap", 1);
+    surfaceProgram.setUniformValue("rowCount", static_cast<float>(historyRows.size()));
+    surfaceProgram.setUniformValue("columnCount", static_cast<float>(gpuTextureColumns));
+    surfaceProgram.setUniformValue("textureRows", static_cast<float>(gpuTextureRows));
+    surfaceProgram.setUniformValue("oldestRow", static_cast<float>(gpuTextureOldestRow));
+    const int gridLocation = surfaceProgram.attributeLocation("gridPosition");
+    if (gridLocation < 0) {
+        surfaceProgram.release();
+        surfaceVbo.release();
+        return false;
+    }
+    QOpenGLFunctions *functions = QOpenGLContext::currentContext()->functions();
+    functions->glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, heightTexture);
+    functions->glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, colorTexture);
+    surfaceProgram.enableAttributeArray(gridLocation);
+    surfaceProgram.setAttributeBuffer(gridLocation,
+                                      GL_FLOAT,
+                                      static_cast<int>(offsetof(GpuGridVertex, row)),
+                                      2,
+                                      static_cast<int>(sizeof(GpuGridVertex)));
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, static_cast<GLsizei>(gpuGridVertices.size()));
+    surfaceProgram.disableAttributeArray(gridLocation);
+    surfaceProgram.release();
+    surfaceVbo.release();
+    functions->glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    functions->glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    return true;
+}
+
+void Waterfall3DRenderer::releaseGpuResources() {
+    if (surfaceVbo.isCreated()) {
+        surfaceVbo.destroy();
+    }
+    if (heightTexture != 0U) {
+        glDeleteTextures(1, &heightTexture);
+        heightTexture = 0U;
+    }
+    if (colorTexture != 0U) {
+        glDeleteTextures(1, &colorTexture);
+        colorTexture = 0U;
+    }
+    surfaceProgram.removeAllShaders();
+    surfaceProgramReady = false;
+    surfaceProgramTried = false;
+    resetGpuSurfaceData();
+}
+
+void Waterfall3DRenderer::render(int viewportWidth, int viewportHeight) {
     if (viewportWidth <= 0 || viewportHeight <= 0) {
         return;
     }
@@ -512,6 +989,21 @@ void Waterfall3DRenderer::render(int viewportWidth, int viewportHeight) const {
     glRotatef(cameraYawDegrees, 0.0f, 0.0f, 1.0f);
     glTranslatef(cameraPanX, cameraPanY, 0.0f);
     glScalef(1.05f, 1.05f, 1.18f);
+
+    QMatrix4x4 projection;
+    projection.frustum(static_cast<float>(-0.72 * aspect * projectionScale),
+                       static_cast<float>(0.72 * aspect * projectionScale),
+                       static_cast<float>(-0.72 * projectionScale),
+                       static_cast<float>(0.72 * projectionScale),
+                       1.0f,
+                       12.0f);
+    QMatrix4x4 model;
+    model.translate(0.0f, -0.08f, -cameraDistance);
+    model.rotate(cameraTiltDegrees, 1.0f, 0.0f, 0.0f);
+    model.rotate(cameraYawDegrees, 0.0f, 0.0f, 1.0f);
+    model.translate(cameraPanX, cameraPanY, 0.0f);
+    model.scale(1.05f, 1.05f, 1.18f);
+    const QMatrix4x4 transform = projection * model;
 
     glColor3f(0.16f, 0.18f, 0.21f);
     glBegin(GL_LINES);
@@ -566,6 +1058,8 @@ void Waterfall3DRenderer::render(int viewportWidth, int viewportHeight) const {
 
         if (!spectrumSliceVisible) {
             // A captured spectrum row has left the rolling 3D history.
+        } else if (!frequencySliceActive && !spectrumSliceActive && renderGpuSurface(transform)) {
+            // The normal full surface is submitted as one GPU batch.
         } else if (frequencySliceActive && firstColumn == lastColumn) {
             glLineWidth(3.0f);
             glBegin(GL_LINE_STRIP);

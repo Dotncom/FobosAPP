@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(FobosAPP VERSION 4.7.0)
+project(FobosAPP VERSION 4.7.1)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -53,6 +53,12 @@ find_library(FFTW_FLOAT_LIBRARY
     NAMES fftw3f libfftw3f-3
     HINTS "${FFTW_ROOT}" "${FFTW_ROOT}/lib"
 )
+if(NOT WIN32)
+    find_library(FFTW_FLOAT_THREADS_LIBRARY
+        NAMES fftw3f_threads libfftw3f_threads
+        HINTS "${FFTW_ROOT}" "${FFTW_ROOT}/lib"
+    )
+endif()
 
 foreach(required_path
         FOBOS_STANDARD_INCLUDE_DIR
@@ -207,6 +213,8 @@ set(SOURCES
     src/core/fft.h
     src/utils/spectrumfftworker.cpp
     src/utils/spectrumfftworker.h
+    src/utils/spectrumdisplayreducer.cpp
+    src/utils/spectrumdisplayreducer.h
     src/audio/audioprocessor.cpp
     src/audio/audioprocessor.h
     src/ui/MyGraphWidget.cpp
@@ -267,6 +275,15 @@ target_link_libraries(FobosAPP PRIVATE
     Qt5::Network
     Qt5::SerialPort
 )
+
+if(WIN32)
+    target_compile_definitions(FobosAPP PRIVATE FOBOSAPP_HAS_FFTW_THREADS=1)
+elseif(FFTW_FLOAT_THREADS_LIBRARY)
+    target_link_libraries(FobosAPP PRIVATE ${FFTW_FLOAT_THREADS_LIBRARY})
+    target_compile_definitions(FobosAPP PRIVATE FOBOSAPP_HAS_FFTW_THREADS=1)
+else()
+    message(STATUS "FFTW threads library not found; large FFT plans will remain single-threaded.")
+endif()
 
 if(FOBOS_HAS_MBELIB_NEO)
     target_link_libraries(FobosAPP PRIVATE mbe_neo::mbe_static)

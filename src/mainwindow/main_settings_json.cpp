@@ -38,6 +38,7 @@ QJsonObject YourClassName::settingsToJson() const {
     settings["bandwidth"] = pendingSettings.bandwidth;
     settings["modulationType"] = pendingSettings.modulationType;
     settings["fftLength"] = pendingSettings.fftLength;
+    settings["fftWindowType"] = normalizedFftWindowType(pendingSettings.fftWindowType);
     settings["lnaGain"] = pendingSettings.lnaGain;
     settings["vgaGain"] = pendingSettings.vgaGain;
     settings["rtlAgc"] = pendingSettings.rtlAgc;
@@ -68,6 +69,7 @@ QJsonObject YourClassName::settingsToJson() const {
     settings["dmrPrivacyLayout"] = pendingSettings.dmrPrivacyLayout;
     settings["dmrPrivacyFrameOffset"] = pendingSettings.dmrPrivacyFrameOffset;
     settings["scalePercent"] = currentScale;
+    settings["additionalScaleDivisor"] = additionalScaleDivisor;
     settings["agileScanEnabled"] = agileScanEnabled;
     settings["agileScanAutoStepSampleRate"] = agileScanAutoStepSampleRate;
     settings["scanVisualMode"] = normalizedScanVisualMode(scanVisualMode);
@@ -202,6 +204,8 @@ void YourClassName::applySettingsFromJson(const QJsonObject &settingsJson, bool 
     pendingSettings.bandwidth = readDouble("bandwidth", pendingSettings.bandwidth);
     pendingSettings.modulationType = readInt("modulationType", pendingSettings.modulationType);
     pendingSettings.fftLength = readInt("fftLength", pendingSettings.fftLength);
+    pendingSettings.fftWindowType = normalizedFftWindowType(
+        readInt("fftWindowType", pendingSettings.fftWindowType));
     pendingSettings.lnaGain = readInt("lnaGain", pendingSettings.lnaGain);
     pendingSettings.vgaGain = readInt("vgaGain", pendingSettings.vgaGain);
     pendingSettings.rtlAgc = readBool("rtlAgc", pendingSettings.rtlAgc);
@@ -271,6 +275,8 @@ void YourClassName::applySettingsFromJson(const QJsonObject &settingsJson, bool 
     pendingSettings.dmrPrivacyFrameOffset =
         (std::clamp)(readInt("dmrPrivacyFrameOffset", pendingSettings.dmrPrivacyFrameOffset), 0, 17);
     currentScale = readDouble("scalePercent", currentScale);
+    additionalScaleDivisor = (std::clamp)(
+        readInt("additionalScaleDivisor", additionalScaleDivisor), 1, 20);
     agileScanEnabled = readBool("agileScanEnabled", agileScanEnabled);
     agileScanAutoStepSampleRate =
         readBool("agileScanAutoStepSampleRate", agileScanAutoStepSampleRate);

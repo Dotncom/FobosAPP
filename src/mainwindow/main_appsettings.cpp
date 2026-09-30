@@ -77,6 +77,24 @@ void YourClassName::openApplicationSettings() {
     const int fineTuneIndex = fineTuneModeCombo->findData(fineTuneControlMode);
     fineTuneModeCombo->setCurrentIndex(fineTuneIndex >= 0 ? fineTuneIndex : 0);
 
+    QComboBox *fftWindowCombo = new QComboBox(&dialog);
+    fftWindowCombo->addItem(uiText(QStringLiteral("fft_window_rectangular"), QStringLiteral("Rectangular")),
+                            FFT_WINDOW_RECTANGULAR);
+    fftWindowCombo->addItem(uiText(QStringLiteral("fft_window_hann"), QStringLiteral("Hann")),
+                            FFT_WINDOW_HANN);
+    fftWindowCombo->addItem(uiText(QStringLiteral("fft_window_hamming"), QStringLiteral("Hamming")),
+                            FFT_WINDOW_HAMMING);
+    fftWindowCombo->addItem(uiText(QStringLiteral("fft_window_blackman_harris"), QStringLiteral("Blackman-Harris")),
+                            FFT_WINDOW_BLACKMAN_HARRIS);
+    fftWindowCombo->addItem(uiText(QStringLiteral("fft_window_flat_top"), QStringLiteral("Flat-top")),
+                            FFT_WINDOW_FLAT_TOP);
+    const int fftWindowIndex = fftWindowCombo->findData(
+        normalizedFftWindowType(pendingSettings.fftWindowType));
+    fftWindowCombo->setCurrentIndex(fftWindowIndex >= 0 ? fftWindowIndex : 0);
+    fftWindowCombo->setToolTip(uiText(
+        QStringLiteral("fft_window_tooltip"),
+        QStringLiteral("FFT window applied before the transform. Hann is a good general-purpose choice; Blackman-Harris suppresses leakage near strong signals; Flat-top improves amplitude accuracy but widens RBW.")));
+
     QSpinBox *spectrumUpdateSpin = new QSpinBox(&dialog);
     spectrumUpdateSpin->setRange(SPECTRUM_UPDATE_AUTO_MS, SPECTRUM_UPDATE_MAX_MS);
     spectrumUpdateSpin->setSpecialValueText(uiText(QStringLiteral("auto"), QStringLiteral("Auto")));
@@ -138,6 +156,7 @@ void YourClassName::openApplicationSettings() {
 
     generalLayout->addRow(uiText(QStringLiteral("language"), QStringLiteral("Lang:")), languageCombo);
     generalLayout->addRow(uiText(QStringLiteral("fine_tune"), QStringLiteral("Fine tune")), fineTuneModeCombo);
+    generalLayout->addRow(uiText(QStringLiteral("fft_window"), QStringLiteral("FFT window")), fftWindowCombo);
     generalLayout->addRow(uiText(QStringLiteral("spectrum_update_interval"), QStringLiteral("Spectrum/waterfall update")), spectrumUpdateSpin);
     generalLayout->addRow(uiText(QStringLiteral("waterfall_speed"), QStringLiteral("Waterfall speed")), waterfallRowsSpin);
     generalLayout->addRow(uiText(QStringLiteral("scan_measurement_update_interval"), QStringLiteral("Measurement accumulation")), scanMeasurementUpdateSpin);
@@ -229,6 +248,24 @@ void YourClassName::openApplicationSettings() {
     QCheckBox *loggingOption = new QCheckBox(uiText(QStringLiteral("logging"), QString::fromUtf8("Р›РѕРіСѓРІР°РЅРЅСЏ")), quickOptionsBox);
     loggingOption->setToolTip(uiText(QStringLiteral("logging_tooltip"),
                                      QStringLiteral("Write detailed diagnostic logs and DMR dumps")));
+    QCheckBox *spectrumFpsOption = new QCheckBox(
+        uiText(QStringLiteral("spectrum_fps_overlay"), QStringLiteral("Spectrum FPS")),
+        quickOptionsBox);
+    spectrumFpsOption->setToolTip(uiText(
+        QStringLiteral("spectrum_fps_overlay_tooltip"),
+        QStringLiteral("Show the actual rendered frame rate over the spectrum window.")));
+    QCheckBox *waterfallFpsOption = new QCheckBox(
+        uiText(QStringLiteral("waterfall_fps_overlay"), QStringLiteral("Waterfall FPS")),
+        quickOptionsBox);
+    waterfallFpsOption->setToolTip(uiText(
+        QStringLiteral("waterfall_fps_overlay_tooltip"),
+        QStringLiteral("Show the actual rendered frame rate over the 2D or 3D waterfall window.")));
+    QCheckBox *extendedSpectrumInfoOption = new QCheckBox(
+        uiText(QStringLiteral("extended_spectrum_info"), QStringLiteral("Extended spectrum info")),
+        quickOptionsBox);
+    extendedSpectrumInfoOption->setToolTip(uiText(
+        QStringLiteral("extended_spectrum_info_tooltip"),
+        QStringLiteral("Show detailed frequency, level, sample-rate, FFT-window, RBW and bin-width information under the FPS overlays.")));
     audioOption->setChecked(audioCheckbox && audioCheckbox->isChecked());
     syncOption->setChecked(syncCheckbox && syncCheckbox->isChecked());
     syncOption->setEnabled(false);
@@ -241,6 +278,9 @@ void YourClassName::openApplicationSettings() {
     gpuWaterfallOption->setChecked(experimentalGpuWaterfall);
     gnssUbxAutoEnableOption->setChecked(gnssUbxAutoEnable);
     loggingOption->setChecked(diagnosticVerboseLogging);
+    spectrumFpsOption->setChecked(showSpectrumFps);
+    waterfallFpsOption->setChecked(showWaterfallFps);
+    extendedSpectrumInfoOption->setChecked(showExtendedSpectrumInfo);
     quickOptionsLayout->addWidget(audioOption, 0, 0);
     quickOptionsLayout->addWidget(syncOption, 0, 1);
     quickOptionsLayout->addWidget(spectrum2Option, 1, 0);
@@ -251,6 +291,9 @@ void YourClassName::openApplicationSettings() {
     quickOptionsLayout->addWidget(gpuWaterfallOption, 3, 0);
     quickOptionsLayout->addWidget(gnssUbxAutoEnableOption, 3, 1);
     quickOptionsLayout->addWidget(loggingOption, 3, 2);
+    quickOptionsLayout->addWidget(spectrumFpsOption, 4, 0);
+    quickOptionsLayout->addWidget(waterfallFpsOption, 4, 1);
+    quickOptionsLayout->addWidget(extendedSpectrumInfoOption, 4, 2);
     rootLayout->addWidget(quickOptionsBox);
 
     auto applyLanguage = [this, languageCombo]() {
@@ -265,6 +308,11 @@ void YourClassName::openApplicationSettings() {
             fineTuneControlMode = FINE_TUNE_MODE_SCALE;
         }
         updateFineTuneControlMode();
+        savePersistentSettings();
+    };
+    auto applyFftWindow = [this, fftWindowCombo]() {
+        pendingSettings.fftWindowType = normalizedFftWindowType(
+            fftWindowCombo->currentData().toInt());
         savePersistentSettings();
     };
     auto applySpectrumUpdateInterval = [this, spectrumUpdateSpin]() {
@@ -321,6 +369,9 @@ void YourClassName::openApplicationSettings() {
     });
     connect(fineTuneModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), &dialog, [applyFineTuneMode](int) {
         applyFineTuneMode();
+    });
+    connect(fftWindowCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), &dialog, [applyFftWindow](int) {
+        applyFftWindow();
     });
     connect(spectrumUpdateSpin, QOverload<int>::of(&QSpinBox::valueChanged), &dialog, [applySpectrumUpdateInterval](int) {
         applySpectrumUpdateInterval();
@@ -409,6 +460,30 @@ void YourClassName::openApplicationSettings() {
         setFobosVerboseLoggingEnabled(checked);
         qDebug() << "[Log] Verbose diagnostic logging"
                  << (checked ? "enabled" : "disabled");
+        savePersistentSettings();
+    });
+    connect(spectrumFpsOption, &QCheckBox::toggled, &dialog, [this](bool checked) {
+        showSpectrumFps = checked;
+        if (graphWidget) {
+            graphWidget->setFpsOverlayEnabled(checked);
+        }
+        savePersistentSettings();
+    });
+    connect(waterfallFpsOption, &QCheckBox::toggled, &dialog, [this](bool checked) {
+        showWaterfallFps = checked;
+        if (waterfallWidget) {
+            waterfallWidget->setFpsOverlayEnabled(checked);
+        }
+        savePersistentSettings();
+    });
+    connect(extendedSpectrumInfoOption, &QCheckBox::toggled, &dialog, [this](bool checked) {
+        showExtendedSpectrumInfo = checked;
+        if (graphWidget) {
+            graphWidget->setExtendedInfoOverlayEnabled(checked);
+        }
+        if (waterfallWidget) {
+            waterfallWidget->setExtendedInfoOverlayEnabled(checked);
+        }
         savePersistentSettings();
     });
 

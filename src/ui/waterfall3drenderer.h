@@ -5,9 +5,28 @@
 #include <cstdint>
 #include <deque>
 #include <vector>
+#include <QMatrix4x4>
+#include <QOpenGLBuffer>
+#include <QOpenGLShaderProgram>
 
 class Waterfall3DRenderer {
 public:
+    struct SliceStatistics {
+        bool valid = false;
+        float minimumLevelDb = 0.0f;
+        float averageLevelDb = 0.0f;
+        float maximumLevelDb = 0.0f;
+        int sampleCount = 0;
+        int firstColumn = -1;
+        int lastColumn = -1;
+        int columnCount = 0;
+        int peakColumn = -1;
+        int firstRow = -1;
+        int lastRow = -1;
+        int rowCount = 0;
+        int peakRow = -1;
+    };
+
     void appendRow(const std::vector<float> &levels,
                    const std::vector<unsigned char> &rgb,
                    float levelMin,
@@ -31,15 +50,26 @@ public:
     void endFrequencySlice();
     void endSpectrumSlice();
     double selectedFrequencyRatio() const;
+    bool frequencySliceRange(double &centerRatio, double &firstRatio, double &lastRatio) const;
+    bool spectrumSliceRange(int &firstRow, int &lastRow, int &rowCount) const;
+    bool frequencySliceStatistics(SliceStatistics &statistics) const;
+    bool spectrumSliceStatistics(SliceStatistics &statistics) const;
     void orbitCamera(float deltaX, float deltaY);
     void panCamera(float deltaX, float deltaY, int viewportWidth, int viewportHeight);
     void zoomCamera(int wheelDelta);
-    void render(int viewportWidth, int viewportHeight) const;
+    void render(int viewportWidth, int viewportHeight);
+    void releaseGpuResources();
 
 private:
     struct VertexSample {
         float height = 0.0f;
+        float levelDb = 0.0f;
         std::array<std::uint8_t, 3> color{{0, 0, 0}};
+    };
+
+    struct GpuGridVertex {
+        float row = 0.0f;
+        float column = 0.0f;
     };
 
     using HistoryRow = std::vector<VertexSample>;
@@ -67,8 +97,30 @@ private:
     std::vector<HistoryRow> capturedSpectrumRows;
     int capturedSpectrumFirstRow = -1;
     int capturedSpectrumRowsRemaining = 0;
+    QOpenGLBuffer surfaceVbo;
+    QOpenGLShaderProgram surfaceProgram;
+    bool surfaceProgramReady = false;
+    bool surfaceProgramTried = false;
+    bool gpuMeshDirty = true;
+    std::vector<GpuGridVertex> gpuGridVertices;
+    std::deque<HistoryRow> pendingGpuRows;
+    unsigned int heightTexture = 0;
+    unsigned int colorTexture = 0;
+    int gpuTextureColumns = 0;
+    int gpuTextureRows = 0;
+    int gpuTextureRowCount = 0;
+    int gpuTextureWriteRow = 0;
+    int gpuTextureOldestRow = 0;
+    bool gpuTexturesResetRequired = true;
+    std::vector<std::uint8_t> gpuHeightScratch;
+    std::vector<std::uint8_t> gpuColorScratch;
 
     void refreshCapturedSpectrumRows();
+    bool ensureSurfaceProgram();
+    void resetGpuSurfaceData();
+    void rebuildGpuSurface();
+    bool uploadGpuSurfaceRows();
+    bool renderGpuSurface(const QMatrix4x4 &transform);
 };
 
 #endif // WATERFALL3DRENDERER_H

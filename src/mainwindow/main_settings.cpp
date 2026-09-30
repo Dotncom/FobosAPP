@@ -154,6 +154,8 @@ void YourClassName::loadPersistentSettings() {
     pendingSettings.bandwidth = (std::max)(1.0, settings.value("receiver/bandwidth", pendingSettings.bandwidth).toDouble());
     pendingSettings.modulationType = settings.value("receiver/modulationType", pendingSettings.modulationType).toInt();
     pendingSettings.fftLength = (std::max)(1024, settings.value("receiver/fftLength", pendingSettings.fftLength).toInt());
+    pendingSettings.fftWindowType = normalizedFftWindowType(
+        settings.value("receiver/fftWindowType", pendingSettings.fftWindowType).toInt());
     pendingSettings.lnaGain = (std::clamp)(settings.value("receiver/lnaGain", pendingSettings.lnaGain).toInt(), 1, 3);
     pendingSettings.vgaGain = (std::clamp)(settings.value("receiver/vgaGain", pendingSettings.vgaGain).toInt(), 0, 31);
     pendingSettings.rtlAgc = settings.value("receiver/rtlAgc", pendingSettings.rtlAgc).toBool();
@@ -621,6 +623,10 @@ void YourClassName::loadPersistentSettings() {
     currentScale = (std::clamp)(settings.value("display/scalePercent", currentScale).toDouble(),
                                 MIN_SCALE_PERCENT,
                                 MAX_SCALE_PERCENT);
+    additionalScaleDivisor = (std::clamp)(
+        settings.value("display/additionalScaleDivisor", additionalScaleDivisor).toInt(),
+        1,
+        20);
     contrast = static_cast<float>((std::clamp)(settings.value("display/contrast", static_cast<double>(contrast)).toDouble(), 1.0, 20.0));
     sensitivity = static_cast<float>((std::clamp)(settings.value("display/sensitivity", static_cast<double>(sensitivity)).toDouble(), 1.0, 30.0));
     displayLevelMin = static_cast<float>((std::clamp)(settings.value("display/levelMin", static_cast<double>(displayLevelMin)).toDouble(), -160.0, 20.0));
@@ -803,6 +809,21 @@ void YourClassName::loadPersistentSettings() {
         waterfallWidget->setRenderBackend(experimentalGpuWaterfall
                                               ? MyWaterfallWidget::RenderBackend::GpuPrepared
                                               : MyWaterfallWidget::RenderBackend::CpuTexture);
+    }
+    showSpectrumFps = settings.value("ui/showSpectrumFps", showSpectrumFps).toBool();
+    showWaterfallFps = settings.value("ui/showWaterfallFps", showWaterfallFps).toBool();
+    showExtendedSpectrumInfo = settings.value("ui/showExtendedSpectrumInfo", showExtendedSpectrumInfo).toBool();
+    if (graphWidget) {
+        graphWidget->setFpsOverlayEnabled(showSpectrumFps);
+    }
+    if (waterfallWidget) {
+        waterfallWidget->setFpsOverlayEnabled(showWaterfallFps);
+    }
+    if (graphWidget) {
+        graphWidget->setExtendedInfoOverlayEnabled(showExtendedSpectrumInfo);
+    }
+    if (waterfallWidget) {
+        waterfallWidget->setExtendedInfoOverlayEnabled(showExtendedSpectrumInfo);
     }
     agileLiveRetuneCommandIntervalMs =
         (std::clamp)(settings.value("ui/agileLiveRetuneIntervalMs",
@@ -1169,6 +1190,7 @@ void YourClassName::savePersistentSettings() {
     settings.setValue("receiver/bandwidth", settingsToSave.bandwidth);
     settings.setValue("receiver/modulationType", settingsToSave.modulationType);
     settings.setValue("receiver/fftLength", settingsToSave.fftLength);
+    settings.setValue("receiver/fftWindowType", normalizedFftWindowType(settingsToSave.fftWindowType));
     settings.setValue("receiver/lnaGain", settingsToSave.lnaGain);
     settings.setValue("receiver/vgaGain", settingsToSave.vgaGain);
     settings.setValue("receiver/rtlAgc", settingsToSave.rtlAgc);
@@ -1396,6 +1418,7 @@ void YourClassName::savePersistentSettings() {
     settings.endArray();
 
     settings.setValue("display/scalePercent", currentScale);
+    settings.setValue("display/additionalScaleDivisor", additionalScaleDivisor);
     settings.setValue("display/contrast", contrast);
     settings.setValue("display/sensitivity", sensitivity);
     settings.setValue("display/levelMin", displayLevelMin);
@@ -1440,6 +1463,9 @@ void YourClassName::savePersistentSettings() {
     settings.setValue("ui/waterfall3DSpectrumSliceCaptureFixed", waterfall3DSpectrumSliceCaptureFixed);
     settings.setValue("ui/waterfall3DVncSliceInput", waterfall3DVncSliceInput);
     settings.setValue("ui/experimentalGpuWaterfall", experimentalGpuWaterfall);
+    settings.setValue("ui/showSpectrumFps", showSpectrumFps);
+    settings.setValue("ui/showWaterfallFps", showWaterfallFps);
+    settings.setValue("ui/showExtendedSpectrumInfo", showExtendedSpectrumInfo);
     settings.setValue("ui/agileLiveRetuneIntervalMs", agileLiveRetuneCommandIntervalMs);
     settings.setValue("ui/fineTuneScaleHoldMode", fineTuneScaleHoldMode);
     settings.setValue("spectrumFrames/bufferEnabled", spectrumFrameBufferEnabled);

@@ -6,6 +6,7 @@
 #include "receiverdeviceutils.h"
 #include "scanvisualutils.h"
 #include "spectrumfftworker.h"
+#include "spectrumdisplayreducer.h"
 #include "tuningutils.h"
 
 #include <QDebug>
@@ -28,6 +29,52 @@ extern bool syncWariable;
 extern float sensitivity;
 extern float contrast;
 extern bool colorf;
+
+namespace {
+struct SpectrumDisplayProfile {
+    int fftLength = 0;
+    int frames = 0;
+    qint64 preReduceNs = 0;
+    qint64 reduceNs = 0;
+    qint64 widgetNs = 0;
+    qint64 totalNs = 0;
+};
+
+void recordSpectrumDisplayProfile(int fftLength,
+                                  qint64 preReduceNs,
+                                  qint64 reduceNs,
+                                  qint64 widgetNs,
+                                  qint64 totalNs) {
+    static SpectrumDisplayProfile profile;
+    if (profile.fftLength != fftLength) {
+        profile = SpectrumDisplayProfile{};
+        profile.fftLength = fftLength;
+    }
+    ++profile.frames;
+    profile.preReduceNs += preReduceNs;
+    profile.reduceNs += reduceNs;
+    profile.widgetNs += widgetNs;
+    profile.totalNs += totalNs;
+    constexpr int ProfileFrames = 30;
+    if (profile.frames < ProfileFrames) {
+        return;
+    }
+    const double scale = 1.0 / (1000000.0 * profile.frames);
+    qInfo() << "[Spectrum display profile]"
+            << "length" << profile.fftLength
+            << "frames" << profile.frames
+            << "preReduceMs" << profile.preReduceNs * scale
+            << "reduceMs" << profile.reduceNs * scale
+            << "widgetMs" << profile.widgetNs * scale
+            << "totalMs" << profile.totalNs * scale;
+    profile.frames = 0;
+    profile.preReduceNs = 0;
+    profile.reduceNs = 0;
+    profile.widgetNs = 0;
+    profile.totalNs = 0;
+}
+}
+
 void YourClassName::onfftLengthEntered() {
     const int newFftLength = fftComboBox->currentText().toInt();
     applyFftLengthChange(newFftLength, true);
@@ -53,7 +100,9 @@ bool YourClassName::applyFftLengthChange(int newFftLength, bool notifyRemote) {
     pendingSettings.fftLength = newFftLength;
     publishSettingsToGlobals();
     updateSpectrumTimerInterval();
-    fftResult = std::make_unique<FFTResult>();
+    if (fftResult) {
+        fftResult->resetHfNoiseCancelState();
+    }
     if (spectrumFftWorker) {
         spectrumFftWorker->resetHfNoiseCancelState();
     }
@@ -590,7 +639,7 @@ void YourClassName::updateSpectrum() {
     }
 
     const double fullSpan = (std::max)(1.0, fullMaxFrequency - fullMinFrequency);
-    double visibleSpan = fullSpan * (currentScale / 100.0);
+    double visibleSpan = fullSpan * (effectiveScalePercent() / 100.0);
     if (!std::isfinite(visibleSpan) || visibleSpan <= 0.0) {
         visibleSpan = fullSpan;
     }
@@ -690,6 +739,13 @@ void YourClassName::updateSpectrum() {
     if (!haveSpectrum || spectrumFrequencies.empty() || spectrumMagnitudes.empty()) {
         finishTrace("no_data", spectrumFrequencies, spectrumMagnitudes);
         return;
+    }
+
+    const bool profileDisplayFrame = verboseLogging &&
+                                     spectrumSettings.fftLength >= 524288;
+    QElapsedTimer displayProfileTimer;
+    if (profileDisplayFrame) {
+        displayProfileTimer.start();
     }
 
     if (std::isfinite(amplitudeCalibrationOffsetDb) &&
@@ -798,7 +854,7 @@ void YourClassName::updateSpectrum() {
                 const double scanFullSpanHz = scanFrame.maxFrequency - scanFrame.minFrequency;
                 const double scanVisibleSpanHz =
                     std::isfinite(scanFullSpanHz) && scanFullSpanHz > 0.0
-                        ? scanFullSpanHz * (currentScale / 100.0)
+                        ? scanFullSpanHz * (effectiveScalePercent() / 100.0)
                         : scanFullSpanHz;
                 const double scanVisibleCenterHz =
                     displayFrequencyForScanActual(spectrumDisplayCenterHz,
@@ -1074,46 +1130,91 @@ void YourClassName::updateSpectrum() {
                                    pendingSettings.modulationType);
             scaleWidget->setRange(displayMinFrequency, displayMaxFrequency);
         }
-        graphWidget->setLevelRange(displayLevelMin, displayLevelMax);
-        graphWidget->setScanSegments(displayScanSegments);
-        graphWidget->setScanSegmentMarkersVisible(displayScanSegmentMarkers);
-        graphWidget->setData(displayFrequencies,
-                             visualMagnitudes,
-                             displayMinFrequency,
-                             displayMaxFrequency,
-                             displayFftLength,
-                             colorf);
         const std::vector<float> &measurementFrequencies =
             displayMeasurementFrequencies.size() == displayMagnitudes.size()
                 ? displayMeasurementFrequencies
                 : displayFrequencies;
         const std::vector<float> measurementOverlay =
             scanMeasurementOverlay(measurementFrequencies, static_cast<int>(displayMagnitudes.size()));
+        const std::vector<float> *displayOverlaySource = nullptr;
         if (!baselineRawOverlay.empty()) {
-            graphWidget->setOverlayData(baselineRawOverlay, true);
-        } else {
-            graphWidget->setOverlayData(!measurementOverlay.empty() ? measurementOverlay : displayReferenceMagnitudes,
-                                        !measurementOverlay.empty() ||
-                                            (pendingSettings.inputMode == INPUT_HF_NOISE_CANCEL &&
-                                             !displayReferenceMagnitudes.empty()));
+            displayOverlaySource = &baselineRawOverlay;
+        } else if (!measurementOverlay.empty()) {
+            displayOverlaySource = &measurementOverlay;
+        } else if (pendingSettings.inputMode == INPUT_HF_NOISE_CANCEL &&
+                   !displayReferenceMagnitudes.empty()) {
+            displayOverlaySource = &displayReferenceMagnitudes;
         }
+
+        const int displayTargetBins = (std::max)({512,
+                                                  graphWidget ? graphWidget->width() : 0,
+                                                  waterfallWidget ? waterfallWidget->width() : 0});
+        static SpectrumDisplayFrame preparedDisplayFrame;
+        const qint64 preReduceNs = profileDisplayFrame
+                                       ? displayProfileTimer.nsecsElapsed()
+                                       : 0;
+        prepareSpectrumDisplayFrame(displayFrequencies,
+                                    visualMagnitudes,
+                                    displayOverlaySource,
+                                    displayFftLength,
+                                    displayMinFrequency,
+                                    displayMaxFrequency,
+                                    displayTargetBins,
+                                    displayLevelMin,
+                                    preparedDisplayFrame);
+        const qint64 afterReduceNs = profileDisplayFrame
+                                         ? displayProfileTimer.nsecsElapsed()
+                                         : 0;
+
+        graphWidget->setLevelRange(displayLevelMin, displayLevelMax);
+        graphWidget->setSpectrumMetadata(displayCenterFrequency,
+                                         pendingSettings.listeningFrequency,
+                                         spectrumSettings.sampleRate,
+                                         spectrumSettings.fftLength,
+                                         spectrumSettings.fftWindowType);
+        graphWidget->setScanSegments(displayScanSegments);
+        graphWidget->setScanSegmentMarkersVisible(displayScanSegmentMarkers);
+        graphWidget->setData(preparedDisplayFrame.frequencies,
+                             preparedDisplayFrame.levels,
+                             displayMinFrequency,
+                             displayMaxFrequency,
+                             static_cast<int>(preparedDisplayFrame.levels.size()),
+                             colorf,
+                             true);
+        graphWidget->setOverlayData(preparedDisplayFrame.overlayLevels,
+                                    !preparedDisplayFrame.overlayLevels.empty(),
+                                    true);
         if (traceFrame) {
             qDebug() << "[Spectrum] before waterfall" << "elapsedMs" << traceTimer.elapsed();
         }
         if (updateWaterfallFrame) {
-            waterfallWidget->setData(displayFrequencies,
-                                     visualMagnitudes,
+            waterfallWidget->setSpectrumMetadata(displayCenterFrequency,
+                                                 pendingSettings.listeningFrequency,
+                                                 spectrumSettings.sampleRate,
+                                                 spectrumSettings.fftLength,
+                                                 spectrumSettings.fftWindowType);
+            waterfallWidget->setData(preparedDisplayFrame.frequencies,
+                                     preparedDisplayFrame.levels,
                                      displayMinFrequency,
                                      displayMaxFrequency,
-                                     displayFftLength,
+                                     static_cast<int>(preparedDisplayFrame.levels.size()),
                                      secondGraph,
                                      contrast,
                                      sensitivity,
                                      displayLevelMin,
-                                     displayLevelMax);
+                                     displayLevelMax,
+                                     true);
         }
         waterfallWidget->setScanSegments(displayScanSegments);
         waterfallWidget->setScanSegmentMarkersVisible(displayScanSegmentMarkers);
+        if (profileDisplayFrame) {
+            const qint64 afterWidgetsNs = displayProfileTimer.nsecsElapsed();
+            recordSpectrumDisplayProfile(spectrumSettings.fftLength,
+                                         preReduceNs,
+                                         afterReduceNs - preReduceNs,
+                                         afterWidgetsNs - afterReduceNs,
+                                         afterWidgetsNs);
+        }
     } else if (traceFrame) {
         qDebug() << "[Spectrum] local server visual update skipped" << "elapsedMs" << traceTimer.elapsed();
     }

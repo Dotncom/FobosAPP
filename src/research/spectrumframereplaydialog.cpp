@@ -1956,6 +1956,8 @@ RadioSettings SpectrumFrameReplayDialog::replaySettingsForSource(double sampleRa
     settings.bandwidth = recording.metadata.value(QStringLiteral("bandwidth")).toDouble(settings.bandwidth);
     settings.modulationType = recording.metadata.value(QStringLiteral("modulationType")).toInt(settings.modulationType);
     settings.fftLength = recording.metadata.value(QStringLiteral("fftLength")).toInt(settings.fftLength);
+    settings.fftWindowType = normalizedFftWindowType(
+        recording.metadata.value(QStringLiteral("fftWindowType")).toInt(settings.fftWindowType));
     settings.audioEnabled = true;
 
     if (selectedReplayIqSource() == ReplayIqSource::ChannelIq) {

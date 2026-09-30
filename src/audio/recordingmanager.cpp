@@ -248,6 +248,7 @@ QJsonObject RecordingManager::makeMetadataObject() const {
     root["bandwidth"] = recordingSettings.bandwidth;
     root["modulationType"] = recordingSettings.modulationType;
     root["fftLength"] = recordingSettings.fftLength;
+    root["fftWindowType"] = normalizedFftWindowType(recordingSettings.fftWindowType);
     root["lnaGain"] = recordingSettings.lnaGain;
     root["vgaGain"] = recordingSettings.vgaGain;
     root["audioLowPassHz"] = recordingSettings.audioLowPassHz;

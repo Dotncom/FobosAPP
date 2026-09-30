@@ -1,5 +1,46 @@
 # Changelog
 
+## 4.7.1 - 2026-09-30
+
+### Added
+
+- Added selectable Rectangular, Hann, Hamming, Blackman-Harris, and Flat-top
+  FFT windows with coherent-gain normalization and RBW/ENBW reporting.
+- Added optional extended spectrum and 3D-slice information panels showing
+  center/listening frequency, sample rate, FFT size, window, bin width, RBW,
+  display resolution, peak frequency, and level statistics.
+- Added a compact secondary spectrum zoom control for detailed inspection
+  beyond the normal zoom range.
+
+### Changed
+
+- Added adaptive FFTW thread selection for large FFT sizes and parallelized
+  suitable post-processing stages. The application benchmarks candidate plans
+  and keeps the faster plan for the current host.
+- Reworked the 3D waterfall upload/render path to reduce CPU work and improve
+  frame rate at large FFT sizes on Windows and Raspberry Pi.
+- Reduced display data to the visible pixel width before 2D graph/waterfall
+  rendering while preserving peak information within each display column.
+- Kept detailed FFT profiling behind verbose logging so normal logs remain
+  compact.
+
+### Fixed
+
+- Fixed stepped/rectangular spectrum geometry at extreme zoom caused by loss
+  of precision in large absolute frequencies stored as floats.
+- Kept the primary spectrum, second spectrum, and waterfall aligned when
+  reducing very large FFT arrays for display.
+- Preserved the selected FFT window and display-analysis metadata in settings,
+  network settings, spectrum recordings, and replay.
+
+### Notes
+
+- Practical Raspberry Pi testing reached roughly 50+ FPS around 131k FFT and
+  remained usable around 1M FFT depending on display mode and hardware load.
+  Multi-million-point FFT modes are intentionally available as research modes.
+- Android artifacts are unchanged and are not published with this desktop and
+  Raspberry source update.
+
 ## 4.5.2 - 2026-06-22
 
 ### Changed

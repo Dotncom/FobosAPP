@@ -57,7 +57,7 @@ void SpectrumFftWorker::resetHfNoiseCancelState() {
 }
 
 void SpectrumFftWorker::run() {
-    FFTResult fft;
+    FFTResult fft(true);
 
     for (;;) {
         RadioSettings settings;

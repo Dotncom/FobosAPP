@@ -1,10 +1,17 @@
 #include "fft.h"
+#include "diagnosticlogging.h"
 #include "iqbuffer.h"
 
+#include <QDir>
 #include <QDebug>
+#include <QElapsedTimer>
+#include <QFile>
+#include <QFuture>
+#include <QStandardPaths>
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 
 extern int globalMode;
 
@@ -17,6 +24,75 @@ extern double maxFrequency;
 namespace {
 constexpr float FFT_MAGNITUDE_FLOOR_DB = -160.0f;
 constexpr float HF_NOISE_CANCEL_MAX_COEFF = 2.5f;
+constexpr int FFT_THREADED_PLAN_MIN_LENGTH = 524288;
+constexpr int FFT_PARALLEL_POSTPROCESS_MIN_LENGTH = 1048576;
+constexpr int FFT_PROFILE_MIN_LENGTH = 524288;
+constexpr unsigned int FFT_MAX_WORKER_THREADS = 4;
+
+std::mutex fftwPlannerMutex;
+bool fftwWisdomImported = false;
+#ifdef FOBOSAPP_HAS_FFTW_THREADS
+bool fftwThreadsInitializationAttempted = false;
+bool fftwThreadsAvailable = false;
+#endif
+
+int fftWorkerCount(int length) {
+    if (length < FFT_PARALLEL_POSTPROCESS_MIN_LENGTH) {
+        return 1;
+    }
+    const unsigned int hardwareThreads = std::thread::hardware_concurrency();
+    if (hardwareThreads < 2U) {
+        return 1;
+    }
+    return static_cast<int>(std::clamp(hardwareThreads / 2U,
+                                       1U,
+                                       FFT_MAX_WORKER_THREADS));
+}
+
+template <typename Function>
+void parallelForBins(int count, Function function) {
+    const int workerCount = fftWorkerCount(count);
+    if (workerCount <= 1 || count <= 0) {
+        function(0, count);
+        return;
+    }
+
+    std::vector<QFuture<void>> workers;
+    workers.reserve(static_cast<std::size_t>(workerCount - 1));
+    const int chunkSize = (count + workerCount - 1) / workerCount;
+    for (int worker = 1; worker < workerCount; ++worker) {
+        const int begin = worker * chunkSize;
+        const int end = std::min(count, begin + chunkSize);
+        if (begin < end) {
+            workers.emplace_back(
+                QtConcurrent::run([begin, end, &function]() { function(begin, end); }));
+        }
+    }
+    function(0, std::min(count, chunkSize));
+    for (QFuture<void> &worker : workers) {
+        worker.waitForFinished();
+    }
+}
+
+QByteArray fftwWisdomFilePath() {
+    const QString directory = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+    if (directory.isEmpty()) {
+        return QByteArray();
+    }
+    QDir().mkpath(directory);
+    return QFile::encodeName(QDir(directory).filePath(QStringLiteral("fftwf-wisdom.dat")));
+}
+
+void importFftwWisdom() {
+    if (fftwWisdomImported) {
+        return;
+    }
+    fftwWisdomImported = true;
+    const QByteArray path = fftwWisdomFilePath();
+    if (!path.isEmpty()) {
+        fftwf_import_wisdom_from_filename(path.constData());
+    }
+}
 
 float estimateHfNoiseCancelCoefficient(const std::vector<float> &iqSnapshot,
                                        int sourceStart,
@@ -71,9 +147,13 @@ std::complex<float> clampComplexMagnitude(std::complex<float> value, float maxMa
 }
 }
 
-FFTResult::FFTResult(QObject *parent)
-    : QObject(parent), fftIn(nullptr), fftOut(nullptr), plan(nullptr), planLength(0) {
-    ensurePlan(fftLength);
+FFTResult::FFTResult(bool optimizeLargePlans, QObject *parent)
+    : QObject(parent),
+      fftIn(nullptr),
+      fftOut(nullptr),
+      plan(nullptr),
+      planLength(0),
+      optimizeLargePlans(optimizeLargePlans) {
 }
 
 FFTResult::~FFTResult() {
@@ -122,7 +202,88 @@ bool FFTResult::ensurePlan(int length) {
         return false;
     }
 
-    plan = fftwf_plan_dft_1d(length, fftIn, fftOut, FFTW_FORWARD, FFTW_ESTIMATE);
+    {
+        std::lock_guard<std::mutex> plannerLock(fftwPlannerMutex);
+        importFftwWisdom();
+        const bool compareThreadedPlans =
+            optimizeLargePlans && length >= FFT_THREADED_PLAN_MIN_LENGTH;
+        int planThreads = 1;
+#ifdef FOBOSAPP_HAS_FFTW_THREADS
+        if (!fftwThreadsInitializationAttempted) {
+            fftwThreadsInitializationAttempted = true;
+            fftwThreadsAvailable = fftwf_init_threads() != 0;
+        }
+        if (compareThreadedPlans && fftwThreadsAvailable) {
+            planThreads = fftWorkerCount(length);
+        }
+#endif
+        if (!compareThreadedPlans || planThreads <= 1) {
+#ifdef FOBOSAPP_HAS_FFTW_THREADS
+            if (fftwThreadsAvailable) {
+                fftwf_plan_with_nthreads(1);
+            }
+#endif
+            plan = fftwf_plan_dft_1d(length, fftIn, fftOut, FFTW_FORWARD, FFTW_ESTIMATE);
+        } else {
+            const auto makeCandidate = [&](int threads) {
+#ifdef FOBOSAPP_HAS_FFTW_THREADS
+                fftwf_plan_with_nthreads(threads);
+#endif
+                fftwf_plan candidate = fftwf_plan_dft_1d(length,
+                                                          fftIn,
+                                                          fftOut,
+                                                          FFTW_FORWARD,
+                                                          FFTW_MEASURE | FFTW_WISDOM_ONLY);
+                if (!candidate) {
+                    candidate = fftwf_plan_dft_1d(length,
+                                                  fftIn,
+                                                  fftOut,
+                                                  FFTW_FORWARD,
+                                                  FFTW_ESTIMATE);
+                }
+                return candidate;
+            };
+            const auto benchmarkCandidate = [](fftwf_plan candidate) {
+                if (!candidate) {
+                    return std::numeric_limits<qint64>::max();
+                }
+                fftwf_execute(candidate);
+                QElapsedTimer timer;
+                timer.start();
+                constexpr int Runs = 3;
+                for (int run = 0; run < Runs; ++run) {
+                    fftwf_execute(candidate);
+                }
+                return timer.nsecsElapsed() / Runs;
+            };
+
+            fftwf_plan singleThreadPlan = makeCandidate(1);
+            fftwf_plan multiThreadPlan = makeCandidate(planThreads);
+            const qint64 singleThreadNs = benchmarkCandidate(singleThreadPlan);
+            const qint64 multiThreadNs = benchmarkCandidate(multiThreadPlan);
+            const bool useMultiThread = multiThreadPlan &&
+                                        (!singleThreadPlan ||
+                                         multiThreadNs < singleThreadNs - singleThreadNs / 10);
+            plan = useMultiThread ? multiThreadPlan : singleThreadPlan;
+            if (useMultiThread) {
+                if (singleThreadPlan) {
+                    fftwf_destroy_plan(singleThreadPlan);
+                }
+            } else if (multiThreadPlan) {
+                fftwf_destroy_plan(multiThreadPlan);
+            }
+            qInfo() << "[FFT] adaptive plan selected"
+                    << "length" << length
+                    << "threads" << (useMultiThread ? planThreads : 1)
+                    << "singleMs" << (singleThreadNs / 1000000.0)
+                    << "multiMs" << (multiThreadNs / 1000000.0);
+        }
+#ifdef FOBOSAPP_HAS_FFTW_THREADS
+        if (fftwThreadsAvailable) {
+            fftwf_plan_with_nthreads(1);
+        }
+#endif
+    }
     if (!plan) {
         qDebug() << "Failed to create FFTW plan for length" << length;
         releasePlan();
@@ -131,6 +292,82 @@ bool FFTResult::ensurePlan(int length) {
 
     planLength = length;
     return true;
+}
+
+void FFTResult::ensureWindow(int length, int requestedWindowType) {
+    const int normalizedType = normalizedFftWindowType(requestedWindowType);
+    if (windowLength == length && windowType == normalizedType) {
+        return;
+    }
+
+    windowLength = length;
+    windowType = normalizedType;
+    windowAmplitudeSum = 0.0;
+    windowCoefficients.clear();
+    if (length <= 0 || normalizedType == FFT_WINDOW_RECTANGULAR) {
+        windowAmplitudeSum = (std::max)(0, length);
+        return;
+    }
+
+    windowCoefficients.resize(static_cast<std::size_t>(length), 1.0f);
+    constexpr double TwoPi = 6.28318530717958647692;
+    const double denominator = static_cast<double>((std::max)(1, length - 1));
+    parallelForBins(length, [&](int begin, int end) {
+        for (int index = begin; index < end; ++index) {
+            const double phase = TwoPi * static_cast<double>(index) / denominator;
+            double coefficient = 1.0;
+            switch (normalizedType) {
+            case FFT_WINDOW_HANN:
+                coefficient = 0.5 - 0.5 * std::cos(phase);
+                break;
+            case FFT_WINDOW_HAMMING:
+                coefficient = 0.54 - 0.46 * std::cos(phase);
+                break;
+            case FFT_WINDOW_BLACKMAN_HARRIS:
+                coefficient = 0.35875 - 0.48829 * std::cos(phase) +
+                              0.14128 * std::cos(2.0 * phase) -
+                              0.01168 * std::cos(3.0 * phase);
+                break;
+            case FFT_WINDOW_FLAT_TOP:
+                coefficient = 0.21557895 - 0.41663158 * std::cos(phase) +
+                              0.277263158 * std::cos(2.0 * phase) -
+                              0.083578947 * std::cos(3.0 * phase) +
+                              0.006947368 * std::cos(4.0 * phase);
+                break;
+            case FFT_WINDOW_RECTANGULAR:
+            default:
+                coefficient = 1.0;
+                break;
+            }
+            windowCoefficients[static_cast<std::size_t>(index)] =
+                static_cast<float>(coefficient);
+        }
+    });
+    for (float coefficient : windowCoefficients) {
+        windowAmplitudeSum += coefficient;
+    }
+}
+
+float FFTResult::windowCoefficient(int index) const {
+    if (windowCoefficients.empty() || index < 0 || index >= windowLength) {
+        return 1.0f;
+    }
+    return windowCoefficients[static_cast<std::size_t>(index)];
+}
+
+double FFTResult::windowAmplitudeSumForSamples(int sampleCount) const {
+    const int clampedCount = (std::clamp)(sampleCount, 0, windowLength);
+    if (windowCoefficients.empty()) {
+        return static_cast<double>(clampedCount);
+    }
+    if (clampedCount == windowLength) {
+        return windowAmplitudeSum;
+    }
+    double sum = 0.0;
+    for (int index = 0; index < clampedCount; ++index) {
+        sum += windowCoefficients[static_cast<std::size_t>(index)];
+    }
+    return sum;
 }
 
 
@@ -154,12 +391,20 @@ bool FFTResult::storeFFTResults(const RadioSettings &settings,
         return false;
     }
 
+    const bool planWasReady = plan && planLength == currentFftLength;
     if (!ensurePlan(currentFftLength)) {
         outMagnitudes.clear();
         outFrequencies.clear();
         return false;
     }
 
+    const bool profileFrame = fobosVerboseLoggingEnabled() &&
+                              optimizeLargePlans && planWasReady &&
+                              currentFftLength >= FFT_PROFILE_MIN_LENGTH;
+    QElapsedTimer profileTimer;
+    if (profileFrame) {
+        profileTimer.start();
+    }
     outMagnitudes.resize(static_cast<std::size_t>(currentFftLength));
     if (outReferenceMagnitudes) {
         outReferenceMagnitudes->clear();
@@ -170,6 +415,7 @@ bool FFTResult::storeFFTResults(const RadioSettings &settings,
     if (!IqBuffer::snapshotRecent(iqSnapshotScratch, requestedSnapshotFloats, nullptr, &snapshotMetadata)) {
         return false;
     }
+    const qint64 snapshotNs = profileFrame ? profileTimer.nsecsElapsed() : 0;
     if (outMetadata) {
         *outMetadata = snapshotMetadata;
     }
@@ -179,9 +425,6 @@ bool FFTResult::storeFFTResults(const RadioSettings &settings,
         centerFrequency = snapshotMetadata.centerFrequencyHz;
     }
     outFrequencies.resize(currentFftLength);
-    for (int i = 0; i < currentFftLength; ++i) {
-        outFrequencies[i] = (i - currentFftLength / 2) * (sampleRate / currentFftLength) + centerFrequency;
-    }
 
     const int availableIqSamples = static_cast<int>(iqSnapshotScratch.size() / 2);
     if (availableIqSamples <= 0) {
@@ -190,15 +433,18 @@ bool FFTResult::storeFFTResults(const RadioSettings &settings,
 
     const int samplesToCopy = std::min(currentFftLength, availableIqSamples);
     const int sourceStart = availableIqSamples - samplesToCopy;
+    ensureWindow(currentFftLength, settings.fftWindowType);
 
-    auto magnitudeDb = [this, samplesToCopy](int index) {
+    const float normalizationDb =
+        20.0f * std::log10(static_cast<float>((std::max)(1.0,
+                                                          windowAmplitudeSumForSamples(samplesToCopy))));
+    auto magnitudeDb = [this, normalizationDb](int index) {
         const float re = std::isfinite(fftOut[index][0]) ? fftOut[index][0] : 0.0f;
         const float im = std::isfinite(fftOut[index][1]) ? fftOut[index][1] : 0.0f;
-        const float value =
-            std::sqrt(re * re + im * im) /
-            static_cast<float>((std::max)(1, samplesToCopy));
-        if (std::isfinite(value) && value > 0.0f) {
-            return (std::max)(FFT_MAGNITUDE_FLOOR_DB, 20.0f * std::log10(value));
+        const float power = re * re + im * im;
+        if (std::isfinite(power) && power > 0.0f) {
+            return (std::max)(FFT_MAGNITUDE_FLOOR_DB,
+                              10.0f * std::log10(power) - normalizationDb);
         }
         return FFT_MAGNITUDE_FLOOR_DB;
     };
@@ -216,7 +462,7 @@ bool FFTResult::storeFFTResults(const RadioSettings &settings,
         for (int i = 0; i < samplesToCopy; ++i) {
             const int sourceIndex = sourceStart + i;
             const float iValue = iqSnapshotScratch[2 * sourceIndex];
-            fftIn[i][0] = std::isfinite(iValue) ? iValue : 0.0f;
+            fftIn[i][0] = std::isfinite(iValue) ? iValue * windowCoefficient(i) : 0.0f;
         }
         fftwf_execute(plan);
         for (int k = 0; k <= halfLength; ++k) {
@@ -230,23 +476,25 @@ bool FFTResult::storeFFTResults(const RadioSettings &settings,
         for (int i = 0; i < samplesToCopy; ++i) {
             const int sourceIndex = sourceStart + i;
             const float qValue = iqSnapshotScratch[2 * sourceIndex + 1];
-            fftIn[i][0] = std::isfinite(qValue) ? qValue : 0.0f;
+            fftIn[i][0] = std::isfinite(qValue) ? qValue * windowCoefficient(i) : 0.0f;
         }
         fftwf_execute(plan);
         for (int k = 0; k <= halfLength; ++k) {
             hf2Positive[k] = magnitudeDb(k);
         }
 
-        for (int i = 0; i < currentFftLength; ++i) {
-            if (i < halfLength) {
-                shiftedMagnitude[i] = hf1Positive[halfLength - i];
-            } else {
-                shiftedMagnitude[i] = hf2Positive[i - halfLength];
+        parallelForBins(currentFftLength, [&](int begin, int end) {
+            for (int i = begin; i < end; ++i) {
+                if (i < halfLength) {
+                    shiftedMagnitude[i] = hf1Positive[halfLength - i];
+                } else {
+                    shiftedMagnitude[i] = hf2Positive[i - halfLength];
+                }
+                outMagnitudes[(i + halfLength) % currentFftLength] = shiftedMagnitude[i];
+                outFrequencies[i] =
+                    (i - currentFftLength / 2) * (sampleRate / currentFftLength) + centerFrequency;
             }
-            outMagnitudes[(i + halfLength) % currentFftLength] = shiftedMagnitude[i];
-            outFrequencies[i] =
-                (i - currentFftLength / 2) * (sampleRate / currentFftLength) + centerFrequency;
-        }
+        });
         return true;
     }
 
@@ -261,7 +509,7 @@ bool FFTResult::storeFFTResults(const RadioSettings &settings,
         for (int i = 0; i < samplesToCopy; ++i) {
             const int sourceIndex = sourceStart + i;
             const float iValue = iqSnapshotScratch[2 * sourceIndex];
-            fftIn[i][0] = std::isfinite(iValue) ? iValue : 0.0f;
+            fftIn[i][0] = std::isfinite(iValue) ? iValue * windowCoefficient(i) : 0.0f;
         }
         fftwf_execute(plan);
         for (int i = 0; i < currentFftLength; ++i) {
@@ -276,7 +524,7 @@ bool FFTResult::storeFFTResults(const RadioSettings &settings,
         for (int i = 0; i < samplesToCopy; ++i) {
             const int sourceIndex = sourceStart + i;
             const float qValue = iqSnapshotScratch[2 * sourceIndex + 1];
-            fftIn[i][0] = std::isfinite(qValue) ? qValue : 0.0f;
+            fftIn[i][0] = std::isfinite(qValue) ? qValue * windowCoefficient(i) : 0.0f;
         }
         fftwf_execute(plan);
         for (int i = 0; i < currentFftLength; ++i) {
@@ -331,10 +579,11 @@ bool FFTResult::storeFFTResults(const RadioSettings &settings,
             }
         }
 
-        auto complexMagnitudeDb = [samplesToCopy](std::complex<float> value) {
-            const float magnitude = std::abs(value) / static_cast<float>((std::max)(1, samplesToCopy));
-            if (std::isfinite(magnitude) && magnitude > 0.0f) {
-                return (std::max)(FFT_MAGNITUDE_FLOOR_DB, 20.0f * std::log10(magnitude));
+        auto complexMagnitudeDb = [normalizationDb](std::complex<float> value) {
+            const float power = std::norm(value);
+            if (std::isfinite(power) && power > 0.0f) {
+                return (std::max)(FFT_MAGNITUDE_FLOOR_DB,
+                                  10.0f * std::log10(power) - normalizationDb);
             }
             return FFT_MAGNITUDE_FLOOR_DB;
         };
@@ -342,27 +591,29 @@ bool FFTResult::storeFFTResults(const RadioSettings &settings,
             outReferenceMagnitudes->assign(currentFftLength, FFT_MAGNITUDE_FLOOR_DB);
         }
 
-        for (int i = 0; i < currentFftLength; ++i) {
-            const std::complex<float> adjustedRef =
-                hfNoiseCancelReferenceCoefficient(settings, binFrequency(i)) * refSpectrum[i];
-            const float coherence =
-                (std::norm(hfNoiseCancelCrossPower[i]) /
-                 ((hfNoiseCancelMainPower[i] * hfNoiseCancelRefPower[i]) + adaptiveEpsilon));
-            const float coherenceWeight =
-                (std::clamp)((coherence - coherenceStart) / (coherenceFull - coherenceStart),
-                             0.0f,
-                             1.0f);
-            const std::complex<float> effectiveRef =
-                coherenceWeight * hfNoiseCancelBins[i] * adjustedRef;
-            const std::complex<float> cleaned =
-                mainSpectrum[i] - noiseCancelDepth * effectiveRef;
-            outMagnitudes[i] = complexMagnitudeDb(cleaned);
-            if (outReferenceMagnitudes) {
-                (*outReferenceMagnitudes)[i] = complexMagnitudeDb(adjustedRef);
+        parallelForBins(currentFftLength, [&](int begin, int end) {
+            for (int i = begin; i < end; ++i) {
+                const std::complex<float> adjustedRef =
+                    hfNoiseCancelReferenceCoefficient(settings, binFrequency(i)) * refSpectrum[i];
+                const float coherence =
+                    (std::norm(hfNoiseCancelCrossPower[i]) /
+                     ((hfNoiseCancelMainPower[i] * hfNoiseCancelRefPower[i]) + adaptiveEpsilon));
+                const float coherenceWeight =
+                    (std::clamp)((coherence - coherenceStart) / (coherenceFull - coherenceStart),
+                                 0.0f,
+                                 1.0f);
+                const std::complex<float> effectiveRef =
+                    coherenceWeight * hfNoiseCancelBins[i] * adjustedRef;
+                const std::complex<float> cleaned =
+                    mainSpectrum[i] - noiseCancelDepth * effectiveRef;
+                outMagnitudes[i] = complexMagnitudeDb(cleaned);
+                if (outReferenceMagnitudes) {
+                    (*outReferenceMagnitudes)[i] = complexMagnitudeDb(adjustedRef);
+                }
+                outFrequencies[i] =
+                    (i - currentFftLength / 2) * (sampleRate / currentFftLength) + centerFrequency;
             }
-            outFrequencies[i] =
-                (i - currentFftLength / 2) * (sampleRate / currentFftLength) + centerFrequency;
-        }
+        });
         return true;
     }
 
@@ -372,32 +623,83 @@ bool FFTResult::storeFFTResults(const RadioSettings &settings,
         hfNoiseCancelMainPower.clear();
         hfNoiseCancelRefPower.clear();
     }
-    for (int i = 0; i < samplesToCopy; ++i) {
-        const int sourceIndex = sourceStart + i;
-        if (inputMode == INPUT_HF1) {
-            const float iValue = iqSnapshotScratch[2 * sourceIndex];
-            fftIn[i][0] = std::isfinite(iValue) ? iValue : 0.0f;
-            fftIn[i][1] = 0.0f;
-        } else if (inputMode == INPUT_HF2) {
-            const float qValue = iqSnapshotScratch[2 * sourceIndex + 1];
-            fftIn[i][0] = 0.0f;
-            fftIn[i][1] = std::isfinite(qValue) ? qValue : 0.0f;
-        } else {
-            const float iValue = iqSnapshotScratch[2 * sourceIndex];
-            const float qValue = iqSnapshotScratch[2 * sourceIndex + 1];
-            fftIn[i][0] = std::isfinite(iValue) ? iValue : 0.0f;
-            fftIn[i][1] = std::isfinite(qValue) ? qValue : 0.0f;
-        }
+    if (profileFrame) {
+        profileTimer.restart();
     }
+    parallelForBins(samplesToCopy, [&](int begin, int end) {
+        for (int i = begin; i < end; ++i) {
+            const int sourceIndex = sourceStart + i;
+            const float coefficient = windowCoefficient(i);
+            if (inputMode == INPUT_HF1) {
+                const float iValue = iqSnapshotScratch[2 * sourceIndex];
+                fftIn[i][0] = std::isfinite(iValue) ? iValue * coefficient : 0.0f;
+                fftIn[i][1] = 0.0f;
+            } else if (inputMode == INPUT_HF2) {
+                const float qValue = iqSnapshotScratch[2 * sourceIndex + 1];
+                fftIn[i][0] = 0.0f;
+                fftIn[i][1] = std::isfinite(qValue) ? qValue * coefficient : 0.0f;
+            } else {
+                const float iValue = iqSnapshotScratch[2 * sourceIndex];
+                const float qValue = iqSnapshotScratch[2 * sourceIndex + 1];
+                fftIn[i][0] = std::isfinite(iValue) ? iValue * coefficient : 0.0f;
+                fftIn[i][1] = std::isfinite(qValue) ? qValue * coefficient : 0.0f;
+            }
+        }
+    });
     for (int i = samplesToCopy; i < currentFftLength; ++i) {
         fftIn[i][0] = 0.0f;
         fftIn[i][1] = 0.0f;
     }
+    const qint64 inputNs = profileFrame ? profileTimer.nsecsElapsed() : 0;
 
+    if (profileFrame) {
+        profileTimer.restart();
+    }
     fftwf_execute(plan);
-    for (int i = 0; i < currentFftLength; ++i) {
-        outMagnitudes[i] = magnitudeDb(i);
-        outFrequencies[i] = (i - currentFftLength / 2) * (sampleRate / currentFftLength) + centerFrequency;
+    const qint64 executeNs = profileFrame ? profileTimer.nsecsElapsed() : 0;
+    if (profileFrame) {
+        profileTimer.restart();
+    }
+    parallelForBins(currentFftLength, [&](int begin, int end) {
+        for (int i = begin; i < end; ++i) {
+            outMagnitudes[i] = magnitudeDb(i);
+            outFrequencies[i] =
+                (i - currentFftLength / 2) * (sampleRate / currentFftLength) + centerFrequency;
+        }
+    });
+    if (profileFrame) {
+        const qint64 outputNs = profileTimer.nsecsElapsed();
+        if (profileLength != currentFftLength) {
+            profileLength = currentFftLength;
+            profileFrames = 0;
+            profileSnapshotNs = 0;
+            profileInputNs = 0;
+            profileExecuteNs = 0;
+            profileOutputNs = 0;
+        }
+        ++profileFrames;
+        profileSnapshotNs += snapshotNs;
+        profileInputNs += inputNs;
+        profileExecuteNs += executeNs;
+        profileOutputNs += outputNs;
+        constexpr int ProfileFrames = 30;
+        if (profileFrames >= ProfileFrames) {
+            const double scale = 1.0 / (1000000.0 * profileFrames);
+            qDebug() << "[FFT profile]"
+                     << "length" << profileLength
+                     << "frames" << profileFrames
+                     << "snapshotMs" << profileSnapshotNs * scale
+                     << "inputMs" << profileInputNs * scale
+                     << "executeMs" << profileExecuteNs * scale
+                     << "outputMs" << profileOutputNs * scale
+                     << "totalMs" << (profileSnapshotNs + profileInputNs +
+                                       profileExecuteNs + profileOutputNs) * scale;
+            profileFrames = 0;
+            profileSnapshotNs = 0;
+            profileInputNs = 0;
+            profileExecuteNs = 0;
+            profileOutputNs = 0;
+        }
     }
     return true;
 }

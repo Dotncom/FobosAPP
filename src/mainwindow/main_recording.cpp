@@ -186,7 +186,7 @@ void YourClassName::startSpectrumFrameRecording() {
             firstUtcMs = 0;
         }
     }
-    if (!spectrumFrameRecorder.start(pendingSettings, currentScale, bins, firstUtcMs, &errorMessage)) {
+    if (!spectrumFrameRecorder.start(pendingSettings, effectiveScalePercent(), bins, firstUtcMs, &errorMessage)) {
         updateSpectrumFrameRecordingStatus(QStringLiteral("Spectrum recording failed: %1").arg(errorMessage));
         if (spectrumFrameRecordButton) {
             QSignalBlocker blocker(spectrumFrameRecordButton);
@@ -458,7 +458,7 @@ void YourClassName::startRecording(bool momentary) {
     }
 
     QString errorMessage;
-    recordingManager->setDisplayScalePercent(currentScale);
+    recordingManager->setDisplayScalePercent(effectiveScalePercent());
     recordingManager->setLabMetadata(recordingLabMetadata());
     if (!recordingManager->start(mode, pendingSettings, &errorMessage)) {
         updateRecordingStatus(QStringLiteral("Recording failed: %1").arg(errorMessage));
@@ -715,7 +715,10 @@ void YourClassName::onPlaybackStarted(const QString &filePath, PlaybackManager::
         pendingSettings.audioEnabled = audioEnabledBeforePlayback;
         pendingSettings.audioDeviceId = audioDeviceBeforePlayback;
         if (info.hasScalePercent) {
-            currentScale = std::clamp(info.scalePercent,
+            const double recordedScale = (std::max)(MIN_SCALE_PERCENT / 20.0,
+                                                     info.scalePercent);
+            additionalScaleDivisor = recordedScale < MIN_SCALE_PERCENT ? 20 : 1;
+            currentScale = std::clamp(recordedScale * additionalScaleDivisor,
                                       static_cast<double>(minScale) / 10.0,
                                       static_cast<double>(maxScale) / 10.0);
         } else if (info.hasRadioSettings &&
@@ -723,7 +726,10 @@ void YourClassName::onPlaybackStarted(const QString &filePath, PlaybackManager::
                    info.sampleRate > 0) {
             const double channelScalePercent =
                 (static_cast<double>(info.sampleRate) / info.radioSettings.sampleRate) * 100.0;
-            currentScale = std::clamp(channelScalePercent,
+            const double recordedScale = (std::max)(MIN_SCALE_PERCENT / 20.0,
+                                                     channelScalePercent);
+            additionalScaleDivisor = recordedScale < MIN_SCALE_PERCENT ? 20 : 1;
+            currentScale = std::clamp(recordedScale * additionalScaleDivisor,
                                       static_cast<double>(minScale) / 10.0,
                                       static_cast<double>(maxScale) / 10.0);
         }

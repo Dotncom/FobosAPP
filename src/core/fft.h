@@ -32,7 +32,7 @@ extern double globalSampleRate;
 class FFTResult : public QObject {
     Q_OBJECT
 public:
-    explicit FFTResult(QObject *parent = nullptr);
+    explicit FFTResult(bool optimizeLargePlans = false, QObject *parent = nullptr);
     ~FFTResult();
     bool storeFFTResults(const RadioSettings &settings,
                          std::vector<float> &outFrequencies,
@@ -45,11 +45,25 @@ public:
 	void performFFTInThread();
 private:
     bool ensurePlan(int length);
+    void ensureWindow(int length, int windowType);
+    float windowCoefficient(int index) const;
+    double windowAmplitudeSumForSamples(int sampleCount) const;
     void releasePlan();
     fftwf_complex *fftIn;
     fftwf_complex *fftOut;
     fftwf_plan plan;
     int planLength;
+    int windowLength = 0;
+    int windowType = FFT_WINDOW_RECTANGULAR;
+    double windowAmplitudeSum = 0.0;
+    std::vector<float> windowCoefficients;
+    bool optimizeLargePlans;
+    int profileLength = 0;
+    int profileFrames = 0;
+    qint64 profileSnapshotNs = 0;
+    qint64 profileInputNs = 0;
+    qint64 profileExecuteNs = 0;
+    qint64 profileOutputNs = 0;
     std::vector<std::complex<float>> hfNoiseCancelBins;
     std::vector<std::complex<float>> hfNoiseCancelCrossPower;
     std::vector<float> hfNoiseCancelMainPower;

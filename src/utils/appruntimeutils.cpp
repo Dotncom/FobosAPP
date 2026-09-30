@@ -11,6 +11,7 @@ bool spectrumFftSettingsMatch(const RadioSettings &a, const RadioSettings &b) {
 
     return a.inputMode == b.inputMode &&
            a.fftLength == b.fftLength &&
+           normalizedFftWindowType(a.fftWindowType) == normalizedFftWindowType(b.fftWindowType) &&
            closeEnough(a.sampleRate, b.sampleRate, 0.5) &&
            closeEnough(a.centerFrequency, b.centerFrequency, 0.5) &&
            closeEnough(a.actualFrequency, b.actualFrequency, 0.5) &&

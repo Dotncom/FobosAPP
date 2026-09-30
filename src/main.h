@@ -150,6 +150,7 @@ public:
     void onFrequencyEntered();
     void onListeningFrequencyEntered();
     void onScaleChanged(int value);
+    void onAdditionalScaleDivisorChanged(int value);
     void updateSpectrum();
     void onLnaGainChanged(int value);
     void onVgaGainChanged(int value);
@@ -219,6 +220,7 @@ protected:
     void closeEvent(QCloseEvent *event) override;
 
 private:
+    double effectiveScalePercent() const;
     struct FobosDeviceInfo {
         FobosApiKind apiKind = FobosApiKind::Standard;
         int nativeIndex = 0;
@@ -683,6 +685,7 @@ private:
     QCheckBox *checkBoxes[8] = {};
     
     QSlider *scaleSlider = nullptr;
+    QSlider *additionalScaleDivisorSlider = nullptr;
     QSlider *lnaGainSlider = nullptr;
     QSlider *vgaGainSlider = nullptr;
     QSlider *rtlGainSlider = nullptr;
@@ -738,6 +741,7 @@ private:
     QLabel *fineTuneLabel = nullptr;
     QLabel *vgaGainLabel = nullptr;
     QLabel *scaleLabel = nullptr;
+    QLabel *additionalScaleDivisorLabel = nullptr;
     QLabel *digitalStatusLabel = nullptr;
     QLabel *videoStatusLabel = nullptr;
     QLabel *recordingStatusLabel = nullptr;
@@ -963,6 +967,7 @@ private:
     QMap<QString, QString> listeningScanPresets;
     QStringList listeningScanPresetOrder;
     int spectrumUpdateIntervalMs = 0;
+    int additionalScaleDivisor = 1;
     double frequencyCalibrationOffsetHz = 0.0;
     double amplitudeCalibrationOffsetDb = 0.0;
     int waterfallRowsPerFrame = 1;
@@ -977,6 +982,9 @@ private:
     bool waterfall3DSpectrumSliceCaptureFixed = false;
     bool waterfall3DVncSliceInput = false;
     bool experimentalGpuWaterfall = false;
+    bool showSpectrumFps = false;
+    bool showWaterfallFps = false;
+    bool showExtendedSpectrumInfo = false;
     SpectrumFrameRecorder spectrumFrameRecorder;
     SpectrumIqEventRecorder spectrumIqEventRecorder;
     bool spectrumFrameBufferEnabled = false;

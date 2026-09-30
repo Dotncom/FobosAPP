@@ -505,6 +505,7 @@ YourClassName::YourClassName(QWidget *parent)
     QVBoxLayout *contrastLayout = new QVBoxLayout();
     QVBoxLayout *sensLayout = new QVBoxLayout();
     QVBoxLayout *scaleControlLayout = new QVBoxLayout();
+    QVBoxLayout *additionalScaleControlLayout = new QVBoxLayout();
     QVBoxLayout *levelMinLayout = new QVBoxLayout();
     QVBoxLayout *levelMaxLayout = new QVBoxLayout();
     QVBoxLayout *layout = new QVBoxLayout();
@@ -529,6 +530,9 @@ YourClassName::YourClassName(QWidget *parent)
     fftComboBox->addItem("524288");
     fftComboBox->addItem("1048576");
     fftComboBox->addItem("2097152");
+    fftComboBox->addItem("4194304");
+    fftComboBox->addItem("8388608");
+    fftComboBox->addItem("16777216");
     fftComboBox->setCurrentText(QString::number(pendingSettings.fftLength));
     
     lnaGainSlider = new QSlider(Qt::Horizontal, this);
@@ -663,6 +667,20 @@ YourClassName::YourClassName(QWidget *parent)
     scaleSlider->setPageStep(10);
     scaleSlider->setValue(scalePercentToSliderValue(currentScale));
     scaleLabel = new QLabel(scaleLabelText(currentScale), this);
+    additionalScaleDivisorSlider = new QSlider(Qt::Horizontal, this);
+    additionalScaleDivisorSlider->setRange(1, 20);
+    additionalScaleDivisorSlider->setSingleStep(1);
+    additionalScaleDivisorSlider->setPageStep(5);
+    additionalScaleDivisorSlider->setInvertedAppearance(true);
+    additionalScaleDivisorSlider->setValue(additionalScaleDivisor);
+    additionalScaleDivisorSlider->setToolTip(uiText(
+        QStringLiteral("additional_scale_divisor_tooltip"),
+        QStringLiteral("Divide the main display scale by 1 to 20 for deeper spectrum and waterfall zoom.")));
+    additionalScaleDivisorLabel = new QLabel(
+        QStringLiteral("%1: 1:%2")
+            .arg(uiText(QStringLiteral("additional_scale"), QStringLiteral("Extra zoom")))
+            .arg(additionalScaleDivisor),
+        this);
     
     audioDeviceComboBox = new QComboBox(this);
     comboBox = new QComboBox(this);
@@ -945,15 +963,17 @@ YourClassName::YourClassName(QWidget *parent)
     controlsToggleButton->setFixedWidth(44);
     controlsToggleButton->setToolTip("Show, hide, or redock the settings panel");
     controlsToggleButton->installEventFilter(this);
-    digitalToggleButton = new QPushButton("Digital Audio", this);
-    markTranslatable(digitalToggleButton, QStringLiteral("digital_audio"), QStringLiteral("Digital Audio"));
+    digitalToggleButton = new QPushButton("Digital\nAudio", this);
+    markTranslatable(digitalToggleButton, QStringLiteral("digital_audio_compact"), QStringLiteral("Digital\nAudio"));
     digitalToggleButton->setCheckable(true);
-    digitalToggleButton->setMaximumWidth(120);
+    digitalToggleButton->setMaximumWidth(76);
+    digitalToggleButton->setFixedHeight(44);
     digitalToggleButton->setToolTip("Show or hide the digital audio decoder panel");
     videoToggleButton = new QPushButton("Video", this);
     markTranslatable(videoToggleButton, QStringLiteral("video"), QStringLiteral("Video"));
     videoToggleButton->setCheckable(true);
-    videoToggleButton->setMaximumWidth(80);
+    videoToggleButton->setMaximumWidth(54);
+    videoToggleButton->setFixedHeight(44);
     videoToggleButton->setToolTip("Show or hide the video/image decoder panel");
     recordingModeCombo = new QComboBox(this);
     recordingModeCombo->addItem("Audio WAV", static_cast<int>(RecordingManager::Mode::AudioWav));
@@ -1089,6 +1109,15 @@ YourClassName::YourClassName(QWidget *parent)
         scaleSlider->setMaximumWidth(QWIDGETSIZE_MAX);
         scaleSlider->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     }
+    if (additionalScaleDivisorLabel) {
+        additionalScaleDivisorLabel->setAlignment(Qt::AlignCenter);
+        additionalScaleDivisorLabel->setWordWrap(false);
+    }
+    if (additionalScaleDivisorSlider) {
+        additionalScaleDivisorSlider->setMinimumWidth(72);
+        additionalScaleDivisorSlider->setMaximumWidth(112);
+        additionalScaleDivisorSlider->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    }
 
     fineTuneLabel = new QLabel(this);
     fineTuneLabel->setAlignment(Qt::AlignCenter);
@@ -1119,6 +1148,8 @@ YourClassName::YourClassName(QWidget *parent)
     contrastLayout->addWidget(contrastSlider);
     scaleControlLayout->addWidget(scaleLabel);
     scaleControlLayout->addWidget(scaleSlider);
+    additionalScaleControlLayout->addWidget(additionalScaleDivisorLabel);
+    additionalScaleControlLayout->addWidget(additionalScaleDivisorSlider);
     levelMinLayout->addWidget(levelMinLabel);
     levelMinLayout->addWidget(levelMinSlider);
     levelMaxLayout->addWidget(levelMaxLabel);
@@ -2272,6 +2303,7 @@ YourClassName::YourClassName(QWidget *parent)
     scaleLayout->addLayout(contrastLayout, 1);
     scaleLayout->addLayout(sensLayout, 1);
     scaleLayout->addLayout(scaleControlLayout, 3);
+    scaleLayout->addLayout(additionalScaleControlLayout, 1);
     scaleLayout->addLayout(levelMinLayout, 2);
     scaleLayout->addLayout(levelMaxLayout, 2);
     scaleLayout->addLayout(graphToolLayout, 0);
@@ -2652,6 +2684,10 @@ YourClassName::YourClassName(QWidget *parent)
     connect(audioDeviceComboBox, SIGNAL(currentIndexChanged(int)), this, SLOT(onAudioDeviceChanged(int)));
     connect(modulationButtonGroup, QOverload<int>::of(&QButtonGroup::idClicked), this, &YourClassName::onModulationChanged);
     connect(scaleSlider, &QSlider::valueChanged, this, &YourClassName::onScaleChanged);
+    connect(additionalScaleDivisorSlider,
+            &QSlider::valueChanged,
+            this,
+            &YourClassName::onAdditionalScaleDivisorChanged);
     connect(frequencyControl, &FrequencyControl::valueCommitted, this, [this](double) {
         onFrequencyEntered();
     });
@@ -2686,6 +2722,11 @@ YourClassName::YourClassName(QWidget *parent)
         savePersistentSettings();
     });
     connect(scaleSlider, &QSlider::sliderReleased, this, [this]() {
+        if (isNetworkClientMode() && !isFullIqProcessingMode()) {
+            scheduleRemoteSettingsCommand();
+        }
+    });
+    connect(additionalScaleDivisorSlider, &QSlider::sliderReleased, this, [this]() {
         if (isNetworkClientMode() && !isFullIqProcessingMode()) {
             scheduleRemoteSettingsCommand();
         }
@@ -6133,7 +6174,13 @@ void YourClassName::updateSpectrumTimerInterval() {
     }
 
     int intervalMs = 33;
-    if (pendingSettings.fftLength >= 2097152) {
+    if (pendingSettings.fftLength >= 16777216) {
+        intervalMs = 700;
+    } else if (pendingSettings.fftLength >= 8388608) {
+        intervalMs = 400;
+    } else if (pendingSettings.fftLength >= 4194304) {
+        intervalMs = 250;
+    } else if (pendingSettings.fftLength >= 2097152) {
         intervalMs = 160;
     } else if (pendingSettings.fftLength >= 1048576) {
         intervalMs = 120;
