@@ -13,6 +13,7 @@
 #include "samplefileutils.h"
 #include "scalewidget.h"
 #include "appsettingsutils.h"
+#include "waterfall3dview.h"
 
 #include <QCoreApplication>
 #include <QDateTime>
@@ -129,6 +130,19 @@ QString replayDialogTranslationKey(const QString &id) {
     if (id == QStringLiteral("select_iq")) return QStringLiteral("spectrum_replay_dialog_select_iq");
     if (id == QStringLiteral("linked_iq_not_found")) return QStringLiteral("spectrum_replay_dialog_linked_iq_not_found");
     if (id == QStringLiteral("full_iq_bad_rate")) return QStringLiteral("spectrum_replay_dialog_full_iq_bad_rate");
+    if (id == QStringLiteral("display_mode")) return QStringLiteral("spectrum_replay_dialog_display_mode");
+    if (id == QStringLiteral("display_2d")) return QStringLiteral("spectrum_replay_dialog_display_2d");
+    if (id == QStringLiteral("display_3d")) return QStringLiteral("spectrum_replay_dialog_display_3d");
+    if (id == QStringLiteral("display_3d_mini")) return QStringLiteral("spectrum_replay_dialog_display_3d_mini");
+    if (id == QStringLiteral("resolution")) return QStringLiteral("spectrum_replay_dialog_resolution");
+    if (id == QStringLiteral("slice_step")) return QStringLiteral("spectrum_replay_dialog_slice_step");
+    if (id == QStringLiteral("slice_width")) return QStringLiteral("spectrum_replay_dialog_slice_width");
+    if (id == QStringLiteral("spectrum_slice_step")) return QStringLiteral("waterfall_3d_spectrum_slice_step");
+    if (id == QStringLiteral("spectrum_slice_rows")) return QStringLiteral("waterfall_3d_spectrum_slice_rows");
+    if (id == QStringLiteral("spectrum_slice_capture")) return QStringLiteral("waterfall_3d_spectrum_slice_capture");
+    if (id == QStringLiteral("spectrum_slice_capture_fixed")) return QStringLiteral("waterfall_3d_spectrum_slice_capture_fixed");
+    if (id == QStringLiteral("vnc_slice_input")) return QStringLiteral("waterfall_3d_vnc_slice_input");
+    if (id == QStringLiteral("vnc_slice_input_tooltip")) return QStringLiteral("waterfall_3d_vnc_slice_input_tooltip");
     return QString();
 }
 
@@ -436,6 +450,24 @@ SpectrumFrameReplayDialog::SpectrumFrameReplayDialog(QWidget *parent)
     waterfallScroll->setWidget(waterfallLabel);
     waterfallScroll->setWidgetResizable(false);
     waterfallScroll->setMinimumHeight(300);
+
+    waterfall3DView = new Waterfall3DView(this);
+    waterfall3DView->setHistoryCapacity(128);
+    waterfall3DView->hide();
+    connect(waterfall3DView,
+            &Waterfall3DView::frequencySliceSelected,
+            this,
+            [this](double ratio) {
+                if (recording.frames.empty()) {
+                    return;
+                }
+                const SpectrumFrameRecord &frame =
+                    recording.frames[static_cast<std::size_t>(selectedFrame)];
+                setReplayListenFrequency(frame.minFrequency +
+                                             std::clamp(ratio, 0.0, 1.0) *
+                                                 (frame.maxFrequency - frame.minFrequency),
+                                         true);
+            });
     connect(graphScroll->horizontalScrollBar(), &QScrollBar::valueChanged, this, [this](int value) {
         if (syncingHorizontalScroll || !waterfallScroll) {
             return;
@@ -477,6 +509,139 @@ SpectrumFrameReplayDialog::SpectrumFrameReplayDialog(QWidget *parent)
     infoLabel = new QLabel(this);
     infoLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
 
+    waterfallDisplayModeCombo = new QComboBox(this);
+    waterfallDisplayModeCombo->addItem(replayText("display_2d", "2D"), 0);
+    waterfallDisplayModeCombo->addItem(replayText("display_3d", "3D"), 1);
+    waterfallDisplayModeCombo->addItem(replayText("display_3d_mini", "3D + mini"), 2);
+    connect(waterfallDisplayModeCombo,
+            QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this,
+            [this](int) {
+                replayWaterfallDisplayMode = waterfallDisplayModeCombo->currentData().toInt();
+                updateReplayDisplayMode();
+                schedulePersistentUiSettingsSave();
+            });
+
+    waterfall3DResolutionCombo = new QComboBox(this);
+    for (const int divisor : {1, 2, 4, 8, 16, 32, 64}) {
+        waterfall3DResolutionCombo->addItem(QStringLiteral("1/%1").arg(divisor), divisor);
+    }
+    connect(waterfall3DResolutionCombo,
+            QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this,
+            [this](int) {
+                replay3DResolutionDivisor = waterfall3DResolutionCombo->currentData().toInt();
+                replay3DWindowStart = -1;
+                rebuild3DWindow(true);
+                schedulePersistentUiSettingsSave();
+            });
+
+    waterfall3DSliceStepSpin = new QSpinBox(this);
+    waterfall3DSliceStepSpin->setRange(1, 256);
+    waterfall3DSliceStepSpin->setValue(replay3DSliceStep);
+    connect(waterfall3DSliceStepSpin,
+            QOverload<int>::of(&QSpinBox::valueChanged),
+            this,
+            [this](int value) {
+                replay3DSliceStep = value;
+                if (waterfall3DView) {
+                    waterfall3DView->setSliceScrollStep(value);
+                }
+                schedulePersistentUiSettingsSave();
+            });
+
+    waterfall3DSliceWidthSpin = new QSpinBox(this);
+    waterfall3DSliceWidthSpin->setRange(1, 4096);
+    waterfall3DSliceWidthSpin->setValue(replay3DSliceWidth);
+    connect(waterfall3DSliceWidthSpin,
+            QOverload<int>::of(&QSpinBox::valueChanged),
+            this,
+            [this](int value) {
+                replay3DSliceWidth = value;
+                if (waterfall3DView) {
+                    waterfall3DView->setSliceWidth(value);
+                }
+                schedulePersistentUiSettingsSave();
+            });
+
+    waterfall3DSpectrumSliceStepSpin = new QSpinBox(this);
+    waterfall3DSpectrumSliceStepSpin->setRange(1, 2048);
+    waterfall3DSpectrumSliceStepSpin->setValue(replay3DSpectrumSliceStep);
+    connect(waterfall3DSpectrumSliceStepSpin,
+            QOverload<int>::of(&QSpinBox::valueChanged),
+            this,
+            [this](int value) {
+                replay3DSpectrumSliceStep = value;
+                if (waterfall3DView) {
+                    waterfall3DView->setSpectrumSliceScrollStep(value);
+                }
+                schedulePersistentUiSettingsSave();
+            });
+
+    waterfall3DSpectrumSliceRowsSpin = new QSpinBox(this);
+    waterfall3DSpectrumSliceRowsSpin->setRange(1, 2048);
+    waterfall3DSpectrumSliceRowsSpin->setValue(replay3DSpectrumSliceRows);
+    connect(waterfall3DSpectrumSliceRowsSpin,
+            QOverload<int>::of(&QSpinBox::valueChanged),
+            this,
+            [this](int value) {
+                replay3DSpectrumSliceRows = value;
+                if (waterfall3DView) {
+                    waterfall3DView->setSpectrumSliceWidth(value);
+                }
+                schedulePersistentUiSettingsSave();
+            });
+
+    waterfall3DSpectrumSliceCaptureCheckbox = new QCheckBox(
+        replayText("spectrum_slice_capture", "Capture"),
+        this);
+    waterfall3DSpectrumSliceCaptureCheckbox->setChecked(replay3DSpectrumSliceCapture);
+    connect(waterfall3DSpectrumSliceCaptureCheckbox,
+            &QCheckBox::toggled,
+            this,
+            [this](bool checked) {
+                replay3DSpectrumSliceCapture = checked;
+                if (waterfall3DView) {
+                    waterfall3DView->setSpectrumSliceCapture(checked);
+                }
+                if (waterfall3DSpectrumSliceCaptureFixedCheckbox) {
+                    waterfall3DSpectrumSliceCaptureFixedCheckbox->setEnabled(checked);
+                }
+                schedulePersistentUiSettingsSave();
+            });
+    waterfall3DSpectrumSliceCaptureFixedCheckbox = new QCheckBox(
+        replayText("spectrum_slice_capture_fixed", "Fix capture"),
+        this);
+    waterfall3DSpectrumSliceCaptureFixedCheckbox->setChecked(replay3DSpectrumSliceCaptureFixed);
+    waterfall3DSpectrumSliceCaptureFixedCheckbox->setEnabled(replay3DSpectrumSliceCapture);
+    connect(waterfall3DSpectrumSliceCaptureFixedCheckbox,
+            &QCheckBox::toggled,
+            this,
+            [this](bool checked) {
+                replay3DSpectrumSliceCaptureFixed = checked;
+                if (waterfall3DView) {
+                    waterfall3DView->setSpectrumSliceCaptureFixed(checked);
+                }
+                schedulePersistentUiSettingsSave();
+            });
+    waterfall3DVncSliceInputCheckbox = new QCheckBox(
+        replayText("vnc_slice_input", "VNC slice control"),
+        this);
+    waterfall3DVncSliceInputCheckbox->setChecked(replay3DVncSliceInput);
+    waterfall3DVncSliceInputCheckbox->setToolTip(replayText(
+        "vnc_slice_input_tooltip",
+        "Use left/right mouse buttons for frequency/time slices without keyboard modifiers. Disable it to restore normal mouse actions."));
+    connect(waterfall3DVncSliceInputCheckbox,
+            &QCheckBox::toggled,
+            this,
+            [this](bool checked) {
+                replay3DVncSliceInput = checked;
+                if (waterfall3DView) {
+                    waterfall3DView->setModifierFreeSliceInput(checked);
+                }
+                schedulePersistentUiSettingsSave();
+            });
+
     QHBoxLayout *controlsLayout = new QHBoxLayout();
     controlsLayout->setContentsMargins(0, 0, 0, 0);
     controlsLayout->setSpacing(4);
@@ -512,17 +677,46 @@ SpectrumFrameReplayDialog::SpectrumFrameReplayDialog(QWidget *parent)
     listenLayout->setColumnStretch(2, 2);
     listenLayout->setColumnStretch(4, 3);
 
+    QHBoxLayout *displayLayout = new QHBoxLayout();
+    displayLayout->setContentsMargins(0, 0, 0, 0);
+    displayLayout->setSpacing(4);
+    displayLayout->addWidget(new QLabel(replayText("display_mode", "Display"), this));
+    displayLayout->addWidget(waterfallDisplayModeCombo);
+    displayLayout->addWidget(new QLabel(replayText("resolution", "3D resolution"), this));
+    displayLayout->addWidget(waterfall3DResolutionCombo);
+    displayLayout->addWidget(new QLabel(replayText("slice_step", "Slice step"), this));
+    displayLayout->addWidget(waterfall3DSliceStepSpin);
+    displayLayout->addWidget(new QLabel(replayText("slice_width", "Slice width"), this));
+    displayLayout->addWidget(waterfall3DSliceWidthSpin);
+    displayLayout->addStretch(1);
+
+    QHBoxLayout *spectrumSliceLayout = new QHBoxLayout();
+    spectrumSliceLayout->setContentsMargins(0, 0, 0, 0);
+    spectrumSliceLayout->setSpacing(4);
+    spectrumSliceLayout->addWidget(new QLabel(replayText("spectrum_slice_step", "Spectrum slice step"), this));
+    spectrumSliceLayout->addWidget(waterfall3DSpectrumSliceStepSpin);
+    spectrumSliceLayout->addWidget(new QLabel(replayText("spectrum_slice_rows", "Spectrum slice rows"), this));
+    spectrumSliceLayout->addWidget(waterfall3DSpectrumSliceRowsSpin);
+    spectrumSliceLayout->addWidget(waterfall3DSpectrumSliceCaptureCheckbox);
+    spectrumSliceLayout->addWidget(waterfall3DSpectrumSliceCaptureFixedCheckbox);
+    spectrumSliceLayout->addWidget(waterfall3DVncSliceInputCheckbox);
+    spectrumSliceLayout->addStretch(1);
+
     QVBoxLayout *layout = new QVBoxLayout(this);
     layout->addWidget(graphScroll, 2);
     layout->addWidget(scaleScroll);
+    layout->addWidget(waterfall3DView, 3);
     layout->addWidget(waterfallScroll, 3);
     layout->addLayout(controlsLayout);
     layout->addLayout(listenLayout);
+    layout->addLayout(displayLayout);
+    layout->addLayout(spectrumSliceLayout);
     layout->addWidget(timelineSlider);
     layout->addWidget(infoLabel);
     setLayout(layout);
     loadPersistentUiSettings();
     updateSliderValueLabels();
+    updateReplayDisplayMode();
 }
 
 SpectrumFrameReplayDialog::~SpectrumFrameReplayDialog() {
@@ -614,6 +808,47 @@ void SpectrumFrameReplayDialog::loadPersistentUiSettings() {
         settings.value(QStringLiteral("spectrumReplay/sensitivity"), static_cast<int>(replaySensitivity)).toInt(),
         1,
         30));
+    replayWaterfallDisplayMode = (std::clamp)(
+        settings.value(QStringLiteral("spectrumReplay/displayMode"), replayWaterfallDisplayMode).toInt(),
+        0,
+        2);
+    replay3DResolutionDivisor =
+        settings.value(QStringLiteral("spectrumReplay/3dResolutionDivisor"),
+                       replay3DResolutionDivisor)
+            .toInt();
+    if (replay3DResolutionDivisor != 1 && replay3DResolutionDivisor != 2 &&
+        replay3DResolutionDivisor != 4 && replay3DResolutionDivisor != 8 &&
+        replay3DResolutionDivisor != 16 && replay3DResolutionDivisor != 32 &&
+        replay3DResolutionDivisor != 64) {
+        replay3DResolutionDivisor = 4;
+    }
+    replay3DSliceStep = (std::clamp)(
+        settings.value(QStringLiteral("spectrumReplay/3dSliceStep"), replay3DSliceStep).toInt(),
+        1,
+        256);
+    replay3DSliceWidth = (std::clamp)(
+        settings.value(QStringLiteral("spectrumReplay/3dSliceWidth"), replay3DSliceWidth).toInt(),
+        1,
+        4096);
+    replay3DSpectrumSliceStep = (std::clamp)(
+        settings.value(QStringLiteral("spectrumReplay/3dSpectrumSliceStep"),
+                       replay3DSpectrumSliceStep).toInt(),
+        1,
+        2048);
+    replay3DSpectrumSliceRows = (std::clamp)(
+        settings.value(QStringLiteral("spectrumReplay/3dSpectrumSliceRows"),
+                       replay3DSpectrumSliceRows).toInt(),
+        1,
+        2048);
+    replay3DSpectrumSliceCapture =
+        settings.value(QStringLiteral("spectrumReplay/3dSpectrumSliceCapture"),
+                       replay3DSpectrumSliceCapture).toBool();
+    replay3DSpectrumSliceCaptureFixed =
+        settings.value(QStringLiteral("spectrumReplay/3dSpectrumSliceCaptureFixed"),
+                       replay3DSpectrumSliceCaptureFixed).toBool();
+    replay3DVncSliceInput =
+        settings.value(QStringLiteral("spectrumReplay/3dVncSliceInput"),
+                       replay3DVncSliceInput).toBool();
 
     if (levelMinSpin) {
         QSignalBlocker blocker(levelMinSpin);
@@ -639,6 +874,59 @@ void SpectrumFrameReplayDialog::loadPersistentUiSettings() {
         QSignalBlocker blocker(sensitivitySlider);
         sensitivitySlider->setValue(static_cast<int>(std::lround(replaySensitivity)));
     }
+    if (waterfallDisplayModeCombo) {
+        const int index = waterfallDisplayModeCombo->findData(replayWaterfallDisplayMode);
+        if (index >= 0) {
+            QSignalBlocker blocker(waterfallDisplayModeCombo);
+            waterfallDisplayModeCombo->setCurrentIndex(index);
+        }
+    }
+    if (waterfall3DResolutionCombo) {
+        const int index = waterfall3DResolutionCombo->findData(replay3DResolutionDivisor);
+        if (index >= 0) {
+            QSignalBlocker blocker(waterfall3DResolutionCombo);
+            waterfall3DResolutionCombo->setCurrentIndex(index);
+        }
+    }
+    if (waterfall3DSliceStepSpin) {
+        QSignalBlocker blocker(waterfall3DSliceStepSpin);
+        waterfall3DSliceStepSpin->setValue(replay3DSliceStep);
+    }
+    if (waterfall3DSliceWidthSpin) {
+        QSignalBlocker blocker(waterfall3DSliceWidthSpin);
+        waterfall3DSliceWidthSpin->setValue(replay3DSliceWidth);
+    }
+    if (waterfall3DSpectrumSliceStepSpin) {
+        QSignalBlocker blocker(waterfall3DSpectrumSliceStepSpin);
+        waterfall3DSpectrumSliceStepSpin->setValue(replay3DSpectrumSliceStep);
+    }
+    if (waterfall3DSpectrumSliceRowsSpin) {
+        QSignalBlocker blocker(waterfall3DSpectrumSliceRowsSpin);
+        waterfall3DSpectrumSliceRowsSpin->setValue(replay3DSpectrumSliceRows);
+    }
+    if (waterfall3DSpectrumSliceCaptureCheckbox) {
+        QSignalBlocker blocker(waterfall3DSpectrumSliceCaptureCheckbox);
+        waterfall3DSpectrumSliceCaptureCheckbox->setChecked(replay3DSpectrumSliceCapture);
+    }
+    if (waterfall3DSpectrumSliceCaptureFixedCheckbox) {
+        QSignalBlocker blocker(waterfall3DSpectrumSliceCaptureFixedCheckbox);
+        waterfall3DSpectrumSliceCaptureFixedCheckbox->setChecked(replay3DSpectrumSliceCaptureFixed);
+        waterfall3DSpectrumSliceCaptureFixedCheckbox->setEnabled(replay3DSpectrumSliceCapture);
+    }
+    if (waterfall3DVncSliceInputCheckbox) {
+        QSignalBlocker blocker(waterfall3DVncSliceInputCheckbox);
+        waterfall3DVncSliceInputCheckbox->setChecked(replay3DVncSliceInput);
+    }
+    if (waterfall3DView) {
+        waterfall3DView->setResolutionDivisor(replay3DResolutionDivisor);
+        waterfall3DView->setSliceScrollStep(replay3DSliceStep);
+        waterfall3DView->setSliceWidth(replay3DSliceWidth);
+        waterfall3DView->setSpectrumSliceScrollStep(replay3DSpectrumSliceStep);
+        waterfall3DView->setSpectrumSliceWidth(replay3DSpectrumSliceRows);
+        waterfall3DView->setSpectrumSliceCapture(replay3DSpectrumSliceCapture);
+        waterfall3DView->setSpectrumSliceCaptureFixed(replay3DSpectrumSliceCaptureFixed);
+        waterfall3DView->setModifierFreeSliceInput(replay3DVncSliceInput);
+    }
     if (speedCombo) {
         const double savedSpeed =
             settings.value(QStringLiteral("spectrumReplay/speed"), 1.0).toDouble();
@@ -659,6 +947,15 @@ void SpectrumFrameReplayDialog::savePersistentUiSettings() const {
     settings.setValue(QStringLiteral("spectrumReplay/rowHeight"), waterfallRowHeight);
     settings.setValue(QStringLiteral("spectrumReplay/contrast"), static_cast<int>(std::lround(replayContrast)));
     settings.setValue(QStringLiteral("spectrumReplay/sensitivity"), static_cast<int>(std::lround(replaySensitivity)));
+    settings.setValue(QStringLiteral("spectrumReplay/displayMode"), replayWaterfallDisplayMode);
+    settings.setValue(QStringLiteral("spectrumReplay/3dResolutionDivisor"), replay3DResolutionDivisor);
+    settings.setValue(QStringLiteral("spectrumReplay/3dSliceStep"), replay3DSliceStep);
+    settings.setValue(QStringLiteral("spectrumReplay/3dSliceWidth"), replay3DSliceWidth);
+    settings.setValue(QStringLiteral("spectrumReplay/3dSpectrumSliceStep"), replay3DSpectrumSliceStep);
+    settings.setValue(QStringLiteral("spectrumReplay/3dSpectrumSliceRows"), replay3DSpectrumSliceRows);
+    settings.setValue(QStringLiteral("spectrumReplay/3dSpectrumSliceCapture"), replay3DSpectrumSliceCapture);
+    settings.setValue(QStringLiteral("spectrumReplay/3dSpectrumSliceCaptureFixed"), replay3DSpectrumSliceCaptureFixed);
+    settings.setValue(QStringLiteral("spectrumReplay/3dVncSliceInput"), replay3DVncSliceInput);
     if (speedCombo) {
         settings.setValue(QStringLiteral("spectrumReplay/speed"),
                           speedCombo->currentData().toDouble());
@@ -725,6 +1022,8 @@ bool SpectrumFrameReplayDialog::loadRecording(const QString &path, QString *erro
         replayListenFrequencyHz = recording.frames.front().centerFrequency;
     }
     selectedFrame = 0;
+    replay3DWindowStart = -1;
+    replay3DWindowEnd = -1;
     if (timelineSlider) {
         timelineSlider->setRange(0, static_cast<int>(recording.frames.size()) - 1);
         timelineSlider->setValue(0);
@@ -753,6 +1052,11 @@ void SpectrumFrameReplayDialog::rebuildWaterfallImage() {
         scaledWaterfallCacheWidth = 0;
         scaledWaterfallDirty = true;
         waterfallLabel->clear();
+        if (waterfall3DView) {
+            waterfall3DView->clearHistory();
+        }
+        replay3DWindowStart = -1;
+        replay3DWindowEnd = -1;
         return;
     }
 
@@ -784,6 +1088,153 @@ void SpectrumFrameReplayDialog::rebuildWaterfallImage() {
     waterfallLabel->setPixmap(QPixmap::fromImage(waterfallImage));
     scaledWaterfallDirty = true;
     renderWaterfallPixmap();
+    if (replayWaterfallDisplayMode != 0) {
+        rebuild3DWindow(true);
+    }
+}
+
+void SpectrumFrameReplayDialog::rebuild3DWindow(bool force) {
+    if (!waterfall3DView || recording.frames.empty()) {
+        return;
+    }
+
+    constexpr int kWindowCapacity = 128;
+    const int frameCount = static_cast<int>(recording.frames.size());
+    const bool cached = replay3DWindowStart >= 0 && replay3DWindowEnd >= replay3DWindowStart;
+    const int edgeMargin = 16;
+    if (!force && cached && selectedFrame >= replay3DWindowStart &&
+        selectedFrame <= replay3DWindowEnd) {
+        const bool nearLeadingEdge = selectedFrame < replay3DWindowStart + edgeMargin &&
+                                     replay3DWindowStart > 0;
+        const bool nearTrailingEdge = selectedFrame > replay3DWindowEnd - edgeMargin &&
+                                      replay3DWindowEnd + 1 < frameCount;
+        if (!nearLeadingEdge && !nearTrailingEdge) {
+            waterfall3DView->setHighlightedHistoryRow(selectedFrame - replay3DWindowStart);
+            waterfall3DView->setOverview(waterfallImage,
+                                         replay3DWindowStart,
+                                         replay3DWindowEnd,
+                                         selectedFrame,
+                                         frameCount);
+            return;
+        }
+    }
+
+    const int windowRows = std::min(kWindowCapacity, frameCount);
+    replay3DWindowStart = std::clamp(selectedFrame - windowRows / 2,
+                                     0,
+                                     std::max(0, frameCount - windowRows));
+    replay3DWindowEnd = std::min(frameCount - 1, replay3DWindowStart + windowRows - 1);
+
+    waterfall3DView->clearHistory();
+    waterfall3DView->setHistoryCapacity(windowRows);
+    waterfall3DView->setResolutionDivisor(replay3DResolutionDivisor);
+    waterfall3DView->setSliceScrollStep(replay3DSliceStep);
+    waterfall3DView->setSliceWidth(replay3DSliceWidth);
+    waterfall3DView->setSpectrumSliceScrollStep(replay3DSpectrumSliceStep);
+    waterfall3DView->setSpectrumSliceWidth(replay3DSpectrumSliceRows);
+    waterfall3DView->setSpectrumSliceCapture(replay3DSpectrumSliceCapture);
+    waterfall3DView->setSpectrumSliceCaptureFixed(replay3DSpectrumSliceCaptureFixed);
+
+    const int visibleWidth = std::max(320, waterfall3DView->width());
+    const int baseColumns = std::clamp(visibleWidth * 2, 512, 4096);
+    const int fixedOutputColumns = std::min(
+        baseColumns,
+        static_cast<int>(recording.frames.front().magnitudes.size()));
+    if (fixedOutputColumns <= 0) {
+        waterfall3DView->clearHistory();
+        return;
+    }
+    for (int frameIndex = replay3DWindowStart;
+         frameIndex <= replay3DWindowEnd;
+         ++frameIndex) {
+        const SpectrumFrameRecord &frame = recording.frames[static_cast<std::size_t>(frameIndex)];
+        const int sourceBins = static_cast<int>(frame.magnitudes.size());
+        const int outputColumns = fixedOutputColumns;
+        replay3DLevels.assign(static_cast<std::size_t>(outputColumns), levelMin);
+        replay3DColors.resize(static_cast<std::size_t>(outputColumns) * 3U);
+
+        for (int column = 0; column < outputColumns; ++column) {
+            const int begin = sourceBins > 0 ? column * sourceBins / outputColumns : 0;
+            const int end = sourceBins > 0
+                                ? std::max(begin + 1, (column + 1) * sourceBins / outputColumns)
+                                : 0;
+            double sum = 0.0;
+            int count = 0;
+            for (int source = begin; source < end && source < sourceBins; ++source) {
+                const int shiftedIndex = (source + sourceBins / 2) % sourceBins;
+                const float value = frame.magnitudes[static_cast<std::size_t>(shiftedIndex)];
+                if (std::isfinite(value)) {
+                    sum += value;
+                    ++count;
+                }
+            }
+            const float average = count > 0
+                                      ? static_cast<float>(sum / static_cast<double>(count))
+                                      : levelMin;
+            replay3DLevels[static_cast<std::size_t>(column)] = average;
+            const QColor color = colorForLevel(average,
+                                               levelMin,
+                                               levelMax,
+                                               replayContrast,
+                                               replaySensitivity);
+            const std::size_t colorOffset = static_cast<std::size_t>(column) * 3U;
+            replay3DColors[colorOffset] = static_cast<unsigned char>(color.red());
+            replay3DColors[colorOffset + 1U] = static_cast<unsigned char>(color.green());
+            replay3DColors[colorOffset + 2U] = static_cast<unsigned char>(color.blue());
+        }
+        waterfall3DView->appendHistoryRow(replay3DLevels,
+                                          replay3DColors,
+                                          levelMin,
+                                          levelMax);
+    }
+
+    waterfall3DView->setHighlightedHistoryRow(selectedFrame - replay3DWindowStart);
+    waterfall3DView->setOverview(waterfallImage,
+                                 replay3DWindowStart,
+                                 replay3DWindowEnd,
+                                 selectedFrame,
+                                 frameCount);
+    waterfall3DView->update();
+}
+
+void SpectrumFrameReplayDialog::updateReplayDisplayMode() {
+    const bool show3D = replayWaterfallDisplayMode != 0;
+    if (waterfallScroll) {
+        waterfallScroll->setVisible(!show3D);
+    }
+    if (waterfall3DView) {
+        waterfall3DView->setVisible(show3D);
+        waterfall3DView->setOverviewVisible(replayWaterfallDisplayMode == 2);
+    }
+    if (waterfall3DResolutionCombo) {
+        waterfall3DResolutionCombo->setEnabled(show3D);
+    }
+    if (waterfall3DSliceStepSpin) {
+        waterfall3DSliceStepSpin->setEnabled(show3D);
+    }
+    if (waterfall3DSliceWidthSpin) {
+        waterfall3DSliceWidthSpin->setEnabled(show3D);
+    }
+    if (waterfall3DSpectrumSliceStepSpin) {
+        waterfall3DSpectrumSliceStepSpin->setEnabled(show3D);
+    }
+    if (waterfall3DSpectrumSliceRowsSpin) {
+        waterfall3DSpectrumSliceRowsSpin->setEnabled(show3D);
+    }
+    if (waterfall3DSpectrumSliceCaptureCheckbox) {
+        waterfall3DSpectrumSliceCaptureCheckbox->setEnabled(show3D);
+    }
+    if (waterfall3DSpectrumSliceCaptureFixedCheckbox) {
+        waterfall3DSpectrumSliceCaptureFixedCheckbox->setEnabled(
+            show3D && replay3DSpectrumSliceCapture);
+    }
+    if (waterfall3DVncSliceInputCheckbox) {
+        waterfall3DVncSliceInputCheckbox->setEnabled(show3D);
+    }
+    if (show3D) {
+        replay3DWindowStart = -1;
+        rebuild3DWindow(true);
+    }
 }
 
 void SpectrumFrameReplayDialog::renderWaterfallPixmap() {
@@ -922,6 +1373,9 @@ void SpectrumFrameReplayDialog::updateFrameSelection(int index) {
     }
     updateReplayMarker();
     renderWaterfallPixmap();
+    if (replayWaterfallDisplayMode != 0) {
+        rebuild3DWindow(false);
+    }
     updateLabels();
 }
 
@@ -1089,6 +1543,9 @@ void SpectrumFrameReplayDialog::scheduleDeferredRender() {
         }
         updateScaleWidget();
         renderWaterfallPixmap();
+        if (replayWaterfallDisplayMode != 0) {
+            rebuild3DWindow(true);
+        }
         QTimer::singleShot(40, this, [this]() {
             if (!recording.frames.empty()) {
                 updateScaleWidget();

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(FobosAPP VERSION 4.6.1)
+project(FobosAPP VERSION 4.7.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -213,6 +213,10 @@ set(SOURCES
     src/ui/MyGraphWidget.h
     src/ui/MyWaterfallWidget.cpp
     src/ui/MyWaterfallWidget.h
+    src/ui/waterfall3drenderer.cpp
+    src/ui/waterfall3drenderer.h
+    src/ui/waterfall3dview.cpp
+    src/ui/waterfall3dview.h
     src/utils/modulationutils.cpp
     src/utils/modulationutils.h
     src/ui/scalewidget.cpp

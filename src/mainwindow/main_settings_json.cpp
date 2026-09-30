@@ -146,7 +146,19 @@ QJsonObject YourClassName::settingsToJson() const {
     }
     settings["qthMarkers"] = qthMarkers;
     settings["spectrumUpdateIntervalMs"] = spectrumUpdateIntervalMs;
+    settings["frequencyCalibrationOffsetHz"] = frequencyCalibrationOffsetHz;
+    settings["amplitudeCalibrationOffsetDb"] = amplitudeCalibrationOffsetDb;
     settings["waterfallRowsPerFrame"] = waterfallRowsPerFrame;
+    settings["waterfallDisplayMode"] = waterfallDisplayMode;
+    settings["waterfall3DResolutionDivisor"] = waterfall3DResolutionDivisor;
+    settings["waterfall3DHistoryRows"] = waterfall3DHistoryRows;
+    settings["waterfall3DSliceScrollStep"] = waterfall3DSliceScrollStep;
+    settings["waterfall3DSliceWidth"] = waterfall3DSliceWidth;
+    settings["waterfall3DSpectrumSliceScrollStep"] = waterfall3DSpectrumSliceScrollStep;
+    settings["waterfall3DSpectrumSliceRows"] = waterfall3DSpectrumSliceRows;
+    settings["waterfall3DSpectrumSliceCapture"] = waterfall3DSpectrumSliceCapture;
+    settings["waterfall3DSpectrumSliceCaptureFixed"] = waterfall3DSpectrumSliceCaptureFixed;
+    settings["waterfall3DVncSliceInput"] = waterfall3DVncSliceInput;
     settings["experimentalGpuWaterfall"] = experimentalGpuWaterfall;
     settings["spurSuppressionEnabled"] = spurSuppressionEnabled;
     QJsonArray spurMask;
@@ -422,11 +434,114 @@ void YourClassName::applySettingsFromJson(const QJsonObject &settingsJson, bool 
     if (spectrumUpdateIntervalMs > 0 && spectrumUpdateIntervalMs < SPECTRUM_UPDATE_MIN_MS) {
         spectrumUpdateIntervalMs = SPECTRUM_UPDATE_MIN_MS;
     }
+    frequencyCalibrationOffsetHz =
+        (std::clamp)(readDouble("frequencyCalibrationOffsetHz", frequencyCalibrationOffsetHz),
+                     -10000000.0,
+                     10000000.0);
+    amplitudeCalibrationOffsetDb =
+        (std::clamp)(readDouble("amplitudeCalibrationOffsetDb", amplitudeCalibrationOffsetDb),
+                     -200.0,
+                     200.0);
+    if (processor) {
+        processor->setFrequencyCalibrationOffset(frequencyCalibrationOffsetHz);
+    }
     waterfallRowsPerFrame = (std::clamp)(readInt("waterfallRowsPerFrame", waterfallRowsPerFrame),
                                          WATERFALL_ROWS_PER_FRAME_MIN,
                                          WATERFALL_ROWS_PER_FRAME_MAX);
     if (waterfallWidget) {
         waterfallWidget->setRowsPerFrame(waterfallRowsPerFrame);
+    }
+    waterfallDisplayMode = (std::clamp)(readInt("waterfallDisplayMode", waterfallDisplayMode), 0, 2);
+    if (waterfallDisplayModeCombo) {
+        QSignalBlocker blocker(waterfallDisplayModeCombo);
+        const int index = waterfallDisplayModeCombo->findData(waterfallDisplayMode);
+        if (index >= 0) {
+            waterfallDisplayModeCombo->setCurrentIndex(index);
+        }
+    }
+    if (waterfallWidget) {
+        waterfallWidget->setDisplayMode(
+            static_cast<MyWaterfallWidget::DisplayMode>(waterfallDisplayMode));
+    }
+    waterfall3DResolutionDivisor = readInt("waterfall3DResolutionDivisor", waterfall3DResolutionDivisor);
+    if (!QVector<int>{1, 2, 4, 8, 16, 32, 64}.contains(waterfall3DResolutionDivisor)) {
+        waterfall3DResolutionDivisor = 4;
+    }
+    if (waterfall3DResolutionCombo) {
+        QSignalBlocker blocker(waterfall3DResolutionCombo);
+        const int index = waterfall3DResolutionCombo->findData(waterfall3DResolutionDivisor);
+        if (index >= 0) {
+            waterfall3DResolutionCombo->setCurrentIndex(index);
+        }
+    }
+    if (waterfallWidget) {
+        waterfallWidget->set3DResolutionDivisor(waterfall3DResolutionDivisor);
+    }
+    waterfall3DHistoryRows =
+        (std::clamp)(readInt("waterfall3DHistoryRows", waterfall3DHistoryRows), 16, 2048);
+    if (waterfall3DHistoryRowsSpin) {
+        QSignalBlocker blocker(waterfall3DHistoryRowsSpin);
+        waterfall3DHistoryRowsSpin->setValue(waterfall3DHistoryRows);
+    }
+    if (waterfallWidget) {
+        waterfallWidget->set3DHistoryRows(waterfall3DHistoryRows);
+    }
+    waterfall3DSliceScrollStep =
+        (std::clamp)(readInt("waterfall3DSliceScrollStep", waterfall3DSliceScrollStep), 1, 256);
+    waterfall3DSliceWidth =
+        (std::clamp)(readInt("waterfall3DSliceWidth", waterfall3DSliceWidth), 1, 4096);
+    waterfall3DSpectrumSliceScrollStep =
+        (std::clamp)(readInt("waterfall3DSpectrumSliceScrollStep",
+                             waterfall3DSpectrumSliceScrollStep),
+                     1,
+                     2048);
+    waterfall3DSpectrumSliceRows =
+        (std::clamp)(readInt("waterfall3DSpectrumSliceRows", waterfall3DSpectrumSliceRows),
+                     1,
+                     2048);
+    waterfall3DSpectrumSliceCapture =
+        readBool("waterfall3DSpectrumSliceCapture", waterfall3DSpectrumSliceCapture);
+    waterfall3DSpectrumSliceCaptureFixed =
+        readBool("waterfall3DSpectrumSliceCaptureFixed", waterfall3DSpectrumSliceCaptureFixed);
+    waterfall3DVncSliceInput =
+        readBool("waterfall3DVncSliceInput", waterfall3DVncSliceInput);
+    if (waterfall3DSliceStepSpin) {
+        QSignalBlocker blocker(waterfall3DSliceStepSpin);
+        waterfall3DSliceStepSpin->setValue(waterfall3DSliceScrollStep);
+    }
+    if (waterfall3DSliceWidthSpin) {
+        QSignalBlocker blocker(waterfall3DSliceWidthSpin);
+        waterfall3DSliceWidthSpin->setValue(waterfall3DSliceWidth);
+    }
+    if (waterfall3DSpectrumSliceStepSpin) {
+        QSignalBlocker blocker(waterfall3DSpectrumSliceStepSpin);
+        waterfall3DSpectrumSliceStepSpin->setValue(waterfall3DSpectrumSliceScrollStep);
+    }
+    if (waterfall3DSpectrumSliceRowsSpin) {
+        QSignalBlocker blocker(waterfall3DSpectrumSliceRowsSpin);
+        waterfall3DSpectrumSliceRowsSpin->setValue(waterfall3DSpectrumSliceRows);
+    }
+    if (waterfall3DSpectrumSliceCaptureCheckbox) {
+        QSignalBlocker blocker(waterfall3DSpectrumSliceCaptureCheckbox);
+        waterfall3DSpectrumSliceCaptureCheckbox->setChecked(waterfall3DSpectrumSliceCapture);
+    }
+    if (waterfall3DSpectrumSliceCaptureFixedCheckbox) {
+        QSignalBlocker blocker(waterfall3DSpectrumSliceCaptureFixedCheckbox);
+        waterfall3DSpectrumSliceCaptureFixedCheckbox->setChecked(waterfall3DSpectrumSliceCaptureFixed);
+        waterfall3DSpectrumSliceCaptureFixedCheckbox->setEnabled(waterfall3DSpectrumSliceCapture);
+    }
+    if (waterfall3DVncSliceInputCheckbox) {
+        QSignalBlocker blocker(waterfall3DVncSliceInputCheckbox);
+        waterfall3DVncSliceInputCheckbox->setChecked(waterfall3DVncSliceInput);
+    }
+    if (waterfallWidget) {
+        waterfallWidget->set3DSliceScrollStep(waterfall3DSliceScrollStep);
+        waterfallWidget->set3DSliceWidth(waterfall3DSliceWidth);
+        waterfallWidget->set3DSpectrumSliceScrollStep(waterfall3DSpectrumSliceScrollStep);
+        waterfallWidget->set3DSpectrumSliceWidth(waterfall3DSpectrumSliceRows);
+        waterfallWidget->set3DSpectrumSliceCapture(waterfall3DSpectrumSliceCapture);
+        waterfallWidget->set3DSpectrumSliceCaptureFixed(waterfall3DSpectrumSliceCaptureFixed);
+        waterfallWidget->set3DModifierFreeSliceInput(waterfall3DVncSliceInput);
     }
     experimentalGpuWaterfall = readBool("experimentalGpuWaterfall", experimentalGpuWaterfall);
     if (waterfallWidget) {

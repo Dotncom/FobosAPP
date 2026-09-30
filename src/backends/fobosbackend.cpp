@@ -61,7 +61,8 @@ ReceiverStreamDescriptor makeFobosStreamDescriptor(void *nativeDevice,
                                                    bool publishIqSnapshot,
                                                    bool emitIqFrames,
                                                    bool agileScanEnabled,
-                                                   const QVector<double> &agileScanFrequenciesHz) {
+                                                   const QVector<double> &agileScanFrequenciesHz,
+                                                   double frequencyCalibrationOffsetHz) {
     ReceiverStreamDescriptor stream;
     stream.kind = apiKind == FobosApiKind::Agile
                       ? ReceiverBackendStreamKind::FobosAgile
@@ -76,6 +77,7 @@ ReceiverStreamDescriptor makeFobosStreamDescriptor(void *nativeDevice,
                              : QStringLiteral("Fobos SDR");
     stream.sampleRateHz = sampleRateHz;
     stream.centerFrequencyHz = centerFrequencyHz;
+    stream.frequencyCalibrationOffsetHz = frequencyCalibrationOffsetHz;
     stream.syncReader = syncReader;
     stream.queueAudioBlocks = queueAudioBlocks;
     stream.publishIqSnapshot = publishIqSnapshot;

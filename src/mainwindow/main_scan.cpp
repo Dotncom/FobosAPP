@@ -869,9 +869,14 @@ bool YourClassName::applyAgileScanSettings(bool forceStop) {
         pendingSettings.listeningFrequency = pendingSettings.centerFrequency;
     }
 
+    QVector<double> hardwareFrequencies;
+    hardwareFrequencies.reserve(frequencies.size());
+    for (double frequency : frequencies) {
+        hardwareFrequencies.append(calibratedHardwareFrequency(frequency));
+    }
     const int result = startFobosAgileScanSafely(agileDevice,
-                                                frequencies.data(),
-                                                static_cast<unsigned int>(frequencies.size()));
+                                                hardwareFrequencies.data(),
+                                                static_cast<unsigned int>(hardwareFrequencies.size()));
     const int scanning = result == FOBOS_ERR_OK ? isFobosAgileScanningSafely(agileDevice) : result;
     const int index = result == FOBOS_ERR_OK ? getFobosAgileScanIndexSafely(agileDevice) : -1;
     qDebug() << "[AgileScan] start"
@@ -879,6 +884,7 @@ bool YourClassName::applyAgileScanSettings(bool forceStop) {
              << "points" << frequencies.size()
              << "firstHz" << frequencies.first()
              << "lastHz" << frequencies.last()
+             << "calibrationHz" << frequencyCalibrationOffsetHz
              << "isScanning" << scanning
              << "index" << index;
     agileScanRunning = result == FOBOS_ERR_OK;
@@ -1017,7 +1023,7 @@ bool YourClassName::applyStandardScanRetune(double targetFrequencyHz, const char
     IqBuffer::clear(preRetuneIqEpoch);
     QElapsedTimer retuneTimer;
     retuneTimer.start();
-    const int result = setActiveFrequencySafely(requestedFrequency, &tunedFrequency);
+    const int result = setCalibratedActiveFrequencySafely(requestedFrequency, &tunedFrequency);
     const qint64 retuneCallMs = retuneTimer.elapsed();
     if (result != FOBOS_ERR_OK) {
         qDebug() << "[StandardScan] retune failed"

@@ -76,6 +76,7 @@ struct ReceiverStreamDescriptor {
     QString backendName = QStringLiteral("Fobos SDR");
     double sampleRateHz = 0.0;
     double centerFrequencyHz = 0.0;
+    double frequencyCalibrationOffsetHz = 0.0;
     QString rtlTcpHost = QStringLiteral("127.0.0.1");
     quint16 rtlTcpPort = 1234;
     int rtlSdrNativeDeviceIndex = 0;

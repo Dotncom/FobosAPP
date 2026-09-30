@@ -16,7 +16,10 @@
 #include <QMouseEvent>
 #include <QPoint>
 #include <cmath>
+#include <memory>
 #include "scanvisualassembler.h"
+
+class Waterfall3DRenderer;
 
 class MyWaterfallWidget : public QOpenGLWidget, protected QOpenGLFunctions {
     Q_OBJECT
@@ -26,6 +29,12 @@ public:
         GpuPrepared
     };
 
+    enum class DisplayMode {
+        Waterfall2D = 0,
+        Waterfall3D = 1,
+        Waterfall3DWithMini = 2
+    };
+
     explicit MyWaterfallWidget(QWidget *parent = nullptr);
     ~MyWaterfallWidget();
     bool initialized;
@@ -33,6 +42,17 @@ public:
     void setRowsPerFrame(int rows);
     void setRenderBackend(RenderBackend backend);
     RenderBackend renderBackend() const;
+    void setDisplayMode(DisplayMode mode);
+    DisplayMode displayMode() const;
+    void set3DResolutionDivisor(int divisor);
+    void set3DHistoryRows(int rows);
+    void set3DSliceScrollStep(int points);
+    void set3DSliceWidth(int points);
+    void set3DSpectrumSliceScrollStep(int rows);
+    void set3DSpectrumSliceWidth(int rows);
+    void set3DSpectrumSliceCapture(bool enabled);
+    void set3DSpectrumSliceCaptureFixed(bool enabled);
+    void set3DModifierFreeSliceInput(bool enabled);
     void setLevelRange(float minLevel, float maxLevel);
     void setScanSegments(const QVector<ScanVisualSegment> &segments);
     void setScanSegmentMarkersVisible(bool visible);
@@ -58,6 +78,8 @@ private:
     void resizeWaterfallTexturePreserve(int w, int h);
     bool ensureGpuWaterfallProgram();
     bool drawGpuPreparedWaterfall(float vStart);
+    void drawMiniWaterfallOverlay(float vStart);
+    void uploadPendingTextureLine();
     void drawScanSegments(QPainter &painter) const;
     double displayFrequencyAtX(int x) const;
     double actualFrequencyForDisplayFrequency(double displayFrequency) const;
@@ -86,6 +108,8 @@ private:
     int waterfallWriteRow = 0;
     int rowsPerFrame = 2;
     RenderBackend activeRenderBackend = RenderBackend::CpuTexture;
+    DisplayMode activeDisplayMode = DisplayMode::Waterfall2D;
+    std::unique_ptr<Waterfall3DRenderer> waterfall3DRenderer;
     bool waterfallProgramReady = false;
     bool waterfallProgramTried = false;
     bool secondGraph;
@@ -94,6 +118,13 @@ private:
     bool spectrumPanMoved = false;
     Qt::MouseButton spectrumPanButton = Qt::NoButton;
     QPoint spectrumPanLastPos;
+    bool cameraOrbitActive = false;
+    QPoint cameraOrbitLastPos;
+    bool cameraPanActive = false;
+    QPoint cameraPanLastPos;
+    bool frequencySliceMouseActive = false;
+    bool spectrumFrameSliceMouseActive = false;
+    bool modifierFreeSliceInput = false;
     bool pendingTextureLine = false;
     bool textureClearRequested = false;
     bool updateQueued = false;

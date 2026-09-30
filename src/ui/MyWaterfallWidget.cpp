@@ -1,4 +1,5 @@
 #include "MyWaterfallWidget.h"
+#include "waterfall3drenderer.h"
 
 #include <algorithm>
 #include <array>
@@ -73,7 +74,8 @@ void writeWaterfallColor(float normalizedValue,
 
 MyWaterfallWidget::MyWaterfallWidget(QWidget *parent)
     : QOpenGLWidget(parent), xMin(60000000), xMax(140000000), yMin(-120), yMax(0), contrast(10), sensitivity(10),
-      levelMin(-120), levelMax(0), fftLength(32768), initialized(false), secondGraph(false) {
+      levelMin(-120), levelMax(0), fftLength(32768), initialized(false), secondGraph(false),
+      waterfall3DRenderer(std::make_unique<Waterfall3DRenderer>()) {
 		waterfallTexture = 0;
 }
 
@@ -89,11 +91,106 @@ MyWaterfallWidget::~MyWaterfallWidget() {
 
 
 void MyWaterfallWidget::wheelEvent(QWheelEvent *event) {
+    if ((frequencySliceMouseActive || spectrumFrameSliceMouseActive) &&
+        activeDisplayMode != DisplayMode::Waterfall2D) {
+        const QPoint angleDelta = event->angleDelta();
+        const QPoint pixelDelta = event->pixelDelta();
+        const int signedDelta = angleDelta.y() != 0
+                                    ? angleDelta.y()
+                                    : (angleDelta.x() != 0
+                                           ? angleDelta.x()
+                                           : (pixelDelta.y() != 0 ? pixelDelta.y() : pixelDelta.x()));
+        if (signedDelta == 0) {
+            event->accept();
+            return;
+        }
+        {
+            QMutexLocker locker(&mutex);
+            if (frequencySliceMouseActive) {
+                waterfall3DRenderer->stepFrequencySlice(signedDelta > 0 ? 1 : -1);
+            } else {
+                waterfall3DRenderer->stepSpectrumSlice(signedDelta > 0 ? 1 : -1);
+            }
+        }
+        update();
+        event->accept();
+        return;
+    }
+    if (activeDisplayMode != DisplayMode::Waterfall2D &&
+        event->modifiers().testFlag(Qt::ControlModifier)) {
+        {
+            QMutexLocker locker(&mutex);
+            waterfall3DRenderer->zoomCamera(event->angleDelta().y());
+        }
+        update();
+        event->accept();
+        return;
+    }
     emit scaleChanged(event->angleDelta().y() > 0 ? 1 : -1);
     event->accept();
 }
 
 void MyWaterfallWidget::mousePressEvent(QMouseEvent *event) {
+    const bool sliceModifier = event->modifiers().testFlag(Qt::AltModifier) ||
+                               event->modifiers().testFlag(Qt::ShiftModifier);
+    const bool modifierFreeSlice = modifierFreeSliceInput &&
+                                   !event->modifiers().testFlag(Qt::ControlModifier);
+    if (activeDisplayMode != DisplayMode::Waterfall2D &&
+        event->button() == Qt::LeftButton &&
+        (sliceModifier || modifierFreeSlice)) {
+        bool selected = false;
+        {
+            QMutexLocker locker(&mutex);
+            selected = waterfall3DRenderer->beginFrequencySlice(event->x(),
+                                                                event->y(),
+                                                                width(),
+                                                                height());
+        }
+        if (selected) {
+            spectrumFrameSliceMouseActive = false;
+            frequencySliceMouseActive = true;
+            update();
+        }
+        event->accept();
+        return;
+    }
+    if (activeDisplayMode != DisplayMode::Waterfall2D &&
+        event->button() == Qt::RightButton &&
+        (sliceModifier || modifierFreeSlice)) {
+        bool selected = false;
+        {
+            QMutexLocker locker(&mutex);
+            selected = waterfall3DRenderer->beginSpectrumSlice(event->x(),
+                                                               event->y(),
+                                                               width(),
+                                                               height());
+        }
+        if (selected) {
+            frequencySliceMouseActive = false;
+            spectrumFrameSliceMouseActive = true;
+            update();
+        }
+        event->accept();
+        return;
+    }
+    if (activeDisplayMode != DisplayMode::Waterfall2D &&
+        event->button() == Qt::LeftButton &&
+        event->modifiers().testFlag(Qt::ControlModifier)) {
+        cameraOrbitActive = true;
+        cameraOrbitLastPos = event->pos();
+        setCursor(Qt::ClosedHandCursor);
+        event->accept();
+        return;
+    }
+    if (activeDisplayMode != DisplayMode::Waterfall2D &&
+        event->button() == Qt::RightButton &&
+        event->modifiers().testFlag(Qt::ControlModifier)) {
+        cameraPanActive = true;
+        cameraPanLastPos = event->pos();
+        setCursor(Qt::SizeAllCursor);
+        event->accept();
+        return;
+    }
     if (event->button() == Qt::LeftButton || event->button() == Qt::MiddleButton) {
         spectrumPanActive = true;
         spectrumPanMoved = false;
@@ -116,6 +213,36 @@ void MyWaterfallWidget::mousePressEvent(QMouseEvent *event) {
 }
 
 void MyWaterfallWidget::mouseMoveEvent(QMouseEvent *event) {
+    if (cameraPanActive) {
+        const QPoint delta = event->pos() - cameraPanLastPos;
+        cameraPanLastPos = event->pos();
+        if (!delta.isNull()) {
+            {
+                QMutexLocker locker(&mutex);
+                waterfall3DRenderer->panCamera(static_cast<float>(delta.x()),
+                                               static_cast<float>(delta.y()),
+                                               width(),
+                                               height());
+            }
+            update();
+        }
+        event->accept();
+        return;
+    }
+    if (cameraOrbitActive) {
+        const QPoint delta = event->pos() - cameraOrbitLastPos;
+        cameraOrbitLastPos = event->pos();
+        if (!delta.isNull()) {
+            {
+                QMutexLocker locker(&mutex);
+                waterfall3DRenderer->orbitCamera(static_cast<float>(delta.x()),
+                                                 static_cast<float>(delta.y()));
+            }
+            update();
+        }
+        event->accept();
+        return;
+    }
     if (spectrumPanActive) {
         const int deltaPixels = event->pos().x() - spectrumPanLastPos.x();
         if (deltaPixels != 0) {
@@ -130,6 +257,38 @@ void MyWaterfallWidget::mouseMoveEvent(QMouseEvent *event) {
 }
 
 void MyWaterfallWidget::mouseReleaseEvent(QMouseEvent *event) {
+    if (spectrumFrameSliceMouseActive && event->button() == Qt::RightButton) {
+        {
+            QMutexLocker locker(&mutex);
+            waterfall3DRenderer->endSpectrumSlice();
+        }
+        spectrumFrameSliceMouseActive = false;
+        update();
+        event->accept();
+        return;
+    }
+    if (frequencySliceMouseActive && event->button() == Qt::LeftButton) {
+        {
+            QMutexLocker locker(&mutex);
+            waterfall3DRenderer->endFrequencySlice();
+        }
+        frequencySliceMouseActive = false;
+        update();
+        event->accept();
+        return;
+    }
+    if (cameraOrbitActive && event->button() == Qt::LeftButton) {
+        cameraOrbitActive = false;
+        unsetCursor();
+        event->accept();
+        return;
+    }
+    if (cameraPanActive && event->button() == Qt::RightButton) {
+        cameraPanActive = false;
+        unsetCursor();
+        event->accept();
+        return;
+    }
     if (spectrumPanActive && event->button() == spectrumPanButton) {
         const bool middleClickAutoTune = spectrumPanButton == Qt::MiddleButton && !spectrumPanMoved;
         spectrumPanActive = false;
@@ -558,6 +717,13 @@ void MyWaterfallWidget::setData(const std::vector<float> &sourceXData,
                                     sensitivityFactor,
                                     &lineData[index * 3]);
             }
+            if (activeDisplayMode != DisplayMode::Waterfall2D) {
+                waterfall3DRenderer->appendRow(pixelLevelData,
+                                               lineData,
+                                               this->levelMin,
+                                               this->levelMax,
+                                               rowsPerFrame);
+            }
             pendingTextureLine = true;
         }
 
@@ -595,6 +761,74 @@ void MyWaterfallWidget::setRenderBackend(RenderBackend backend) {
 MyWaterfallWidget::RenderBackend MyWaterfallWidget::renderBackend() const {
     QMutexLocker locker(&mutex);
     return activeRenderBackend;
+}
+
+void MyWaterfallWidget::setDisplayMode(DisplayMode mode) {
+    {
+        QMutexLocker locker(&mutex);
+        activeDisplayMode = mode;
+        waterfall3DRenderer->endFrequencySlice();
+        waterfall3DRenderer->endSpectrumSlice();
+        frequencySliceMouseActive = false;
+        spectrumFrameSliceMouseActive = false;
+    }
+    update();
+}
+
+MyWaterfallWidget::DisplayMode MyWaterfallWidget::displayMode() const {
+    QMutexLocker locker(&mutex);
+    return activeDisplayMode;
+}
+
+void MyWaterfallWidget::set3DResolutionDivisor(int divisor) {
+    {
+        QMutexLocker locker(&mutex);
+        waterfall3DRenderer->setResolutionDivisor(divisor);
+    }
+    update();
+}
+
+void MyWaterfallWidget::set3DHistoryRows(int rows) {
+    {
+        QMutexLocker locker(&mutex);
+        waterfall3DRenderer->setHistoryCapacity(rows);
+    }
+    update();
+}
+
+void MyWaterfallWidget::set3DSliceScrollStep(int points) {
+    QMutexLocker locker(&mutex);
+    waterfall3DRenderer->setSliceScrollStep(points);
+}
+
+void MyWaterfallWidget::set3DSliceWidth(int points) {
+    QMutexLocker locker(&mutex);
+    waterfall3DRenderer->setSliceWidth(points);
+}
+
+void MyWaterfallWidget::set3DSpectrumSliceScrollStep(int rows) {
+    QMutexLocker locker(&mutex);
+    waterfall3DRenderer->setSpectrumSliceScrollStep(rows);
+}
+
+void MyWaterfallWidget::set3DSpectrumSliceWidth(int rows) {
+    QMutexLocker locker(&mutex);
+    waterfall3DRenderer->setSpectrumSliceWidth(rows);
+}
+
+void MyWaterfallWidget::set3DSpectrumSliceCapture(bool enabled) {
+    QMutexLocker locker(&mutex);
+    waterfall3DRenderer->setSpectrumSliceCapture(enabled);
+}
+
+void MyWaterfallWidget::set3DSpectrumSliceCaptureFixed(bool enabled) {
+    QMutexLocker locker(&mutex);
+    waterfall3DRenderer->setSpectrumSliceCaptureFixed(enabled);
+}
+
+void MyWaterfallWidget::set3DModifierFreeSliceInput(bool enabled) {
+    QMutexLocker locker(&mutex);
+    modifierFreeSliceInput = enabled;
 }
 
 bool MyWaterfallWidget::ensureGpuWaterfallProgram() {
@@ -679,6 +913,62 @@ bool MyWaterfallWidget::drawGpuPreparedWaterfall(float vStart) {
     return true;
 }
 
+void MyWaterfallWidget::drawMiniWaterfallOverlay(float vStart) {
+    if (waterfallTexture == 0 || width() <= 0 || height() <= 0) {
+        return;
+    }
+
+    const float margin = 12.0f;
+    const float overlayWidth = std::clamp(width() * 0.34f, 220.0f, 520.0f);
+    const float overlayHeight = std::clamp(height() * 0.30f, 90.0f, 260.0f);
+    const float left = static_cast<float>(width()) - overlayWidth - margin;
+    const float right = static_cast<float>(width()) - margin;
+    const float bottom = margin;
+    const float top = margin + overlayHeight;
+    const float border = 3.0f;
+
+    glViewport(0, 0, width(), height());
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glOrtho(0.0, width(), 0.0, height(), -1.0, 1.0);
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+    glDisable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    glDisable(GL_TEXTURE_2D);
+    glColor4f(0.02f, 0.025f, 0.035f, 0.88f);
+    glBegin(GL_QUADS);
+    glVertex2f(left - border, bottom - border);
+    glVertex2f(right + border, bottom - border);
+    glVertex2f(right + border, top + border);
+    glVertex2f(left - border, top + border);
+    glEnd();
+
+    glColor4f(0.72f, 0.76f, 0.82f, 0.85f);
+    glLineWidth(1.0f);
+    glBegin(GL_LINE_LOOP);
+    glVertex2f(left - border, bottom - border);
+    glVertex2f(right + border, bottom - border);
+    glVertex2f(right + border, top + border);
+    glVertex2f(left - border, top + border);
+    glEnd();
+
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, waterfallTexture);
+    glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+    glBegin(GL_QUADS);
+    glTexCoord2f(0.0f, vStart + 1.0f); glVertex2f(left, bottom);
+    glTexCoord2f(1.0f, vStart + 1.0f); glVertex2f(right, bottom);
+    glTexCoord2f(1.0f, vStart); glVertex2f(right, top);
+    glTexCoord2f(0.0f, vStart); glVertex2f(left, top);
+    glEnd();
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glDisable(GL_TEXTURE_2D);
+    glDisable(GL_BLEND);
+}
+
 void MyWaterfallWidget::setLevelRange(float minLevel, float maxLevel) {
     bool shouldScheduleUpdate = false;
     {
@@ -730,8 +1020,82 @@ void MyWaterfallWidget::clearData() {
         std::fill(lineData.begin(), lineData.end(), 0);
         pendingTextureLine = false;
         textureClearRequested = true;
+        waterfall3DRenderer->clear();
     }
     update();
+}
+
+void MyWaterfallWidget::uploadPendingTextureLine() {
+    ensureLineBuffer();
+    const int texWidth = std::max(1, width());
+    const int texHeight = std::max(1, height());
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    if (texWidth != textureWidth || texHeight != textureHeight) {
+        resizeWaterfallTexturePreserve(texWidth, texHeight);
+    }
+    if (!pendingTextureLine || lineData.empty()) {
+        return;
+    }
+
+    glBindTexture(GL_TEXTURE_2D, waterfallTexture);
+    const int rowsToWrite = (std::clamp)(rowsPerFrame, 1, (std::max)(1, textureHeight));
+    if (rowsToWrite <= 1) {
+        waterfallWriteRow = (waterfallWriteRow + textureHeight - 1) % textureHeight;
+        glTexSubImage2D(GL_TEXTURE_2D,
+                        0,
+                        0,
+                        waterfallWriteRow,
+                        textureWidth,
+                        1,
+                        GL_RGB,
+                        GL_UNSIGNED_BYTE,
+                        lineData.data());
+    } else {
+        const std::size_t rowBytes = static_cast<std::size_t>(textureWidth) * 3U;
+        const std::size_t uploadBytes = rowBytes * static_cast<std::size_t>(rowsToWrite);
+        if (textureUploadRows.size() != uploadBytes) {
+            textureUploadRows.resize(uploadBytes);
+        }
+        const std::size_t copyBytes = (std::min)(rowBytes, lineData.size());
+        for (int row = 0; row < rowsToWrite; ++row) {
+            auto rowBegin = textureUploadRows.begin() + static_cast<std::ptrdiff_t>(rowBytes * row);
+            std::copy(lineData.begin(),
+                      lineData.begin() + static_cast<std::ptrdiff_t>(copyBytes),
+                      rowBegin);
+            if (copyBytes < rowBytes) {
+                std::fill(rowBegin + static_cast<std::ptrdiff_t>(copyBytes),
+                          rowBegin + static_cast<std::ptrdiff_t>(rowBytes),
+                          0);
+            }
+        }
+
+        const int startRow = (waterfallWriteRow + textureHeight - rowsToWrite) % textureHeight;
+        waterfallWriteRow = startRow;
+        const int firstRunRows = (std::min)(rowsToWrite, textureHeight - startRow);
+        glTexSubImage2D(GL_TEXTURE_2D,
+                        0,
+                        0,
+                        startRow,
+                        textureWidth,
+                        firstRunRows,
+                        GL_RGB,
+                        GL_UNSIGNED_BYTE,
+                        textureUploadRows.data());
+        const int wrappedRows = rowsToWrite - firstRunRows;
+        if (wrappedRows > 0) {
+            glTexSubImage2D(GL_TEXTURE_2D,
+                            0,
+                            0,
+                            0,
+                            textureWidth,
+                            wrappedRows,
+                            GL_RGB,
+                            GL_UNSIGNED_BYTE,
+                            textureUploadRows.data() + rowBytes * static_cast<std::size_t>(firstRunRows));
+        }
+    }
+    glBindTexture(GL_TEXTURE_2D, 0);
+    pendingTextureLine = false;
 }
 
 void MyWaterfallWidget::computeLineData() {
@@ -776,6 +1140,7 @@ void MyWaterfallWidget::computeLineData() {
 
 void MyWaterfallWidget::paintGL() {
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    bool drawSegmentOverlay = true;
     {
         QMutexLocker locker(&mutex);
         updateQueued = false;
@@ -791,7 +1156,17 @@ void MyWaterfallWidget::paintGL() {
             textureClearRequested = false;
         }
 
-	    if (secondGraph == true) {
+        uploadPendingTextureLine();
+
+        if (activeDisplayMode != DisplayMode::Waterfall2D) {
+            drawSegmentOverlay = false;
+            waterfall3DRenderer->render(width(), height());
+            if (activeDisplayMode == DisplayMode::Waterfall3DWithMini) {
+                const float vStart = static_cast<float>(waterfallWriteRow) /
+                                     static_cast<float>((std::max)(1, textureHeight));
+                drawMiniWaterfallOverlay(vStart);
+            }
+        } else if (secondGraph == true) {
         if (qFuzzyCompare(xMin, xMax)) {
             return;
         }
@@ -830,73 +1205,6 @@ void MyWaterfallWidget::paintGL() {
         glBindTexture(GL_TEXTURE_2D, waterfallTexture);
         glColor3f(1.0f, 1.0f, 1.0f);
 
-        ensureLineBuffer();
-        const int texWidth = std::max(1, width());
-        const int texHeight = std::max(1, height());
-        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-        if (texWidth != textureWidth || texHeight != textureHeight) {
-            resizeWaterfallTexturePreserve(texWidth, texHeight);
-        }
-        if (pendingTextureLine && !lineData.empty()) {
-            const int rowsToWrite = (std::clamp)(rowsPerFrame, 1, (std::max)(1, textureHeight));
-            if (rowsToWrite <= 1) {
-                waterfallWriteRow = (waterfallWriteRow + textureHeight - 1) % textureHeight;
-                glTexSubImage2D(GL_TEXTURE_2D,
-                                0,
-                                0,
-                                waterfallWriteRow,
-                                textureWidth,
-                                1,
-                                GL_RGB,
-                                GL_UNSIGNED_BYTE,
-                                lineData.data());
-            } else {
-                const std::size_t rowBytes = static_cast<std::size_t>(textureWidth) * 3U;
-                const std::size_t uploadBytes = rowBytes * static_cast<std::size_t>(rowsToWrite);
-                if (textureUploadRows.size() != uploadBytes) {
-                    textureUploadRows.resize(uploadBytes);
-                }
-                const std::size_t copyBytes = (std::min)(rowBytes, lineData.size());
-                for (int row = 0; row < rowsToWrite; ++row) {
-                    auto rowBegin = textureUploadRows.begin() + static_cast<std::ptrdiff_t>(rowBytes * row);
-                    std::copy(lineData.begin(),
-                              lineData.begin() + static_cast<std::ptrdiff_t>(copyBytes),
-                              rowBegin);
-                    if (copyBytes < rowBytes) {
-                        std::fill(rowBegin + static_cast<std::ptrdiff_t>(copyBytes),
-                                  rowBegin + static_cast<std::ptrdiff_t>(rowBytes),
-                                  0);
-                    }
-                }
-
-                const int startRow =
-                    (waterfallWriteRow + textureHeight - rowsToWrite) % textureHeight;
-                waterfallWriteRow = startRow;
-                const int firstRunRows = (std::min)(rowsToWrite, textureHeight - startRow);
-                glTexSubImage2D(GL_TEXTURE_2D,
-                                0,
-                                0,
-                                startRow,
-                                textureWidth,
-                                firstRunRows,
-                                GL_RGB,
-                                GL_UNSIGNED_BYTE,
-                                textureUploadRows.data());
-                const int wrappedRows = rowsToWrite - firstRunRows;
-                if (wrappedRows > 0) {
-                    glTexSubImage2D(GL_TEXTURE_2D,
-                                    0,
-                                    0,
-                                    0,
-                                    textureWidth,
-                                    wrappedRows,
-                                    GL_RGB,
-                                    GL_UNSIGNED_BYTE,
-                                    textureUploadRows.data() + rowBytes * static_cast<std::size_t>(firstRunRows));
-                }
-            }
-            pendingTextureLine = false;
-        }
         const float vStart = static_cast<float>(waterfallWriteRow) / static_cast<float>(textureHeight);
         const bool useGpuPrepared = activeRenderBackend == RenderBackend::GpuPrepared;
         if (!useGpuPrepared || !drawGpuPreparedWaterfall(vStart)) {
@@ -910,8 +1218,10 @@ void MyWaterfallWidget::paintGL() {
             glBindTexture(GL_TEXTURE_2D, 0);
 	    }
     }
-    QPainter painter(this);
-    drawScanSegments(painter);
+    if (drawSegmentOverlay) {
+        QPainter painter(this);
+        drawScanSegments(painter);
+    }
 }
 
 void MyWaterfallWidget::drawScanSegments(QPainter &painter) const {

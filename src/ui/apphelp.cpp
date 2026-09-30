@@ -38,6 +38,22 @@ FobosAPP - SDR-програма для Fobos SDR, Fobos Agile, RTL-SDR, rtl_tcp 
 - Band markers показують діапазони: загальні радіодіапазони, аматорські діапазони або компактний шар.
 - Spur suppression/Spur calibration допомагає позначати і приглушувати стабільні внутрішні спури.
 
+3D-водоспад
+- У розділі 3D waterfall можна обрати звичайний 2D-водоспад, 3D або 3D з мініатюрою 2D-водоспаду.
+- Роздільна здатність 1/1...1/64 визначає кількість частотних точок у 3D. Для дробних значень сусідні точки усереднюються, а не просто відкидаються.
+- Пам'ять задає кількість рядків історії у 3D-моделі. Великі значення потребують більше GPU-пам'яті й часу на відмальовування.
+- Ctrl + колесо наближає або віддаляє 3D-камеру. Ctrl + перетягування лівою кнопкою обертає камеру, Ctrl + правою кнопкою рухає її паралельно площині водоспаду.
+- Alt або Shift + утримання лівої кнопки показує частотний зріз. Колесо при утриманні пересуває зріз; його крок і ширина до 4096 точок задаються у налаштуваннях 3D. У Linux ліва Alt може перехоплюватися робочим столом: використовуйте праву Alt або Ctrl+Alt зліва.
+- Alt або Shift + утримання правої кнопки показує часовий зріз спектра. Колесо пересуває його за заданим кроком, а параметр рядків визначає ширину зрізу. Для Linux так само надійні права Alt або Ctrl+Alt.
+- Якщо VNC не передає Alt/Shift, увімкніть VNC-керування зрізами: тоді ліва/права кнопка працюють зі зрізами без клавіатури. Вимкніть галочку, щоб повернути звичайне налаштування частоти, перетягування та контекстне меню.
+- Без галочки Захват часовий зріз залишається на обраному місці, а дані в ньому оновлюються. Захват веде вибраний епізод разом із рухом історії. Зафіксувати захват додатково заморожує копію вибраного епізоду для розглядання.
+- Ці самі 3D-режими, камера і зрізи доступні у вікні перегляду spectrum-frame записів.
+
+Калібрування
+- Frequency calibration offset у загальних налаштуваннях компенсує сталу похибку частоти приймача і додається до апаратного налаштування.
+- Amplitude calibration offset коригує показані рівні спектра та вимірювання у dB; на IQ і аудіодемодуляцію він не впливає.
+- Reset calibration offsets повертає обидва значення до нуля.
+
 Аудіо і демодуляція
 - Audio вмикає локальне прослуховування.
 - Modulation обирає AM, FM/NFM/WFM, SSB, CW, DMR та інші режими.
@@ -84,6 +100,8 @@ GNSS, GPS і QTH
 - Record пише Audio WAV або Channel IQ WAV залежно від вибраного режиму.
 - Hold F9/F9 утримання - швидкий momentary recording.
 - Playback дозволяє програти сумісні записи, коли приймач зупинений.
+- Spectrum-frame recorder постійно тримає ввімкнений передбуфер, а після команди захоплення зберігає подію до ручної зупинки. Режими Channel IQ і Full IQ додатково дозволяють демодулювати запис у вікні реплею.
+- У spectrum replay маркер часу синхронно керує спектром, водоспадом та аудіо; Play запускає їх із поточної позиції. Full IQ дозволяє рухати частоту прослуховування, Channel IQ лишається прив'язаним до записаного каналу.
 - Реальні IQ-записи можуть бути великими; перед релізом не додавайте особисті записи, логи і тестові ефіри у репозиторій.
 
 Мережа
@@ -138,6 +156,22 @@ Spectrum and waterfall
 - Band markers show general radio bands, amateur bands, or a compact combined layer.
 - Spur suppression and calibration can mark and reduce stable internal spurs.
 
+3D waterfall
+- The 3D waterfall section selects the normal 2D waterfall, 3D, or 3D with a small 2D waterfall overlay.
+- Resolution 1/1...1/64 controls the number of frequency points in 3D. Fractional modes average neighboring points instead of merely discarding them.
+- Memory controls the number of history rows in the 3D model. Larger values require more GPU memory and rendering time.
+- Ctrl + wheel moves the 3D camera closer or farther. Ctrl + left-drag orbits the camera; Ctrl + right-drag pans it parallel to the waterfall plane.
+- Alt or Shift + hold left button displays a frequency slice. The wheel moves the slice while held; step and width up to 4096 points are configured in the 3D section. On Linux, the desktop may reserve left Alt: use right Alt or left Ctrl+Alt.
+- Alt or Shift + hold right button displays a time/spectrum-row slice. The wheel moves it by the configured step and the row setting controls its width. Right Alt or left Ctrl+Alt are the reliable Linux variants.
+- If VNC does not forward Alt/Shift, enable VNC slice control: left/right buttons then operate slices without a keyboard modifier. Disable it to restore normal tuning, panning and the context menu.
+- With Capture disabled, the time slice stays at the selected place while its data changes. Capture follows the selected episode through the scrolling history. Fix capture additionally freezes a copy of that episode for inspection.
+- The same 3D modes, camera and slice tools are available in the spectrum-frame replay window.
+
+Calibration
+- Frequency calibration offset in Settings compensates a stable receiver frequency error and is added to hardware tuning.
+- Amplitude calibration offset corrects displayed spectrum and measurement levels in dB; it does not change IQ or audio demodulation.
+- Reset calibration offsets returns both values to zero.
+
 Audio and demodulation
 - Audio enables local playback.
 - Modulation selects AM, FM/NFM/WFM, SSB, CW, DMR and other modes.
@@ -184,6 +218,8 @@ Recording and playback
 - Record writes Audio WAV or Channel IQ WAV depending on selected recording mode.
 - Hold F9 is quick momentary recording.
 - Playback can play compatible recordings while the receiver is stopped.
+- Spectrum-frame recorder continuously keeps an enabled pre-trigger buffer, then saves the event until capture is stopped. Channel IQ and Full IQ modes also support demodulation inside the replay window.
+- In spectrum replay, the time marker controls spectrum, waterfall and audio together; Play starts all of them at the current position. Full IQ permits moving the listening frequency, while Channel IQ stays tied to its recorded channel.
 - Real IQ recordings can be huge; avoid adding personal recordings, logs and over-the-air tests to repository releases.
 
 Network

@@ -755,9 +755,179 @@ YourClassName::YourClassName(QWidget *parent)
     waterfallWidget->setMinimumSize(760, 300);
     waterfallWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     waterfallWidget->setRowsPerFrame(waterfallRowsPerFrame);
+    waterfallWidget->set3DHistoryRows(waterfall3DHistoryRows);
+    waterfallWidget->set3DSpectrumSliceScrollStep(waterfall3DSpectrumSliceScrollStep);
+    waterfallWidget->set3DSpectrumSliceWidth(waterfall3DSpectrumSliceRows);
+    waterfallWidget->set3DSpectrumSliceCapture(waterfall3DSpectrumSliceCapture);
+    waterfallWidget->set3DSpectrumSliceCaptureFixed(waterfall3DSpectrumSliceCaptureFixed);
+    waterfallWidget->set3DModifierFreeSliceInput(waterfall3DVncSliceInput);
     waterfallWidget->setRenderBackend(experimentalGpuWaterfall
                                           ? MyWaterfallWidget::RenderBackend::GpuPrepared
                                           : MyWaterfallWidget::RenderBackend::CpuTexture);
+
+    waterfallDisplayModeLabel = new QLabel(QStringLiteral("Waterfall:"), this);
+    markTranslatable(waterfallDisplayModeLabel,
+                     QStringLiteral("waterfall_display_mode"),
+                     QStringLiteral("Waterfall:"));
+    waterfallDisplayModeCombo = new QComboBox(this);
+    waterfallDisplayModeCombo->addItem(
+        uiText(QStringLiteral("waterfall_display_2d"), QStringLiteral("2D waterfall")),
+        static_cast<int>(MyWaterfallWidget::DisplayMode::Waterfall2D));
+    waterfallDisplayModeCombo->addItem(
+        uiText(QStringLiteral("waterfall_display_3d"), QStringLiteral("3D waterfall")),
+        static_cast<int>(MyWaterfallWidget::DisplayMode::Waterfall3D));
+    waterfallDisplayModeCombo->addItem(
+        uiText(QStringLiteral("waterfall_display_3d_mini"), QStringLiteral("3D + mini waterfall")),
+        static_cast<int>(MyWaterfallWidget::DisplayMode::Waterfall3DWithMini));
+    waterfallDisplayModeCombo->setToolTip(uiText(
+        QStringLiteral("waterfall_display_mode_tooltip"),
+        QStringLiteral("Choose the main waterfall visualization mode.")));
+    waterfallDisplayModeCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    waterfallDisplayModeCombo->setMaximumWidth(260);
+    QHBoxLayout *waterfallDisplayModeLayout = new QHBoxLayout();
+    waterfallDisplayModeLayout->setContentsMargins(0, 0, 0, 0);
+    waterfallDisplayModeLayout->addWidget(waterfallDisplayModeLabel);
+    waterfallDisplayModeLayout->addWidget(waterfallDisplayModeCombo);
+    waterfallDisplayModeLayout->addStretch(1);
+
+    waterfall3DResolutionLabel = new QLabel(QStringLiteral("3D resolution:"), this);
+    markTranslatable(waterfall3DResolutionLabel,
+                     QStringLiteral("waterfall_3d_resolution"),
+                     QStringLiteral("3D resolution:"));
+    waterfall3DResolutionCombo = new QComboBox(this);
+    for (const int divisor : {1, 2, 4, 8, 16, 32, 64}) {
+        waterfall3DResolutionCombo->addItem(QStringLiteral("1/%1").arg(divisor), divisor);
+    }
+    waterfall3DResolutionCombo->setCurrentIndex(waterfall3DResolutionCombo->findData(
+        waterfall3DResolutionDivisor));
+    waterfall3DResolutionCombo->setToolTip(uiText(
+        QStringLiteral("waterfall_3d_resolution_tooltip"),
+        QStringLiteral("3D frequency columns as a fraction of the visible 2D waterfall width.")));
+    waterfall3DResolutionCombo->setMaximumWidth(100);
+    QHBoxLayout *waterfall3DResolutionLayout = new QHBoxLayout();
+    waterfall3DResolutionLayout->setContentsMargins(0, 0, 0, 0);
+    waterfall3DResolutionLayout->addWidget(waterfall3DResolutionLabel);
+    waterfall3DResolutionLayout->addWidget(waterfall3DResolutionCombo);
+    waterfall3DResolutionLayout->addStretch(1);
+
+    waterfall3DHistoryRowsLabel = new QLabel(QStringLiteral("3D memory:"), this);
+    markTranslatable(waterfall3DHistoryRowsLabel,
+                     QStringLiteral("waterfall_3d_history_rows"),
+                     QStringLiteral("3D memory:"));
+    waterfall3DHistoryRowsSpin = new QSpinBox(this);
+    waterfall3DHistoryRowsSpin->setRange(16, 2048);
+    waterfall3DHistoryRowsSpin->setSingleStep(16);
+    waterfall3DHistoryRowsSpin->setValue(waterfall3DHistoryRows);
+    waterfall3DHistoryRowsSpin->setSuffix(uiText(QStringLiteral("waterfall_3d_rows_suffix"),
+                                                 QStringLiteral(" rows")));
+    waterfall3DHistoryRowsSpin->setToolTip(uiText(
+        QStringLiteral("waterfall_3d_history_rows_tooltip"),
+        QStringLiteral("Number of recent waterfall rows retained in the 3D volume. Larger values use more CPU and memory.")));
+    QHBoxLayout *waterfall3DHistoryRowsLayout = new QHBoxLayout();
+    waterfall3DHistoryRowsLayout->setContentsMargins(0, 0, 0, 0);
+    waterfall3DHistoryRowsLayout->addWidget(waterfall3DHistoryRowsLabel);
+    waterfall3DHistoryRowsLayout->addWidget(waterfall3DHistoryRowsSpin);
+    waterfall3DHistoryRowsLayout->addStretch(1);
+
+    waterfall3DSliceStepLabel = new QLabel(QStringLiteral("Frequency slice step:"), this);
+    markTranslatable(waterfall3DSliceStepLabel,
+                     QStringLiteral("waterfall_3d_slice_step"),
+                     QStringLiteral("Frequency slice step:"));
+    waterfall3DSliceStepSpin = new QSpinBox(this);
+    waterfall3DSliceStepSpin->setRange(1, 256);
+    waterfall3DSliceStepSpin->setValue(waterfall3DSliceScrollStep);
+    waterfall3DSliceStepSpin->setSuffix(QStringLiteral(" pt"));
+    waterfall3DSliceStepSpin->setToolTip(uiText(
+        QStringLiteral("waterfall_3d_slice_step_tooltip"),
+        QStringLiteral("Frequency points moved by each wheel step while an Alt slice is held.")));
+    QHBoxLayout *waterfall3DSliceStepLayout = new QHBoxLayout();
+    waterfall3DSliceStepLayout->setContentsMargins(0, 0, 0, 0);
+    waterfall3DSliceStepLayout->addWidget(waterfall3DSliceStepLabel);
+    waterfall3DSliceStepLayout->addWidget(waterfall3DSliceStepSpin);
+    waterfall3DSliceStepLayout->addStretch(1);
+
+    waterfall3DSliceWidthLabel = new QLabel(QStringLiteral("Frequency slice width:"), this);
+    markTranslatable(waterfall3DSliceWidthLabel,
+                     QStringLiteral("waterfall_3d_slice_width"),
+                     QStringLiteral("Frequency slice width:"));
+    waterfall3DSliceWidthSpin = new QSpinBox(this);
+    waterfall3DSliceWidthSpin->setRange(1, 4096);
+    waterfall3DSliceWidthSpin->setValue(waterfall3DSliceWidth);
+    waterfall3DSliceWidthSpin->setSuffix(QStringLiteral(" pt"));
+    waterfall3DSliceWidthSpin->setToolTip(uiText(
+        QStringLiteral("waterfall_3d_slice_width_tooltip"),
+        QStringLiteral("Number of adjacent frequency points displayed in the held Alt slice; 1 shows one line.")));
+    QHBoxLayout *waterfall3DSliceWidthLayout = new QHBoxLayout();
+    waterfall3DSliceWidthLayout->setContentsMargins(0, 0, 0, 0);
+    waterfall3DSliceWidthLayout->addWidget(waterfall3DSliceWidthLabel);
+    waterfall3DSliceWidthLayout->addWidget(waterfall3DSliceWidthSpin);
+    waterfall3DSliceWidthLayout->addStretch(1);
+
+    waterfall3DSpectrumSliceStepLabel = new QLabel(QStringLiteral("Spectrum slice step:"), this);
+    markTranslatable(waterfall3DSpectrumSliceStepLabel,
+                     QStringLiteral("waterfall_3d_spectrum_slice_step"),
+                     QStringLiteral("Spectrum slice step:"));
+    waterfall3DSpectrumSliceStepSpin = new QSpinBox(this);
+    waterfall3DSpectrumSliceStepSpin->setRange(1, 2048);
+    waterfall3DSpectrumSliceStepSpin->setValue(waterfall3DSpectrumSliceScrollStep);
+    waterfall3DSpectrumSliceStepSpin->setSuffix(
+        uiText(QStringLiteral("waterfall_3d_rows_suffix"), QStringLiteral(" rows")));
+    waterfall3DSpectrumSliceStepSpin->setToolTip(uiText(
+        QStringLiteral("waterfall_3d_spectrum_slice_step_tooltip"),
+        QStringLiteral("Rows moved by each wheel step while an Alt + right-button spectrum slice is held.")));
+    QHBoxLayout *waterfall3DSpectrumSliceStepLayout = new QHBoxLayout();
+    waterfall3DSpectrumSliceStepLayout->setContentsMargins(0, 0, 0, 0);
+    waterfall3DSpectrumSliceStepLayout->addWidget(waterfall3DSpectrumSliceStepLabel);
+    waterfall3DSpectrumSliceStepLayout->addWidget(waterfall3DSpectrumSliceStepSpin);
+    waterfall3DSpectrumSliceStepLayout->addStretch(1);
+
+    waterfall3DSpectrumSliceRowsLabel = new QLabel(QStringLiteral("Spectrum slice rows:"), this);
+    markTranslatable(waterfall3DSpectrumSliceRowsLabel,
+                     QStringLiteral("waterfall_3d_spectrum_slice_rows"),
+                     QStringLiteral("Spectrum slice rows:"));
+    waterfall3DSpectrumSliceRowsSpin = new QSpinBox(this);
+    waterfall3DSpectrumSliceRowsSpin->setRange(1, 2048);
+    waterfall3DSpectrumSliceRowsSpin->setValue(waterfall3DSpectrumSliceRows);
+    waterfall3DSpectrumSliceRowsSpin->setSuffix(
+        uiText(QStringLiteral("waterfall_3d_rows_suffix"), QStringLiteral(" rows")));
+    waterfall3DSpectrumSliceRowsSpin->setToolTip(uiText(
+        QStringLiteral("waterfall_3d_spectrum_slice_rows_tooltip"),
+        QStringLiteral("Number of adjacent time rows displayed by the Alt + right-button spectrum slice.")));
+    waterfall3DSpectrumSliceCaptureCheckbox = new QCheckBox(
+        uiText(QStringLiteral("waterfall_3d_spectrum_slice_capture"), QStringLiteral("Capture")),
+        this);
+    waterfall3DSpectrumSliceCaptureCheckbox->setChecked(waterfall3DSpectrumSliceCapture);
+    waterfall3DSpectrumSliceCaptureCheckbox->setToolTip(uiText(
+        QStringLiteral("waterfall_3d_spectrum_slice_capture_tooltip"),
+        QStringLiteral("Follow the selected data rows as they move through the rolling 3D history. Off keeps the slice at a fixed model position and shows the current rows there.")));
+    waterfall3DSpectrumSliceCaptureFixedCheckbox = new QCheckBox(
+        uiText(QStringLiteral("waterfall_3d_spectrum_slice_capture_fixed"),
+               QStringLiteral("Fix capture")),
+        this);
+    waterfall3DSpectrumSliceCaptureFixedCheckbox->setChecked(waterfall3DSpectrumSliceCaptureFixed);
+    waterfall3DSpectrumSliceCaptureFixedCheckbox->setEnabled(waterfall3DSpectrumSliceCapture);
+    waterfall3DSpectrumSliceCaptureFixedCheckbox->setToolTip(uiText(
+        QStringLiteral("waterfall_3d_spectrum_slice_capture_fixed_tooltip"),
+        QStringLiteral("Freeze a copy of the captured rows at the picked model position until those rows expire from the rolling history.")));
+    waterfall3DVncSliceInputCheckbox = new QCheckBox(
+        uiText(QStringLiteral("waterfall_3d_vnc_slice_input"),
+               QStringLiteral("VNC slice control")),
+        this);
+    waterfall3DVncSliceInputCheckbox->setChecked(waterfall3DVncSliceInput);
+    waterfall3DVncSliceInputCheckbox->setToolTip(uiText(
+        QStringLiteral("waterfall_3d_vnc_slice_input_tooltip"),
+        QStringLiteral("Use left/right mouse buttons for frequency/time slices without keyboard modifiers. Disable it to restore normal tuning, panning and context-menu actions.")));
+    QHBoxLayout *waterfall3DSpectrumSliceRowsLayout = new QHBoxLayout();
+    waterfall3DSpectrumSliceRowsLayout->setContentsMargins(0, 0, 0, 0);
+    waterfall3DSpectrumSliceRowsLayout->addWidget(waterfall3DSpectrumSliceRowsLabel);
+    waterfall3DSpectrumSliceRowsLayout->addWidget(waterfall3DSpectrumSliceRowsSpin);
+    waterfall3DSpectrumSliceRowsLayout->addWidget(waterfall3DSpectrumSliceCaptureCheckbox);
+    waterfall3DSpectrumSliceRowsLayout->addWidget(waterfall3DSpectrumSliceCaptureFixedCheckbox);
+    waterfall3DSpectrumSliceRowsLayout->addStretch(1);
+    QHBoxLayout *waterfall3DVncSliceInputLayout = new QHBoxLayout();
+    waterfall3DVncSliceInputLayout->setContentsMargins(0, 0, 0, 0);
+    waterfall3DVncSliceInputLayout->addWidget(waterfall3DVncSliceInputCheckbox);
+    waterfall3DVncSliceInputLayout->addStretch(1);
     
     refreshButton = new QPushButton("Refresh USB Devices", this);
     markTranslatable(refreshButton, QStringLiteral("refresh_usb"), QStringLiteral("Refresh USB Devices"));
@@ -2406,6 +2576,19 @@ YourClassName::YourClassName(QWidget *parent)
     recordingSection.contentLayout->addWidget(playbackFileCombo);
     recordingSection.contentLayout->addLayout(playbackButtonLayout);
 
+    CollapsibleSection waterfall3DSection = createCollapsibleSection(
+        QStringLiteral("waterfall_3d_section"),
+        QStringLiteral("Waterfall visualization"),
+        false);
+    waterfall3DSection.contentLayout->addLayout(waterfallDisplayModeLayout);
+    waterfall3DSection.contentLayout->addLayout(waterfall3DResolutionLayout);
+    waterfall3DSection.contentLayout->addLayout(waterfall3DHistoryRowsLayout);
+    waterfall3DSection.contentLayout->addLayout(waterfall3DSliceStepLayout);
+    waterfall3DSection.contentLayout->addLayout(waterfall3DSliceWidthLayout);
+    waterfall3DSection.contentLayout->addLayout(waterfall3DSpectrumSliceStepLayout);
+    waterfall3DSection.contentLayout->addLayout(waterfall3DSpectrumSliceRowsLayout);
+    waterfall3DSection.contentLayout->addLayout(waterfall3DVncSliceInputLayout);
+
     layout->addWidget(deviceSection.widget);
     layout->addWidget(receiverSection.widget);
     layout->addWidget(hfCancelSection.widget);
@@ -2419,6 +2602,7 @@ YourClassName::YourClassName(QWidget *parent)
     layout->addWidget(gpioSection.widget);
     layout->addWidget(audioSection.widget);
     layout->addWidget(recordingSection.widget);
+    layout->addWidget(waterfall3DSection.widget);
     layout->addStretch(1);
 
     controlsWidget->setLayout(layout);
@@ -4213,6 +4397,112 @@ YourClassName::YourClassName(QWidget *parent)
     connect(waterfallWidget, &MyWaterfallWidget::tuneContextRequested, this, &YourClassName::showTuneContextMenu);
     connect(graphWidget, &MyGraphWidget::autoTuneRequested, this, &YourClassName::tuneSignalCenterAt);
     connect(waterfallWidget, &MyWaterfallWidget::autoTuneRequested, this, &YourClassName::tuneSignalCenterAt);
+    connect(waterfallDisplayModeCombo,
+            qOverload<int>(&QComboBox::currentIndexChanged),
+            this,
+            [this](int index) {
+                if (!waterfallDisplayModeCombo || !waterfallWidget || index < 0) {
+                    return;
+                }
+                waterfallDisplayMode = waterfallDisplayModeCombo->itemData(index).toInt();
+                waterfallWidget->setDisplayMode(
+                    static_cast<MyWaterfallWidget::DisplayMode>(waterfallDisplayMode));
+                savePersistentSettings();
+            });
+    connect(waterfall3DResolutionCombo,
+            qOverload<int>(&QComboBox::currentIndexChanged),
+            this,
+            [this](int index) {
+                if (!waterfall3DResolutionCombo || !waterfallWidget || index < 0) {
+                    return;
+                }
+                waterfall3DResolutionDivisor = waterfall3DResolutionCombo->itemData(index).toInt();
+                waterfallWidget->set3DResolutionDivisor(waterfall3DResolutionDivisor);
+                savePersistentSettings();
+            });
+    connect(waterfall3DHistoryRowsSpin,
+            qOverload<int>(&QSpinBox::valueChanged),
+            this,
+            [this](int value) {
+                waterfall3DHistoryRows = value;
+                if (waterfallWidget) {
+                    waterfallWidget->set3DHistoryRows(value);
+                }
+                savePersistentSettings();
+            });
+    connect(waterfall3DSliceStepSpin,
+            qOverload<int>(&QSpinBox::valueChanged),
+            this,
+            [this](int value) {
+                waterfall3DSliceScrollStep = value;
+                if (waterfallWidget) {
+                    waterfallWidget->set3DSliceScrollStep(value);
+                }
+                savePersistentSettings();
+            });
+    connect(waterfall3DSliceWidthSpin,
+            qOverload<int>(&QSpinBox::valueChanged),
+            this,
+            [this](int value) {
+                waterfall3DSliceWidth = value;
+                if (waterfallWidget) {
+                    waterfallWidget->set3DSliceWidth(value);
+                }
+                savePersistentSettings();
+            });
+    connect(waterfall3DSpectrumSliceStepSpin,
+            qOverload<int>(&QSpinBox::valueChanged),
+            this,
+            [this](int value) {
+                waterfall3DSpectrumSliceScrollStep = value;
+                if (waterfallWidget) {
+                    waterfallWidget->set3DSpectrumSliceScrollStep(value);
+                }
+                savePersistentSettings();
+            });
+    connect(waterfall3DSpectrumSliceRowsSpin,
+            qOverload<int>(&QSpinBox::valueChanged),
+            this,
+            [this](int value) {
+                waterfall3DSpectrumSliceRows = value;
+                if (waterfallWidget) {
+                    waterfallWidget->set3DSpectrumSliceWidth(value);
+                }
+                savePersistentSettings();
+            });
+    connect(waterfall3DSpectrumSliceCaptureCheckbox,
+            &QCheckBox::toggled,
+            this,
+            [this](bool checked) {
+                waterfall3DSpectrumSliceCapture = checked;
+                if (waterfallWidget) {
+                    waterfallWidget->set3DSpectrumSliceCapture(checked);
+                }
+                if (waterfall3DSpectrumSliceCaptureFixedCheckbox) {
+                    waterfall3DSpectrumSliceCaptureFixedCheckbox->setEnabled(checked);
+                }
+                savePersistentSettings();
+            });
+    connect(waterfall3DSpectrumSliceCaptureFixedCheckbox,
+            &QCheckBox::toggled,
+            this,
+            [this](bool checked) {
+                waterfall3DSpectrumSliceCaptureFixed = checked;
+                if (waterfallWidget) {
+                    waterfallWidget->set3DSpectrumSliceCaptureFixed(checked);
+                }
+                savePersistentSettings();
+            });
+    connect(waterfall3DVncSliceInputCheckbox,
+            &QCheckBox::toggled,
+            this,
+            [this](bool checked) {
+                waterfall3DVncSliceInput = checked;
+                if (waterfallWidget) {
+                    waterfallWidget->set3DModifierFreeSliceInput(checked);
+                }
+                savePersistentSettings();
+            });
     onVgaGainChanged(3);
     onLnaGainChanged(1);
     populateSampleRates();
@@ -4494,6 +4784,71 @@ void YourClassName::closeEvent(QCloseEvent *event) {
     QMainWindow::closeEvent(event);
 }
 
+double YourClassName::calibratedHardwareFrequency(double logicalFrequencyHz) const {
+    if (!std::isfinite(logicalFrequencyHz)) {
+        return logicalFrequencyHz;
+    }
+    const double offsetHz = std::isfinite(frequencyCalibrationOffsetHz)
+                                ? frequencyCalibrationOffsetHz
+                                : 0.0;
+    return logicalFrequencyHz + offsetHz;
+}
+
+int YourClassName::setCalibratedActiveFrequencySafely(double logicalFrequencyHz,
+                                                       double *logicalActualFrequencyHz) {
+    double hardwareActualFrequencyHz = calibratedHardwareFrequency(logicalFrequencyHz);
+    const int result = setActiveFrequencySafely(calibratedHardwareFrequency(logicalFrequencyHz),
+                                                &hardwareActualFrequencyHz);
+    if (logicalActualFrequencyHz) {
+        *logicalActualFrequencyHz = result == FOBOS_ERR_OK
+                                        ? hardwareActualFrequencyHz - frequencyCalibrationOffsetHz
+                                        : logicalFrequencyHz;
+    }
+    return result;
+}
+
+void YourClassName::applyReceiverCalibrationLive() {
+    if (processor) {
+        processor->setFrequencyCalibrationOffset(frequencyCalibrationOffsetHz);
+    }
+    if (pendingSettings.inputMode != INPUT_RF || pendingSettings.centerFrequency <= 0.0) {
+        return;
+    }
+
+    bool applied = false;
+    double logicalActualFrequencyHz = pendingSettings.centerFrequency;
+    if (isExternalReceiverBackendSelected()) {
+        applied = processor && processor->isRunning() &&
+                  processor->retuneCenterFrequency(pendingSettings.centerFrequency);
+    } else if (hasActiveFobosDevice()) {
+        if (agileScanRunning) {
+            applied = applyAgileScanSettings(false);
+        } else {
+            applied = setCalibratedActiveFrequencySafely(pendingSettings.centerFrequency,
+                                                         &logicalActualFrequencyHz) == FOBOS_ERR_OK;
+        }
+    }
+
+    if (applied) {
+        const uint64_t epoch = processor ? processor->beginIqRetuneBarrier() : 0;
+        clearLiveSpectrumSnapshot(false, epoch);
+        pendingSettings.actualFrequency = logicalActualFrequencyHz;
+        actualFrequency = logicalActualFrequencyHz;
+        if (hardwareSettingsApplied) {
+            appliedHardwareSettings.actualFrequency = logicalActualFrequencyHz;
+        }
+        publishSettingsToGlobals();
+        liveRetuneSettleDurationMs = LIVE_RETUNE_SETTLE_MS;
+        liveRetuneSettleTimer.start();
+    }
+    qDebug() << "[Calibration] receiver offsets applied"
+             << "frequencyHz" << frequencyCalibrationOffsetHz
+             << "amplitudeDb" << amplitudeCalibrationOffsetDb
+             << "logicalCenter" << pendingSettings.centerFrequency
+             << "hardwareCenter" << calibratedHardwareFrequency(pendingSettings.centerFrequency)
+             << "liveRetuned" << applied;
+}
+
 static void logIqBufferRetuneState(const char *stage,
                                    const QString &reason,
                                    std::uint64_t retuneEpoch,
@@ -4683,7 +5038,8 @@ bool YourClassName::restartStreamForHardwareChange() {
                                                                  !standardScanEnabled &&
                                                                  activeFobosApiKind == FobosApiKind::Agile
                                                              ? activeAgileScanFrequencies
-                                                             : QVector<double>()));
+                                                             : QVector<double>(),
+                                                         frequencyCalibrationOffsetHz));
 
     if (activeFobosApiKind == FobosApiKind::Agile &&
         pendingSettings.inputMode == INPUT_RF &&
@@ -5385,7 +5741,7 @@ bool YourClassName::applyCenterFrequencyToHardwareIfNeeded(const RadioSettings &
                            pendingSettings.centerFrequency,
                            pendingSettings.actualFrequency);
     double tunedFrequency = pendingSettings.centerFrequency;
-    const int result = setActiveFrequencySafely(pendingSettings.centerFrequency, &tunedFrequency);
+    const int result = setCalibratedActiveFrequencySafely(pendingSettings.centerFrequency, &tunedFrequency);
     if (result == FOBOS_ERR_OK) {
         const uint64_t postRetuneIqEpoch =
             processor ? processor->beginIqRetuneBarrier() : 0;
@@ -5550,7 +5906,7 @@ bool YourClassName::applyLiveAgileCenterRetune(uint64_t generation, const QStrin
     QElapsedTimer tuneTimer;
     tuneTimer.start();
     double tunedFrequency = requestedFrequency;
-    const int tuneResult = setActiveFrequencySafely(requestedFrequency, &tunedFrequency);
+    const int tuneResult = setCalibratedActiveFrequencySafely(requestedFrequency, &tunedFrequency);
     const qint64 tuneMs = tuneTimer.elapsed();
     if (tuneResult != FOBOS_ERR_OK) {
         qDebug() << "[LiveTune]" << reason
@@ -6101,7 +6457,7 @@ bool YourClassName::applyAgileStartupFrequencyKick(const QString &reason) {
              << "reason" << reason
              << "target" << targetFrequency
              << "kick" << (targetFrequency + kickOffsetHz);
-    int result = setActiveFrequencySafely(targetFrequency + kickOffsetHz, &kickActualFrequency);
+    int result = setCalibratedActiveFrequencySafely(targetFrequency + kickOffsetHz, &kickActualFrequency);
     qDebug() << "[FobosLifecycle] Agile startup frequency kick detune end"
              << "result" << result
              << "actual" << kickActualFrequency;
@@ -6109,14 +6465,14 @@ bool YourClassName::applyAgileStartupFrequencyKick(const QString &reason) {
         double fallbackActualFrequency = targetFrequency;
         qDebug() << "[FobosLifecycle] Agile startup frequency kick detune +1Hz failed, trying -1Hz"
                  << "result" << result;
-        result = setActiveFrequencySafely(targetFrequency - kickOffsetHz, &fallbackActualFrequency);
+        result = setCalibratedActiveFrequencySafely(targetFrequency - kickOffsetHz, &fallbackActualFrequency);
         qDebug() << "[FobosLifecycle] Agile startup frequency kick fallback detune end"
                  << "result" << result
                  << "actual" << fallbackActualFrequency;
     }
 
     double finalActualFrequency = targetFrequency;
-    const int finalResult = setActiveFrequencySafely(targetFrequency, &finalActualFrequency);
+    const int finalResult = setCalibratedActiveFrequencySafely(targetFrequency, &finalActualFrequency);
     qDebug() << "[FobosLifecycle] Agile startup frequency kick restore end"
              << "result" << finalResult
              << "actual" << finalActualFrequency;
@@ -6268,7 +6624,7 @@ bool YourClassName::applyFobosSettings(bool forceFrequencyApply) {
             appliedHardwareSettings.inputMode != pendingSettings.inputMode ||
             changedDouble(appliedHardwareSettings.centerFrequency, pendingSettings.centerFrequency)) {
             qDebug() << "[FobosLifecycle] set frequency begin" << "requested" << pendingSettings.centerFrequency;
-            result = setActiveFrequencySafely(pendingSettings.centerFrequency, &actualFrequency);
+            result = setCalibratedActiveFrequencySafely(pendingSettings.centerFrequency, &actualFrequency);
             qDebug() << "[FobosLifecycle] set frequency end"
                      << "result" << result
                      << "actual" << actualFrequency;
@@ -6716,7 +7072,8 @@ void YourClassName::startFobosProcessing() {
                                                                      !standardScanEnabled &&
                                                                      activeFobosApiKind == FobosApiKind::Agile
                                                                  ? activeAgileScanFrequencies
-                                                                 : QVector<double>()));
+                                                                 : QVector<double>(),
+                                                             frequencyCalibrationOffsetHz));
     }
     if (!externalBackendSelected &&
         activeFobosApiKind == FobosApiKind::Agile &&

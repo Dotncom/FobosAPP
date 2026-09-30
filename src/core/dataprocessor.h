@@ -51,6 +51,7 @@ public:
     bool wantsAgileScanMetadata() const;
     void setSampleRateHint(double sampleRate);
     void setCenterFrequencyHint(double centerFrequency);
+    void setFrequencyCalibrationOffset(double offsetHz);
     uint64_t beginIqRetuneBarrier();
     void startRetuneRawDump(const QString &reason,
                             uint64_t epoch,
@@ -94,6 +95,7 @@ private:
     std::atomic<uint64_t> iqRetuneEpoch;
     std::atomic<double> requestedSampleRate;
     std::atomic<double> requestedCenterFrequency;
+    std::atomic<double> frequencyCalibrationOffsetHz;
     std::atomic<void*> activeDevice;
     std::atomic<FobosApiKind> activeApiKind;
     ReceiverBackendStreamKind activeStreamKind = ReceiverBackendStreamKind::FobosStandard;

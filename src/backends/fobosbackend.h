@@ -28,7 +28,8 @@ ReceiverStreamDescriptor makeFobosStreamDescriptor(void *nativeDevice,
                                                    bool publishIqSnapshot,
                                                    bool emitIqFrames,
                                                    bool agileScanEnabled,
-                                                   const QVector<double> &agileScanFrequenciesHz = QVector<double>());
+                                                   const QVector<double> &agileScanFrequenciesHz = QVector<double>(),
+                                                   double frequencyCalibrationOffsetHz = 0.0);
 
 int getFobosStandardApiInfoSafely(char *libVersion, char *driverVersion);
 int getFobosAgileApiInfoSafely(char *libVersion, char *driverVersion);

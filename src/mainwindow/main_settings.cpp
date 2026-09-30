@@ -674,6 +674,16 @@ void YourClassName::loadPersistentSettings() {
     if (spectrumUpdateIntervalMs > 0 && spectrumUpdateIntervalMs < SPECTRUM_UPDATE_MIN_MS) {
         spectrumUpdateIntervalMs = SPECTRUM_UPDATE_MIN_MS;
     }
+    frequencyCalibrationOffsetHz =
+        (std::clamp)(settings.value("calibration/frequencyOffsetHz",
+                                    frequencyCalibrationOffsetHz).toDouble(),
+                     -10000000.0,
+                     10000000.0);
+    amplitudeCalibrationOffsetDb =
+        (std::clamp)(settings.value("calibration/amplitudeOffsetDb",
+                                    amplitudeCalibrationOffsetDb).toDouble(),
+                     -200.0,
+                     200.0);
     waterfallRowsPerFrame =
         (std::clamp)(settings.value("ui/waterfallRowsPerFrame",
                                     WATERFALL_ROWS_PER_FRAME_DEFAULT).toInt(),
@@ -681,6 +691,112 @@ void YourClassName::loadPersistentSettings() {
                      WATERFALL_ROWS_PER_FRAME_MAX);
     if (waterfallWidget) {
         waterfallWidget->setRowsPerFrame(waterfallRowsPerFrame);
+    }
+    waterfallDisplayMode =
+        (std::clamp)(settings.value("ui/waterfallDisplayMode", waterfallDisplayMode).toInt(), 0, 2);
+    if (waterfallDisplayModeCombo) {
+        QSignalBlocker blocker(waterfallDisplayModeCombo);
+        const int index = waterfallDisplayModeCombo->findData(waterfallDisplayMode);
+        if (index >= 0) {
+            waterfallDisplayModeCombo->setCurrentIndex(index);
+        }
+    }
+    if (waterfallWidget) {
+        waterfallWidget->setDisplayMode(
+            static_cast<MyWaterfallWidget::DisplayMode>(waterfallDisplayMode));
+    }
+    waterfall3DResolutionDivisor =
+        settings.value("ui/waterfall3DResolutionDivisor", waterfall3DResolutionDivisor).toInt();
+    if (!QVector<int>{1, 2, 4, 8, 16, 32, 64}.contains(waterfall3DResolutionDivisor)) {
+        waterfall3DResolutionDivisor = 4;
+    }
+    if (waterfall3DResolutionCombo) {
+        QSignalBlocker blocker(waterfall3DResolutionCombo);
+        const int index = waterfall3DResolutionCombo->findData(waterfall3DResolutionDivisor);
+        if (index >= 0) {
+            waterfall3DResolutionCombo->setCurrentIndex(index);
+        }
+    }
+    if (waterfallWidget) {
+        waterfallWidget->set3DResolutionDivisor(waterfall3DResolutionDivisor);
+    }
+    waterfall3DHistoryRows =
+        (std::clamp)(settings.value("ui/waterfall3DHistoryRows", waterfall3DHistoryRows).toInt(),
+                     16,
+                     2048);
+    if (waterfall3DHistoryRowsSpin) {
+        QSignalBlocker blocker(waterfall3DHistoryRowsSpin);
+        waterfall3DHistoryRowsSpin->setValue(waterfall3DHistoryRows);
+    }
+    if (waterfallWidget) {
+        waterfallWidget->set3DHistoryRows(waterfall3DHistoryRows);
+    }
+    waterfall3DSliceScrollStep =
+        (std::clamp)(settings.value("ui/waterfall3DSliceScrollStep",
+                                    waterfall3DSliceScrollStep).toInt(),
+                     1,
+                     256);
+    waterfall3DSliceWidth =
+        (std::clamp)(settings.value("ui/waterfall3DSliceWidth",
+                                    waterfall3DSliceWidth).toInt(),
+                     1,
+                     4096);
+    waterfall3DSpectrumSliceScrollStep =
+        (std::clamp)(settings.value("ui/waterfall3DSpectrumSliceScrollStep",
+                                    waterfall3DSpectrumSliceScrollStep).toInt(),
+                     1,
+                     2048);
+    waterfall3DSpectrumSliceRows =
+        (std::clamp)(settings.value("ui/waterfall3DSpectrumSliceRows",
+                                    waterfall3DSpectrumSliceRows).toInt(),
+                     1,
+                     2048);
+    waterfall3DSpectrumSliceCapture =
+        settings.value("ui/waterfall3DSpectrumSliceCapture",
+                       waterfall3DSpectrumSliceCapture).toBool();
+    waterfall3DSpectrumSliceCaptureFixed =
+        settings.value("ui/waterfall3DSpectrumSliceCaptureFixed",
+                       waterfall3DSpectrumSliceCaptureFixed).toBool();
+    waterfall3DVncSliceInput =
+        settings.value("ui/waterfall3DVncSliceInput",
+                       waterfall3DVncSliceInput).toBool();
+    if (waterfall3DSliceStepSpin) {
+        QSignalBlocker blocker(waterfall3DSliceStepSpin);
+        waterfall3DSliceStepSpin->setValue(waterfall3DSliceScrollStep);
+    }
+    if (waterfall3DSliceWidthSpin) {
+        QSignalBlocker blocker(waterfall3DSliceWidthSpin);
+        waterfall3DSliceWidthSpin->setValue(waterfall3DSliceWidth);
+    }
+    if (waterfall3DSpectrumSliceStepSpin) {
+        QSignalBlocker blocker(waterfall3DSpectrumSliceStepSpin);
+        waterfall3DSpectrumSliceStepSpin->setValue(waterfall3DSpectrumSliceScrollStep);
+    }
+    if (waterfall3DSpectrumSliceRowsSpin) {
+        QSignalBlocker blocker(waterfall3DSpectrumSliceRowsSpin);
+        waterfall3DSpectrumSliceRowsSpin->setValue(waterfall3DSpectrumSliceRows);
+    }
+    if (waterfall3DSpectrumSliceCaptureCheckbox) {
+        QSignalBlocker blocker(waterfall3DSpectrumSliceCaptureCheckbox);
+        waterfall3DSpectrumSliceCaptureCheckbox->setChecked(waterfall3DSpectrumSliceCapture);
+    }
+    if (waterfall3DSpectrumSliceCaptureFixedCheckbox) {
+        QSignalBlocker blocker(waterfall3DSpectrumSliceCaptureFixedCheckbox);
+        waterfall3DSpectrumSliceCaptureFixedCheckbox->setChecked(waterfall3DSpectrumSliceCaptureFixed);
+        waterfall3DSpectrumSliceCaptureFixedCheckbox->setEnabled(waterfall3DSpectrumSliceCapture);
+    }
+    if (waterfall3DVncSliceInputCheckbox) {
+        QSignalBlocker blocker(waterfall3DVncSliceInputCheckbox);
+        waterfall3DVncSliceInputCheckbox->setChecked(waterfall3DVncSliceInput);
+    }
+    if (waterfallWidget) {
+        waterfallWidget->set3DSliceScrollStep(waterfall3DSliceScrollStep);
+        waterfallWidget->set3DSliceWidth(waterfall3DSliceWidth);
+        waterfallWidget->set3DSpectrumSliceScrollStep(waterfall3DSpectrumSliceScrollStep);
+        waterfallWidget->set3DSpectrumSliceWidth(waterfall3DSpectrumSliceRows);
+        waterfallWidget->set3DSpectrumSliceCapture(waterfall3DSpectrumSliceCapture);
+        waterfallWidget->set3DSpectrumSliceCaptureFixed(waterfall3DSpectrumSliceCaptureFixed);
+        waterfallWidget->set3DModifierFreeSliceInput(waterfall3DVncSliceInput);
     }
     experimentalGpuWaterfall = settings.value("ui/experimentalGpuWaterfall", experimentalGpuWaterfall).toBool();
     if (waterfallWidget) {
@@ -1310,7 +1426,19 @@ void YourClassName::savePersistentSettings() {
     settings.setValue("ui/language", uiLanguage);
     settings.setValue("ui/fineTuneControlMode", fineTuneControlMode);
     settings.setValue("ui/spectrumUpdateIntervalMs", spectrumUpdateIntervalMs);
+    settings.setValue("calibration/frequencyOffsetHz", frequencyCalibrationOffsetHz);
+    settings.setValue("calibration/amplitudeOffsetDb", amplitudeCalibrationOffsetDb);
     settings.setValue("ui/waterfallRowsPerFrame", waterfallRowsPerFrame);
+    settings.setValue("ui/waterfallDisplayMode", waterfallDisplayMode);
+    settings.setValue("ui/waterfall3DResolutionDivisor", waterfall3DResolutionDivisor);
+    settings.setValue("ui/waterfall3DHistoryRows", waterfall3DHistoryRows);
+    settings.setValue("ui/waterfall3DSliceScrollStep", waterfall3DSliceScrollStep);
+    settings.setValue("ui/waterfall3DSliceWidth", waterfall3DSliceWidth);
+    settings.setValue("ui/waterfall3DSpectrumSliceScrollStep", waterfall3DSpectrumSliceScrollStep);
+    settings.setValue("ui/waterfall3DSpectrumSliceRows", waterfall3DSpectrumSliceRows);
+    settings.setValue("ui/waterfall3DSpectrumSliceCapture", waterfall3DSpectrumSliceCapture);
+    settings.setValue("ui/waterfall3DSpectrumSliceCaptureFixed", waterfall3DSpectrumSliceCaptureFixed);
+    settings.setValue("ui/waterfall3DVncSliceInput", waterfall3DVncSliceInput);
     settings.setValue("ui/experimentalGpuWaterfall", experimentalGpuWaterfall);
     settings.setValue("ui/agileLiveRetuneIntervalMs", agileLiveRetuneCommandIntervalMs);
     settings.setValue("ui/fineTuneScaleHoldMode", fineTuneScaleHoldMode);

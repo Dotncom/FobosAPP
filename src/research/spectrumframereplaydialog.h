@@ -27,6 +27,7 @@ class QResizeEvent;
 class QScrollArea;
 class QShowEvent;
 class ScaleWidget;
+class Waterfall3DView;
 
 class SpectrumFrameReplayDialog : public QDialog {
     Q_OBJECT
@@ -52,6 +53,8 @@ private:
     };
 
     void rebuildWaterfallImage();
+    void rebuild3DWindow(bool force = false);
+    void updateReplayDisplayMode();
     void renderWaterfallPixmap();
     void updateFrameSelection(int index);
     void updateLabels();
@@ -97,6 +100,7 @@ private:
     QScrollArea *graphScroll = nullptr;
     QScrollArea *scaleScroll = nullptr;
     QScrollArea *waterfallScroll = nullptr;
+    Waterfall3DView *waterfall3DView = nullptr;
     QLabel *infoLabel = nullptr;
     QSlider *timelineSlider = nullptr;
     QPushButton *openButton = nullptr;
@@ -104,6 +108,15 @@ private:
     QCheckBox *replayAudioCheckbox = nullptr;
     QComboBox *speedCombo = nullptr;
     QComboBox *replayIqSourceCombo = nullptr;
+    QComboBox *waterfallDisplayModeCombo = nullptr;
+    QComboBox *waterfall3DResolutionCombo = nullptr;
+    QSpinBox *waterfall3DSliceStepSpin = nullptr;
+    QSpinBox *waterfall3DSliceWidthSpin = nullptr;
+    QSpinBox *waterfall3DSpectrumSliceStepSpin = nullptr;
+    QSpinBox *waterfall3DSpectrumSliceRowsSpin = nullptr;
+    QCheckBox *waterfall3DSpectrumSliceCaptureCheckbox = nullptr;
+    QCheckBox *waterfall3DSpectrumSliceCaptureFixedCheckbox = nullptr;
+    QCheckBox *waterfall3DVncSliceInputCheckbox = nullptr;
     QSlider *zoomSlider = nullptr;
     QSlider *rowHeightSlider = nullptr;
     QSlider *contrastSlider = nullptr;
@@ -130,6 +143,8 @@ private:
     int scaledWaterfallCacheWidth = 0;
     bool scaledWaterfallDirty = true;
     std::vector<float> frequencyScratch;
+    std::vector<float> replay3DLevels;
+    std::vector<unsigned char> replay3DColors;
     std::thread localIqWorkerThread;
     std::atomic<bool> localIqWorkerStop{false};
     int selectedFrame = 0;
@@ -139,6 +154,17 @@ private:
     float levelMax = -30.0f;
     int waterfallZoomPercent = 100;
     int waterfallRowHeight = 4;
+    int replayWaterfallDisplayMode = 0;
+    int replay3DResolutionDivisor = 4;
+    int replay3DSliceStep = 1;
+    int replay3DSliceWidth = 1;
+    int replay3DSpectrumSliceStep = 1;
+    int replay3DSpectrumSliceRows = 1;
+    bool replay3DSpectrumSliceCapture = false;
+    bool replay3DSpectrumSliceCaptureFixed = false;
+    bool replay3DVncSliceInput = false;
+    int replay3DWindowStart = -1;
+    int replay3DWindowEnd = -1;
     float replayContrast = 10.0f;
     float replaySensitivity = 10.0f;
     double replayListenFrequencyHz = 0.0;

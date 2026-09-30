@@ -221,6 +221,7 @@ DataProcessor::DataProcessor(QObject *parent)
       iqRetuneEpoch(1),
       requestedSampleRate(0.0),
       requestedCenterFrequency(0.0),
+      frequencyCalibrationOffsetHz(0.0),
       activeDevice(nullptr),
       activeApiKind(FobosApiKind::Standard),
       activeBackendId(QStringLiteral("fobos-standard")),
@@ -295,6 +296,9 @@ void DataProcessor::startProcessing(const ReceiverStreamDescriptor &stream) {
     const uint64_t streamEpoch = iqRetuneEpoch.fetch_add(1, std::memory_order_acq_rel) + 1;
     requestedSampleRate = stream.sampleRateHz;
     requestedCenterFrequency = stream.centerFrequencyHz;
+    frequencyCalibrationOffsetHz = std::isfinite(stream.frequencyCalibrationOffsetHz)
+                                       ? stream.frequencyCalibrationOffsetHz
+                                       : 0.0;
     requestedQueueAudioBlocks = stream.queueAudioBlocks;
     requestedPublishIqSnapshot = stream.publishIqSnapshot;
     requestedEmitIqFrames = stream.emitIqFrames;
@@ -616,7 +620,7 @@ void DataProcessor::runRtlTcpReader(const ReceiverStreamDescriptor &stream, uint
     const QString host = stream.rtlTcpHost.isEmpty() ? QStringLiteral("127.0.0.1") : stream.rtlTcpHost;
     const quint16 port = stream.rtlTcpPort == 0 ? 1234 : stream.rtlTcpPort;
     const double sampleRate = stream.sampleRateHz > 0.0 ? stream.sampleRateHz : requestedSampleRate.load();
-    double appliedCenterFrequency = stream.centerFrequencyHz;
+    double appliedCenterFrequency = stream.centerFrequencyHz + frequencyCalibrationOffsetHz.load();
     const uint32_t samplesPerBlock = (std::max)(blockSamples, MIN_ASYNC_BLOCK_SAMPLES);
     const int bytesPerBlock = static_cast<int>(samplesPerBlock * FLOATS_PER_IQ_SAMPLE);
     QByteArray byteBuffer;
@@ -684,7 +688,8 @@ void DataProcessor::runRtlTcpReader(const ReceiverStreamDescriptor &stream, uint
     qDebug() << "[RTL-TCP] stream configured";
 
     auto applyPendingRetune = [&]() {
-        const double requestedCenter = requestedCenterFrequency.load();
+        const double logicalCenter = requestedCenterFrequency.load();
+        const double requestedCenter = logicalCenter + frequencyCalibrationOffsetHz.load();
         if (!std::isfinite(requestedCenter) ||
             requestedCenter <= 0.0 ||
             std::abs(requestedCenter - appliedCenterFrequency) <= 0.5) {
@@ -694,6 +699,7 @@ void DataProcessor::runRtlTcpReader(const ReceiverStreamDescriptor &stream, uint
                                       static_cast<quint32>((std::max)(0.0, requestedCenter)),
                                       "live set frequency");
         qDebug() << "[RTL-TCP] live center retune"
+                 << "logical" << logicalCenter
                  << "requested" << requestedCenter
                  << "previous" << appliedCenterFrequency
                  << "ok" << ok;
@@ -800,9 +806,10 @@ void DataProcessor::runRtlSdrNativeReader(const ReceiverStreamDescriptor &stream
 
     activeDevice = rtlDevice;
     const double sampleRate = stream.sampleRateHz > 0.0 ? stream.sampleRateHz : requestedSampleRate.load();
-    const double centerFrequency = requestedCenterFrequency.load() > 0.0
-                                       ? requestedCenterFrequency.load()
-                                       : stream.centerFrequencyHz;
+    const double logicalCenterFrequency = requestedCenterFrequency.load() > 0.0
+                                              ? requestedCenterFrequency.load()
+                                              : stream.centerFrequencyHz;
+    const double centerFrequency = logicalCenterFrequency + frequencyCalibrationOffsetHz.load();
     const uint32_t sampleRateHz = static_cast<uint32_t>((std::max)(0.0, sampleRate));
     const uint32_t centerFrequencyHz = static_cast<uint32_t>((std::max)(0.0, centerFrequency));
     bool configured = true;
@@ -921,9 +928,10 @@ void DataProcessor::runSoapySdrReader(const ReceiverStreamDescriptor &stream, ui
 
     activeDevice = soapyDevice;
     const double sampleRate = stream.sampleRateHz > 0.0 ? stream.sampleRateHz : requestedSampleRate.load();
-    const double centerFrequency = requestedCenterFrequency.load() > 0.0
-                                       ? requestedCenterFrequency.load()
-                                       : stream.centerFrequencyHz;
+    const double logicalCenterFrequency = requestedCenterFrequency.load() > 0.0
+                                              ? requestedCenterFrequency.load()
+                                              : stream.centerFrequencyHz;
+    const double centerFrequency = logicalCenterFrequency + frequencyCalibrationOffsetHz.load();
     bool configured = true;
 
     ret = setSoapySdrSampleRateSafely(soapyDevice, sampleRate);
@@ -1058,9 +1066,10 @@ void DataProcessor::runBladeRfNativeReader(const ReceiverStreamDescriptor &strea
 
     activeDevice = bladeDevice;
     const double sampleRate = stream.sampleRateHz > 0.0 ? stream.sampleRateHz : requestedSampleRate.load();
-    const double centerFrequency = requestedCenterFrequency.load() > 0.0
-                                       ? requestedCenterFrequency.load()
-                                       : stream.centerFrequencyHz;
+    const double logicalCenterFrequency = requestedCenterFrequency.load() > 0.0
+                                              ? requestedCenterFrequency.load()
+                                              : stream.centerFrequencyHz;
+    const double centerFrequency = logicalCenterFrequency + frequencyCalibrationOffsetHz.load();
     const uint32_t sampleRateHz = static_cast<uint32_t>((std::clamp)(sampleRate, 1.0, 61440000.0));
     const uint64_t centerFrequencyHz = static_cast<uint64_t>((std::max)(0.0, centerFrequency));
     uint32_t actualSampleRateHz = 0;
@@ -1938,6 +1947,11 @@ void DataProcessor::setCenterFrequencyHint(double centerFrequency) {
     requestedCenterFrequency = centerFrequency;
 }
 
+void DataProcessor::setFrequencyCalibrationOffset(double offsetHz) {
+    frequencyCalibrationOffsetHz = std::isfinite(offsetHz) ? offsetHz : 0.0;
+    activeStreamDescriptor.frequencyCalibrationOffsetHz = frequencyCalibrationOffsetHz.load();
+}
+
 uint64_t DataProcessor::beginIqRetuneBarrier() {
     const uint64_t epoch = iqRetuneEpoch.fetch_add(1, std::memory_order_acq_rel) + 1;
     return epoch;
@@ -2180,6 +2194,10 @@ bool DataProcessor::retuneCenterFrequency(double centerFrequencyHz) {
     }
 
     requestedCenterFrequency = centerFrequencyHz;
+    const double hardwareFrequencyHz = centerFrequencyHz + frequencyCalibrationOffsetHz.load();
+    if (!std::isfinite(hardwareFrequencyHz) || hardwareFrequencyHz <= 0.0) {
+        return false;
+    }
     const ReceiverBackendStreamKind streamKind = activeStreamKind;
     if (streamKind == ReceiverBackendStreamKind::RtlTcp) {
         qDebug() << "[RTL-TCP] live center retune queued" << centerFrequencyHz;
@@ -2194,9 +2212,10 @@ bool DataProcessor::retuneCenterFrequency(double centerFrequencyHz) {
                      << "device" << soapyDevice;
             return false;
         }
-        const int result = setSoapySdrCenterFrequencySafely(soapyDevice, centerFrequencyHz);
+        const int result = setSoapySdrCenterFrequencySafely(soapyDevice, hardwareFrequencyHz);
         qDebug() << "[SoapySDR] live center retune"
-                 << "frequency" << centerFrequencyHz
+                 << "logical" << centerFrequencyHz
+                 << "hardware" << hardwareFrequencyHz
                  << "result" << result;
         return result == 0;
     }
@@ -2209,9 +2228,10 @@ bool DataProcessor::retuneCenterFrequency(double centerFrequencyHz) {
                      << "device" << bladeDevice;
             return false;
         }
-        const uint64_t frequencyHz = static_cast<uint64_t>((std::max)(0.0, centerFrequencyHz));
+        const uint64_t frequencyHz = static_cast<uint64_t>((std::max)(0.0, hardwareFrequencyHz));
         const int result = setBladeRfCenterFrequencySafely(bladeDevice, frequencyHz);
         qDebug() << "[bladeRF] live center retune"
+                 << "logical" << centerFrequencyHz
                  << "frequency" << frequencyHz
                  << "result" << result;
         return result == 0;
@@ -2229,9 +2249,10 @@ bool DataProcessor::retuneCenterFrequency(double centerFrequencyHz) {
         return false;
     }
 
-    const uint32_t frequencyHz = static_cast<uint32_t>((std::max)(0.0, centerFrequencyHz));
+    const uint32_t frequencyHz = static_cast<uint32_t>((std::max)(0.0, hardwareFrequencyHz));
     const int result = setRtlSdrCenterFrequencySafely(rtlDevice, frequencyHz);
     qDebug() << "[RTL-SDR] live center retune"
+             << "logical" << centerFrequencyHz
              << "frequency" << frequencyHz
              << "result" << result;
     return result == 0;

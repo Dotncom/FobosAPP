@@ -181,6 +181,83 @@ void YourClassName::applyUiLanguage() {
 
     setComboItemText(clkBox, 0, QStringLiteral("internal"), QStringLiteral("Internal"));
     setComboItemText(clkBox, 1, QStringLiteral("external"), QStringLiteral("External"));
+    setComboItemText(waterfallDisplayModeCombo,
+                     static_cast<int>(MyWaterfallWidget::DisplayMode::Waterfall2D),
+                     QStringLiteral("waterfall_display_2d"),
+                     QStringLiteral("2D waterfall"));
+    setComboItemText(waterfallDisplayModeCombo,
+                     static_cast<int>(MyWaterfallWidget::DisplayMode::Waterfall3D),
+                     QStringLiteral("waterfall_display_3d"),
+                     QStringLiteral("3D waterfall"));
+    setComboItemText(waterfallDisplayModeCombo,
+                     static_cast<int>(MyWaterfallWidget::DisplayMode::Waterfall3DWithMini),
+                     QStringLiteral("waterfall_display_3d_mini"),
+                     QStringLiteral("3D + mini waterfall"));
+    if (waterfallDisplayModeCombo) {
+        waterfallDisplayModeCombo->setToolTip(uiText(
+            QStringLiteral("waterfall_display_mode_tooltip"),
+            QStringLiteral("Choose the main waterfall visualization mode.")));
+    }
+    if (waterfall3DResolutionCombo) {
+        waterfall3DResolutionCombo->setToolTip(uiText(
+            QStringLiteral("waterfall_3d_resolution_tooltip"),
+            QStringLiteral("3D frequency columns as a fraction of the visible 2D waterfall width.")));
+    }
+    if (waterfall3DHistoryRowsSpin) {
+        waterfall3DHistoryRowsSpin->setSuffix(
+            uiText(QStringLiteral("waterfall_3d_rows_suffix"), QStringLiteral(" rows")));
+        waterfall3DHistoryRowsSpin->setToolTip(uiText(
+            QStringLiteral("waterfall_3d_history_rows_tooltip"),
+            QStringLiteral("Number of recent waterfall rows retained in the 3D volume. Larger values use more CPU and memory.")));
+    }
+    if (waterfall3DSliceStepSpin) {
+        waterfall3DSliceStepSpin->setToolTip(uiText(
+            QStringLiteral("waterfall_3d_slice_step_tooltip"),
+            QStringLiteral("Frequency points moved by each wheel step while an Alt slice is held.")));
+    }
+    if (waterfall3DSliceWidthSpin) {
+        waterfall3DSliceWidthSpin->setToolTip(uiText(
+            QStringLiteral("waterfall_3d_slice_width_tooltip"),
+            QStringLiteral("Number of adjacent frequency points displayed in the held Alt slice; 1 shows one line.")));
+    }
+    if (waterfall3DSpectrumSliceStepSpin) {
+        waterfall3DSpectrumSliceStepSpin->setSuffix(
+            uiText(QStringLiteral("waterfall_3d_rows_suffix"), QStringLiteral(" rows")));
+        waterfall3DSpectrumSliceStepSpin->setToolTip(uiText(
+            QStringLiteral("waterfall_3d_spectrum_slice_step_tooltip"),
+            QStringLiteral("Rows moved by each wheel step while an Alt + right-button spectrum slice is held.")));
+    }
+    if (waterfall3DSpectrumSliceRowsSpin) {
+        waterfall3DSpectrumSliceRowsSpin->setSuffix(
+            uiText(QStringLiteral("waterfall_3d_rows_suffix"), QStringLiteral(" rows")));
+        waterfall3DSpectrumSliceRowsSpin->setToolTip(uiText(
+            QStringLiteral("waterfall_3d_spectrum_slice_rows_tooltip"),
+            QStringLiteral("Number of adjacent time rows displayed by the Alt + right-button spectrum slice.")));
+    }
+    if (waterfall3DSpectrumSliceCaptureCheckbox) {
+        waterfall3DSpectrumSliceCaptureCheckbox->setText(uiText(
+            QStringLiteral("waterfall_3d_spectrum_slice_capture"),
+            QStringLiteral("Capture")));
+        waterfall3DSpectrumSliceCaptureCheckbox->setToolTip(uiText(
+            QStringLiteral("waterfall_3d_spectrum_slice_capture_tooltip"),
+            QStringLiteral("Follow the selected data rows as they move through the rolling 3D history. Off keeps the slice at a fixed model position and shows the current rows there.")));
+    }
+    if (waterfall3DSpectrumSliceCaptureFixedCheckbox) {
+        waterfall3DSpectrumSliceCaptureFixedCheckbox->setText(uiText(
+            QStringLiteral("waterfall_3d_spectrum_slice_capture_fixed"),
+            QStringLiteral("Fix capture")));
+        waterfall3DSpectrumSliceCaptureFixedCheckbox->setToolTip(uiText(
+            QStringLiteral("waterfall_3d_spectrum_slice_capture_fixed_tooltip"),
+            QStringLiteral("Freeze a copy of the captured rows at the picked model position until those rows expire from the rolling history.")));
+    }
+    if (waterfall3DVncSliceInputCheckbox) {
+        waterfall3DVncSliceInputCheckbox->setText(uiText(
+            QStringLiteral("waterfall_3d_vnc_slice_input"),
+            QStringLiteral("VNC slice control")));
+        waterfall3DVncSliceInputCheckbox->setToolTip(uiText(
+            QStringLiteral("waterfall_3d_vnc_slice_input_tooltip"),
+            QStringLiteral("Use left/right mouse buttons for frequency/time slices without keyboard modifiers. Disable it to restore normal tuning, panning and context-menu actions.")));
+    }
     setComboItemText(modeBox, static_cast<int>(INPUT_HF_NOISE_CANCEL),
                      QStringLiteral("hf_cancel_lab"),
                      QStringLiteral("HF interference lab"));

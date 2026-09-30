@@ -555,6 +555,7 @@ ReceiverStreamDescriptor YourClassName::makeRtlTcpStreamDescriptor(bool queueAud
     stream.nativeDevice = nullptr;
     stream.sampleRateHz = pendingSettings.sampleRate;
     stream.centerFrequencyHz = pendingSettings.centerFrequency;
+    stream.frequencyCalibrationOffsetHz = frequencyCalibrationOffsetHz;
     stream.rtlTcpHost = QString::fromLatin1(RTL_TCP_DEFAULT_HOST);
     stream.rtlTcpPort = RTL_TCP_DEFAULT_PORT;
     stream.rtlTcpAgc = pendingSettings.rtlAgc;
@@ -578,6 +579,7 @@ ReceiverStreamDescriptor YourClassName::makeRtlSdrNativeStreamDescriptor(bool qu
     stream.nativeDevice = nullptr;
     stream.sampleRateHz = pendingSettings.sampleRate;
     stream.centerFrequencyHz = pendingSettings.centerFrequency;
+    stream.frequencyCalibrationOffsetHz = frequencyCalibrationOffsetHz;
     stream.rtlSdrNativeDeviceIndex = selectedRtlSdrNativeIndex();
     stream.rtlTcpAgc = pendingSettings.rtlAgc;
     stream.rtlTcpTunerGainTenthsDb =
@@ -600,6 +602,7 @@ ReceiverStreamDescriptor YourClassName::makeSoapySdrStreamDescriptor(bool queueA
     stream.nativeDevice = nullptr;
     stream.sampleRateHz = pendingSettings.sampleRate;
     stream.centerFrequencyHz = pendingSettings.centerFrequency;
+    stream.frequencyCalibrationOffsetHz = frequencyCalibrationOffsetHz;
     stream.soapySdrDeviceIndex = 0;
     stream.syncReader = false;
     stream.queueAudioBlocks = queueAudioBlocks;
@@ -619,6 +622,7 @@ ReceiverStreamDescriptor YourClassName::makeBladeRfNativeStreamDescriptor(bool q
     stream.nativeDevice = nullptr;
     stream.sampleRateHz = pendingSettings.sampleRate;
     stream.centerFrequencyHz = pendingSettings.centerFrequency;
+    stream.frequencyCalibrationOffsetHz = frequencyCalibrationOffsetHz;
     stream.bladeRfNativeDeviceIndex = selectedBladeRfNativeIndex();
     stream.syncReader = false;
     stream.queueAudioBlocks = queueAudioBlocks;

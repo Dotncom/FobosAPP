@@ -692,6 +692,21 @@ void YourClassName::updateSpectrum() {
         return;
     }
 
+    if (std::isfinite(amplitudeCalibrationOffsetDb) &&
+        std::abs(amplitudeCalibrationOffsetDb) > 0.000001) {
+        const float offsetDb = static_cast<float>(amplitudeCalibrationOffsetDb);
+        for (float &magnitude : spectrumMagnitudes) {
+            if (std::isfinite(magnitude)) {
+                magnitude += offsetDb;
+            }
+        }
+        for (float &magnitude : referenceMagnitudes) {
+            if (std::isfinite(magnitude)) {
+                magnitude += offsetDb;
+            }
+        }
+    }
+
     if (scanVisualSource == QStringLiteral("agile") &&
         fftBlockMetadata.valid &&
         fftBlockMetadata.scanIndex >= 0 &&
