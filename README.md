@@ -19,14 +19,17 @@ Use the packaged `release/bin` folder as a self-contained runtime directory.
 Keep `FobosAPP.exe`, the Qt DLLs, Fobos DLLs, FFTW DLL, libusb DLL, VC runtime
 DLLs, and the `platforms/qwindows.dll` plugin together in the same folder tree.
 
-The app stores local settings in `FobosAPP.ini` next to the executable and writes
-diagnostic logs to `FobosAPP_diagnostic.log`.
+The app stores `FobosAPP.ini` in the per-user configuration directory (for
+example `%LOCALAPPDATA%\FobosAPP` on Windows or `~/.config/FobosAPP` on Linux), so it
+does not require administrator rights and survives replacement of the release
+folder. A legacy INI beside the executable is migrated automatically when no
+per-user settings file exists. Diagnostic logs are still written beside the
+executable when that directory is writable.
 
-Before replacing a release folder during an update, keep or export
-`FobosAPP.ini`. It contains user presets, scan lists, QTH map markers, API keys
-for map providers, and UI settings. The desktop app also provides
+`FobosAPP.ini` contains user presets, scan lists, QTH map markers, API keys for
+map providers, and UI settings. The desktop app provides
 `Settings... -> Settings backup -> Export settings... / Import settings...` for
-making a separate backup file.
+making a separate backup or moving settings to another computer.
 
 DMR voice in 4.7.x is experimental. Windows packages may include optional
 `dmr_voice_backends/fobos_dmr_voice_*.dll` GPL backend modules. See

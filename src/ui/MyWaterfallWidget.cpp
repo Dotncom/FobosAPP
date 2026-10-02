@@ -165,7 +165,7 @@ void MyWaterfallWidget::wheelEvent(QWheelEvent *event) {
         event->accept();
         return;
     }
-    if (!alternativeInterfaceMode &&
+    if (!alternativeInterfaceMode && !fixed3DPlane &&
         activeDisplayMode != DisplayMode::Waterfall2D &&
         event->modifiers().testFlag(Qt::ControlModifier)) {
         {
@@ -225,7 +225,7 @@ void MyWaterfallWidget::mousePressEvent(QMouseEvent *event) {
         event->accept();
         return;
     }
-    if (!alternativeInterfaceMode &&
+    if (!alternativeInterfaceMode && !fixed3DPlane &&
         activeDisplayMode != DisplayMode::Waterfall2D &&
         event->button() == Qt::LeftButton &&
         event->modifiers().testFlag(Qt::ControlModifier)) {
@@ -235,7 +235,7 @@ void MyWaterfallWidget::mousePressEvent(QMouseEvent *event) {
         event->accept();
         return;
     }
-    if (!alternativeInterfaceMode &&
+    if (!alternativeInterfaceMode && !fixed3DPlane &&
         activeDisplayMode != DisplayMode::Waterfall2D &&
         event->button() == Qt::RightButton &&
         event->modifiers().testFlag(Qt::ControlModifier)) {
@@ -716,7 +716,8 @@ void MyWaterfallWidget::setData(const std::vector<float> &sourceXData,
         this->xMax = xMax;
         this->fftLength = std::max(0, fftLength);
         this->secondGraph = secondGraph;
-        waterfall3DRenderer->setFixedFrontExpanded(alternativeInterfaceMode && !secondGraph);
+        waterfall3DRenderer->setFixedFrontExpanded(
+            (alternativeInterfaceMode || fixed3DPlane) && !secondGraph);
         this->colorSpectrum = colorSpectrum;
         this->contrast = contrast;
         this->sensitivity = sensitivity;
@@ -907,6 +908,37 @@ void MyWaterfallWidget::setExtendedInfoOverlayEnabled(bool enabled) {
     update();
 }
 
+void MyWaterfallWidget::setScienceAnalysisData(const std::vector<float> &maxHold,
+                                               const std::vector<float> &minHold,
+                                               const std::vector<float> &average,
+                                               const std::vector<float> &percentile50,
+                                               const std::vector<float> &percentile90,
+                                               const std::vector<float> &percentile99,
+                                               bool showMaxHold,
+                                               bool showMinHold,
+                                               bool showAverage,
+                                               bool showPercentile50,
+                                               bool showPercentile90,
+                                               bool showPercentile99,
+                                               const QVector<SpectrumScienceMarker> &markers) {
+    QMutexLocker locker(&mutex);
+    scienceMaxHoldData = maxHold;
+    scienceMinHoldData = minHold;
+    scienceAverageData = average;
+    sciencePercentile50Data = percentile50;
+    sciencePercentile90Data = percentile90;
+    sciencePercentile99Data = percentile99;
+    scienceMaxHoldVisible = showMaxHold && !scienceMaxHoldData.empty();
+    scienceMinHoldVisible = showMinHold && !scienceMinHoldData.empty();
+    scienceAverageVisible = showAverage && !scienceAverageData.empty();
+    sciencePercentile50Visible = showPercentile50 && !sciencePercentile50Data.empty();
+    sciencePercentile90Visible = showPercentile90 && !sciencePercentile90Data.empty();
+    sciencePercentile99Visible = showPercentile99 && !sciencePercentile99Data.empty();
+    scienceMarkers = markers;
+    locker.unlock();
+    update();
+}
+
 void MyWaterfallWidget::setRenderBackend(RenderBackend backend) {
     bool changed = false;
     {
@@ -997,21 +1029,46 @@ void MyWaterfallWidget::set3DModifierFreeSliceInput(bool enabled) {
     modifierFreeSliceInput = enabled;
 }
 
+void MyWaterfallWidget::set3DFixedPlane(bool enabled) {
+    {
+        QMutexLocker locker(&mutex);
+        fixed3DPlane = enabled;
+        cameraOrbitActive = false;
+        cameraPanActive = false;
+        waterfall3DRenderer->setFixedFrontPresentation(alternativeInterfaceMode || fixed3DPlane);
+        waterfall3DRenderer->setFixedFrontExpanded(
+            (alternativeInterfaceMode || fixed3DPlane) && !secondGraph);
+        waterfall3DRenderer->setFrontFaceGradient(
+            fixed3DPlane && !alternativeInterfaceMode && alternativeSpectrumGradientFill,
+            alternativeSpectrumGradientOpacity);
+    }
+    unsetCursor();
+    update();
+}
+
 void MyWaterfallWidget::setAlternativeInterfaceMode(bool enabled) {
     {
         QMutexLocker locker(&mutex);
         alternativeInterfaceMode = enabled;
         cameraOrbitActive = false;
         cameraPanActive = false;
-        waterfall3DRenderer->setFixedFrontPresentation(enabled);
-        waterfall3DRenderer->setFixedFrontExpanded(enabled && !secondGraph);
+        waterfall3DRenderer->setFixedFrontPresentation(enabled || fixed3DPlane);
+        waterfall3DRenderer->setFixedFrontExpanded((enabled || fixed3DPlane) && !secondGraph);
+        waterfall3DRenderer->setFrontFaceGradient(
+            fixed3DPlane && !enabled && alternativeSpectrumGradientFill,
+            alternativeSpectrumGradientOpacity);
     }
     unsetCursor();
     update();
 }
 
 void MyWaterfallWidget::setAlternativeSpectrumGradientFill(bool enabled) {
+    QMutexLocker locker(&mutex);
     alternativeSpectrumGradientFill = enabled;
+    waterfall3DRenderer->setFrontFaceGradient(
+        fixed3DPlane && !alternativeInterfaceMode && enabled,
+        alternativeSpectrumGradientOpacity);
+    locker.unlock();
     update();
 }
 
@@ -1198,7 +1255,12 @@ void MyWaterfallWidget::updateAlternativeInteractionLabels(
 }
 
 void MyWaterfallWidget::setAlternativeSpectrumGradientOpacity(int percent) {
+    QMutexLocker locker(&mutex);
     alternativeSpectrumGradientOpacity = std::clamp(percent, 0, 100);
+    waterfall3DRenderer->setFrontFaceGradient(
+        fixed3DPlane && !alternativeInterfaceMode && alternativeSpectrumGradientFill,
+        alternativeSpectrumGradientOpacity);
+    locker.unlock();
     update();
 }
 
@@ -1722,6 +1784,8 @@ void MyWaterfallWidget::drawAlternativeSpectrumOverlay(
         painter.drawPath(spectrumPath);
     }
 
+    drawAlternativeScienceOverlays(painter, plotRect);
+
     if (drawLowerGrid) {
         painter.setPen(QPen(QColor(220, 235, 240, 190), 1));
         painter.drawLine(left, top, left, bottom);
@@ -1755,6 +1819,55 @@ void MyWaterfallWidget::drawAlternativeSpectrumOverlay(
         painter.drawLine(x, top, x, bottom);
         painter.setBrush(QColor(120, 240, 255));
         painter.drawEllipse(QPoint(x, y), 3, 3);
+    }
+    painter.restore();
+}
+
+void MyWaterfallWidget::drawAlternativeScienceOverlays(QPainter &painter,
+                                                        const QRect &plotRect) const {
+    const int left = plotRect.left();
+    const int right = plotRect.right();
+    const int top = plotRect.top();
+    const int bottom = plotRect.bottom();
+    const int plotWidth = (std::max)(1, right - left);
+    const int plotHeight = (std::max)(1, bottom - top);
+    auto drawTrace = [&](const std::vector<float> &trace, const QColor &color) {
+        if (trace.size() < 2) return;
+        QPainterPath path;
+        bool started = false;
+        for (int i = 0; i < static_cast<int>(trace.size()); ++i) {
+            if (!std::isfinite(trace[static_cast<std::size_t>(i)])) continue;
+            const int x = left + i * plotWidth / (static_cast<int>(trace.size()) - 1);
+            const int y = bottom - static_cast<int>(std::lround(normalizedLevel(trace[static_cast<std::size_t>(i)]) * plotHeight));
+            if (!started) { path.moveTo(x, y); started = true; }
+            else path.lineTo(x, y);
+        }
+        if (started) {
+            painter.setPen(QPen(color, 1));
+            painter.drawPath(path);
+        }
+    };
+    painter.save();
+    painter.setClipRect(plotRect);
+    if (scienceMinHoldVisible) drawTrace(scienceMinHoldData, QColor(85, 155, 255, 210));
+    if (sciencePercentile50Visible) drawTrace(sciencePercentile50Data, QColor(75, 220, 145, 220));
+    if (sciencePercentile90Visible) drawTrace(sciencePercentile90Data, QColor(215, 105, 245, 220));
+    if (sciencePercentile99Visible) drawTrace(sciencePercentile99Data, QColor(255, 80, 95, 230));
+    if (scienceAverageVisible) drawTrace(scienceAverageData, QColor(235, 235, 235, 220));
+    if (scienceMaxHoldVisible) drawTrace(scienceMaxHoldData, QColor(255, 170, 35, 235));
+    const QColor colors[] = {QColor(255, 225, 60), QColor(80, 220, 255)};
+    for (int index = 0; index < scienceMarkers.size(); ++index) {
+        const SpectrumScienceMarker &marker = scienceMarkers.at(index);
+        if (!marker.enabled || !std::isfinite(marker.frequencyHz)) continue;
+        const double displayFrequency = displayFrequencyForActualFrequency(marker.frequencyHz);
+        if (displayFrequency < (std::min)(xMin, xMax) || displayFrequency > (std::max)(xMin, xMax)) continue;
+        const int x = left + static_cast<int>(std::lround((displayFrequency - xMin) /
+                                                          (xMax - xMin) * plotWidth));
+        painter.setPen(QPen(colors[index % 2], 1, Qt::DashLine));
+        painter.drawLine(x, top, x, bottom);
+        painter.drawText(QRect(x + 3, top + 3 + index * 17, 22, 15),
+                         Qt::AlignLeft | Qt::AlignVCenter,
+                         marker.label);
     }
     painter.restore();
 }

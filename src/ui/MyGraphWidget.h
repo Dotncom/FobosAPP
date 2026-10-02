@@ -39,6 +39,19 @@ public:
     void setFpsOverlayEnabled(bool enabled);
     void setExtendedInfoOverlayEnabled(bool enabled);
     void setFrequencyAxisLabelsVisible(bool visible);
+    void setScienceAnalysisData(const std::vector<float> &maxHold,
+                                const std::vector<float> &minHold,
+                                const std::vector<float> &average,
+                                const std::vector<float> &percentile50,
+                                const std::vector<float> &percentile90,
+                                const std::vector<float> &percentile99,
+                                bool showMaxHold,
+                                bool showMinHold,
+                                bool showAverage,
+                                bool showPercentile50,
+                                bool showPercentile90,
+                                bool showPercentile99,
+                                const QVector<SpectrumScienceMarker> &markers);
     void clearData();
 
 signals:
@@ -46,6 +59,7 @@ signals:
     void tuneContextRequested(double frequency, const QPoint &globalPos);
     void autoTuneRequested(double frequency);
     void panRequested(int deltaPixels, int widthPixels);
+    void scienceMarkerRequested(double frequency);
 
 protected:
     void initializeGL() override;
@@ -77,6 +91,8 @@ private:
     void drawTuningMarker(QPainter &painter) const;
     void drawBandwidthMeasurement(QPainter &painter) const;
     void drawHoverCursor(QPainter &painter) const;
+    void drawScienceTraces(QPainter &painter) const;
+    void drawScienceMarkers(QPainter &painter) const;
     void updateFpsCounter();
     void drawFpsOverlay(QPainter &painter) const;
     void drawExtendedInfoOverlay(QPainter &painter) const;
@@ -131,6 +147,19 @@ private:
     bool fpsOverlayEnabled = false;
     bool extendedInfoOverlayEnabled = false;
     bool frequencyAxisLabelsVisible = false;
+    std::vector<float> scienceMaxHoldData;
+    std::vector<float> scienceMinHoldData;
+    std::vector<float> scienceAverageData;
+    std::vector<float> sciencePercentile50Data;
+    std::vector<float> sciencePercentile90Data;
+    std::vector<float> sciencePercentile99Data;
+    QVector<SpectrumScienceMarker> scienceMarkers;
+    bool scienceMaxHoldVisible = false;
+    bool scienceMinHoldVisible = false;
+    bool scienceAverageVisible = false;
+    bool sciencePercentile50Visible = false;
+    bool sciencePercentile90Visible = false;
+    bool sciencePercentile99Visible = false;
     QElapsedTimer fpsElapsedTimer;
     int fpsFrameCount = 0;
     double displayedFps = 0.0;

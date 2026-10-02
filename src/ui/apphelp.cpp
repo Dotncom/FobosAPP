@@ -37,10 +37,19 @@ FobosAPP - SDR-програма для Fobos SDR, Fobos Agile, RTL-SDR, rtl_tcp 
 - FFT length впливає на деталізацію і навантаження. Великі FFT корисні для вузьких сигналів, але можуть вимагати повільнішого оновлення.
 - Band markers показують діапазони: загальні радіодіапазони, аматорські діапазони або компактний шар.
 - Spur suppression/Spur calibration допомагає позначати і приглушувати стабільні внутрішні спури.
+- У Вимірі спектра A/B-маркери задають межі наукового розрахунку. Shift + ліва кнопка на звичайному спектрі ставить активний маркер; кнопки Peak, Попер. і Наст. переходять між локальними піками.
+- Max hold, Min hold та Average показують утримувані криві. Average усереднює лінійну потужність, а не значення децибелів. Рядок метрик показує шумову підлогу, SNR, сумарну потужність, OBW90/95/99, ширину за -3/-6/-20 dB та ACPR; Звіт експортує дані у CSV.
+- Вкладка Аналізатор спектра у вікні Дослідження керує детектором Sample/Peak/RMS/Average/Median/Quasi-peak, VBW, перекриттям FFT 0/25/50/75%, скінченним усередненням та процентильними трасами P50/P90/P99. RBW розраховується з ширини біна та ENBW вибраного FFT-вікна.
+- Zero Span будує часову залежність рівня для частоти прослуховування, маркера A/B або поточного піку. Смуга виміру інтегрує потужність навколо частоти; нуль бере найближчий відображений бін.
+- Тригер Off дає безперервне рухоме вікно, Auto позначає перетини порога, а Normal після Готовність зберігає задану частину даних до тригера, добирає дані після нього і зупиняє трасу. Дані експортуються у CSV з часовими мітками.
+- Дослідження відкриває окреме вікно з аналізом гребінок/гармонік, статистикою сигналу, осцилограмою та сузір'ям IQ, автокореляцією і порівнянням двох КХ входів.
+- У HF interference lab кнопка Аналіз відкриває ту саму вкладку завад. Записати еталон фіксує стан «до», після чого таблиця показує зміну рівня кожного піка; аналізатор розділяє до трьох гребінок, оцінює дрейф кроку й амплітуди та показує орієнтовний клас джерела. Це діагностична підказка, а не точна ідентифікація пристрою.
+- Вкладка двох КХ входів використовує сирі HF1/HF2 та показує різницю рівнів, кореляцію, затримку, фазу на частоті прослуховування і орієнтовний потенціал придушення. У RF-режимі пара чисел є квадратурними I/Q, тому порівняння двох входів там навмисно вимкнене.
 
 3D-водоспад
 - У розділі 3D waterfall можна обрати звичайний 2D-водоспад, 3D або 3D з мініатюрою 2D-водоспаду.
 - Альтернативний інтерфейс у загальних налаштуваннях ховає окремий спектр і показує його прозорий контур перед фіксованим 3D-водоспадом. Камера і звичайний 2D-режим при цьому заблоковані, але доступні 3D та 3D з малим водоспадом зліва вгорі; шкала частот розташована знизу.
+- Галочка Зафіксувати площину застосовує ту саму фронтальну 3D-проєкцію у звичайному інтерфейсі та блокує керування камерою. Градієнт у цьому режимі заповнює видимий передній торець моделі.
 - Нижня спектральна область альтернативного інтерфейсу зберігає вимір смуги лівим перетягуванням, підказку частоти/рівня, автоцентрування та контекстне меню. Підписи діапазонів також переносяться на цей шар; градієнт під контуром вмикається окремою галочкою, а його прозорість задається слайдером.
 - Роздільна здатність 1/1...1/64 визначає кількість частотних точок у 3D. Для дробних значень сусідні точки усереднюються, а не просто відкидаються.
 - Пам'ять задає кількість рядків історії у 3D-моделі. Великі значення потребують більше GPU-пам'яті й часу на відмальовування.
@@ -56,6 +65,7 @@ FobosAPP - SDR-програма для Fobos SDR, Fobos Agile, RTL-SDR, rtl_tcp 
 Калібрування
 - Frequency calibration offset у загальних налаштуваннях компенсує сталу похибку частоти приймача і додається до апаратного налаштування.
 - Amplitude calibration offset коригує показані рівні спектра та вимірювання у dB; на IQ і аудіодемодуляцію він не впливає.
+- Presets -> Калібрування зберігає таблицю точок частота/частотна поправка/амплітудна поправка. Між точками поправки лінійно інтерполюються, а поза діапазоном використовується найближча крайня точка; глобальні офсети додаються до табличних.
 - Reset calibration offsets повертає обидва значення до нуля.
 
 Аудіо і демодуляція
@@ -80,7 +90,7 @@ FobosAPP - SDR-програма для Fobos SDR, Fobos Agile, RTL-SDR, rtl_tcp 
 Пресети
 - Presets відкриває менеджер частот, аудіосмуг, Agile scan, Standard scan, Listening scan, band markers і QTH markers.
 - Стрілки вгору/вниз у менеджері пресетів змінюють порядок показу.
-- Перед оновленням програми бажано експортувати FobosAPP.ini, щоб не втратити власні пресети, маркери карти і списки скану.
+- Налаштування зберігаються у профілі користувача, а не поряд із програмою, тому оновлення їх не стирає і права адміністратора не потрібні. Експорт FobosAPP.ini використовуйте для резервної копії або перенесення на інший комп'ютер.
 - Import/Export settings у загальних налаштуваннях робить резервну копію або повертає збережені налаштування.
 
 GNSS, GPS і QTH
@@ -102,6 +112,7 @@ GNSS, GPS і QTH
 
 Запис і відтворення
 - Record пише Audio WAV або Channel IQ WAV залежно від вибраного режиму.
+- Розширені метадані запису в загальних налаштуваннях додають до WAV/JSON і spectrum-event записів версію програми, тракт приймача, FFT/RBW, калібрування, маркери A/B та наукові вимірювання. Координати, серійні номери, ключі й API-токени навмисно не записуються.
 - Hold F9/F9 утримання - швидкий momentary recording.
 - Playback дозволяє програти сумісні записи, коли приймач зупинений.
 - Spectrum-frame recorder постійно тримає ввімкнений передбуфер, а після команди захоплення зберігає подію до ручної зупинки. Режими Channel IQ і Full IQ додатково дозволяють демодулювати запис у вікні реплею.
@@ -159,10 +170,19 @@ Spectrum and waterfall
 - FFT length controls frequency detail and CPU load. Larger FFT sizes help with narrow signals but may need slower updates.
 - Band markers show general radio bands, amateur bands, or a compact combined layer.
 - Spur suppression and calibration can mark and reduce stable internal spurs.
+- In Spectrum measurement, A/B markers define the scientific calculation range. Shift + left-click on the normal spectrum sets the active marker; Peak, Prev and Next move between local peaks.
+- Max hold, Min hold and Average draw persistent traces. Average uses linear power rather than averaging decibels. The metrics row reports noise floor, SNR, integrated power, OBW90/95/99, -3/-6/-20 dB width and ACPR; Report exports the frame and metrics to CSV.
+- The Spectrum analyzer tab in Research controls Sample/Peak/RMS/Average/Median/Quasi-peak detection, VBW, 0/25/50/75% FFT overlap, finite averaging and P50/P90/P99 traces. RBW is calculated from bin width and the selected FFT window ENBW.
+- Zero Span plots level versus time for the listening frequency, marker A/B, or the current peak. Measurement bandwidth integrates power around the target; zero uses the nearest displayed bin.
+- Trigger Off provides a continuous rolling window, Auto marks threshold crossings, and Normal captures the configured pre-trigger portion, completes the post-trigger interval, then freezes the trace. CSV includes absolute and relative timestamps.
+- Research opens a separate window for comb/harmonic analysis, signal statistics, IQ waveform/constellation/autocorrelation, and dual-HF-input comparison.
+- Analysis in HF interference lab opens the same interference tab. Capture reference stores the “before” spectrum so the peak table can report every level change; the analyzer separates up to three comb families, tracks spacing and amplitude drift, and reports a tentative source class. The source class is a diagnostic hint, not exact device identification.
+- Dual HF inputs uses raw HF1/HF2 data and reports level difference, correlation, lag, phase at the listening frequency, and estimated cancellation potential. In RF mode the pair is quadrature I/Q, so dual-input comparison is intentionally disabled.
 
 3D waterfall
 - The 3D waterfall section selects the normal 2D waterfall, 3D, or 3D with a small 2D waterfall overlay.
 - Alternative interface in Settings hides the separate spectrum and overlays its transparent contour at the front of a fixed 3D waterfall. Camera controls and normal 2D mode are locked, but both 3D and 3D with a top-left mini waterfall remain available; the frequency scale is placed below the scene.
+- Fix plane applies the same front-facing 3D projection in the normal interface and locks camera controls. In this mode, the gradient option fills the visible front face of the model.
 - Its lower spectrum area retains left-drag bandwidth measurement, frequency/level hover data, auto-centering and the tuning context menu. Band labels are preserved there, while a checkbox enables gradient fill below the contour and a slider controls its opacity.
 - Resolution 1/1...1/64 controls the number of frequency points in 3D. Fractional modes average neighboring points instead of merely discarding them.
 - Memory controls the number of history rows in the 3D model. Larger values require more GPU memory and rendering time.
@@ -178,6 +198,7 @@ Spectrum and waterfall
 Calibration
 - Frequency calibration offset in Settings compensates a stable receiver frequency error and is added to hardware tuning.
 - Amplitude calibration offset corrects displayed spectrum and measurement levels in dB; it does not change IQ or audio demodulation.
+- Presets -> Calibration stores frequency/frequency-correction/amplitude-correction points. Corrections are linearly interpolated between points, the nearest endpoint is used outside the table, and global offsets are added to table values.
 - Reset calibration offsets returns both values to zero.
 
 Audio and demodulation
@@ -202,7 +223,7 @@ Scanning
 Presets
 - Presets opens the manager for center frequencies, listening frequencies, audio bandwidths, Agile scan, Standard scan, Listening scan, band markers and QTH markers.
 - Up/down arrows in the preset manager change display order.
-- Before updating the app, export FobosAPP.ini if you want to keep custom presets, markers and scan lists.
+- Settings are stored in the user profile rather than beside the executable, so updates preserve them and administrator rights are not required. Export FobosAPP.ini for backup or transfer to another computer.
 - Import/Export settings in Settings creates or restores a settings backup.
 
 GNSS, GPS and QTH
@@ -224,6 +245,7 @@ Digital modes
 
 Recording and playback
 - Record writes Audio WAV or Channel IQ WAV depending on selected recording mode.
+- Extended recording metadata in Settings adds the app version, receiver path, FFT/RBW, calibration, A/B markers and scientific measurements to WAV/JSON and spectrum-event recordings. Coordinates, device serials, keys and API tokens are intentionally excluded.
 - Hold F9 is quick momentary recording.
 - Playback can play compatible recordings while the receiver is stopped.
 - Spectrum-frame recorder continuously keeps an enabled pre-trigger buffer, then saves the event until capture is stopped. Channel IQ and Full IQ modes also support demodulation inside the replay window.

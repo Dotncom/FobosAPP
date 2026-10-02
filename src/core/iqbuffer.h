@@ -15,6 +15,7 @@ struct Stats {
     std::size_t queuedBlocks = 0;
     std::size_t queuedFloatCount = 0;
     double sampleRateEstimate = 0.0;
+    std::uint64_t totalFloatCount = 0;
 };
 
 struct BlockMetadata {
@@ -23,6 +24,8 @@ struct BlockMetadata {
     int scanIndex = -1;
     double centerFrequencyHz = 0.0;
     std::uint64_t sequence = 0;
+    std::uint64_t epoch = 0;
+    std::uint64_t totalFloatCount = 0;
     std::size_t floatCount = 0;
 };
 

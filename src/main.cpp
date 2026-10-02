@@ -633,6 +633,14 @@ YourClassName::YourClassName(QWidget *parent)
         QStringLiteral("hf_interference_default_tooltip"),
         QStringLiteral("Reset HF interference lab controls and clear the learned baseline.")));
 
+    hfInterferenceAnalyzeButton = new QPushButton("Analysis...", this);
+    markTranslatable(hfInterferenceAnalyzeButton,
+                     QStringLiteral("research_interference_open"),
+                     QStringLiteral("Analysis..."));
+    hfInterferenceAnalyzeButton->setToolTip(uiText(
+        QStringLiteral("research_interference_open_tooltip"),
+        QStringLiteral("Open comb, harmonic and before/after interference analysis.")));
+
     hfInterferenceBaselineDepthSlider = new QSlider(Qt::Horizontal, this);
     hfInterferenceBaselineDepthSlider->setRange(0, 200);
     hfInterferenceBaselineDepthSlider->setSingleStep(5);
@@ -778,6 +786,7 @@ YourClassName::YourClassName(QWidget *parent)
     waterfallWidget->set3DSpectrumSliceWidth(waterfall3DSpectrumSliceRows);
     waterfallWidget->set3DSpectrumSliceCapture(waterfall3DSpectrumSliceCapture);
     waterfallWidget->set3DSpectrumSliceCaptureFixed(waterfall3DSpectrumSliceCaptureFixed);
+    waterfallWidget->set3DFixedPlane(waterfall3DFixedPlane);
     waterfallWidget->set3DModifierFreeSliceInput(waterfall3DVncSliceInput);
     waterfallWidget->setAlternativeSpectrumGradientFill(alternativeSpectrumGradientFill);
     waterfallWidget->setAlternativeSpectrumGradientOpacity(alternativeSpectrumGradientOpacity);
@@ -929,6 +938,14 @@ YourClassName::YourClassName(QWidget *parent)
     waterfall3DSpectrumSliceCaptureFixedCheckbox->setToolTip(uiText(
         QStringLiteral("waterfall_3d_spectrum_slice_capture_fixed_tooltip"),
         QStringLiteral("Freeze a copy of the captured rows at the picked model position until those rows expire from the rolling history.")));
+    waterfall3DFixedPlaneCheckbox = new QCheckBox(
+        uiText(QStringLiteral("waterfall_3d_fixed_plane"),
+               QStringLiteral("Fix plane")),
+        this);
+    waterfall3DFixedPlaneCheckbox->setChecked(waterfall3DFixedPlane);
+    waterfall3DFixedPlaneCheckbox->setToolTip(uiText(
+        QStringLiteral("waterfall_3d_fixed_plane_tooltip"),
+        QStringLiteral("Use the fixed front-facing 3D plane from Alternative interface mode and lock camera controls.")));
     waterfall3DVncSliceInputCheckbox = new QCheckBox(
         uiText(QStringLiteral("waterfall_3d_vnc_slice_input"),
                QStringLiteral("VNC slice control")),
@@ -939,15 +956,17 @@ YourClassName::YourClassName(QWidget *parent)
         QStringLiteral("Use left/right mouse buttons for frequency/time slices without keyboard modifiers. Disable it to restore normal tuning, panning and context-menu actions.")));
     alternativeSpectrumGradientCheckbox = new QCheckBox(
         uiText(QStringLiteral("alternative_spectrum_gradient"),
-               QStringLiteral("Fill spectrum area with gradient")),
+               QStringLiteral("Gradient fill")),
         this);
     markTranslatable(alternativeSpectrumGradientCheckbox,
                      QStringLiteral("alternative_spectrum_gradient"),
-                     QStringLiteral("Fill spectrum area with gradient"));
+                     QStringLiteral("Gradient fill"));
     alternativeSpectrumGradientCheckbox->setChecked(alternativeSpectrumGradientFill);
+    alternativeSpectrumGradientCheckbox->setEnabled(
+        alternativeInterfaceMode || waterfall3DFixedPlane);
     alternativeSpectrumGradientCheckbox->setToolTip(uiText(
         QStringLiteral("alternative_spectrum_gradient_tooltip"),
-        QStringLiteral("Fill the area below the transparent spectrum contour in Alternative interface mode.")));
+        QStringLiteral("Fill below the spectrum contour in Alternative interface mode, or fill the visible front face of a fixed 3D plane.")));
     QLabel *alternativeSpectrumGradientOpacityLabel = new QLabel(
         uiText(QStringLiteral("alternative_spectrum_gradient_opacity"),
                QStringLiteral("Gradient opacity:")),
@@ -958,12 +977,15 @@ YourClassName::YourClassName(QWidget *parent)
     alternativeSpectrumGradientOpacitySlider = new QSlider(Qt::Horizontal, this);
     alternativeSpectrumGradientOpacitySlider->setRange(0, 100);
     alternativeSpectrumGradientOpacitySlider->setValue(alternativeSpectrumGradientOpacity);
+    alternativeSpectrumGradientOpacitySlider->setEnabled(
+        (alternativeInterfaceMode || waterfall3DFixedPlane) &&
+        alternativeSpectrumGradientFill);
     alternativeSpectrumGradientOpacitySlider->setMinimumWidth(150);
     alternativeSpectrumGradientOpacitySlider->setSizePolicy(QSizePolicy::Expanding,
                                                               QSizePolicy::Fixed);
     alternativeSpectrumGradientOpacitySlider->setToolTip(uiText(
         QStringLiteral("alternative_spectrum_gradient_opacity_tooltip"),
-        QStringLiteral("Set spectrum gradient opacity from transparent to solid.")));
+        QStringLiteral("Set gradient opacity from transparent to solid.")));
     alternativeSpectrumGradientOpacityValueLabel = new QLabel(
         QStringLiteral("%1%").arg(alternativeSpectrumGradientOpacity), this);
     alternativeSpectrumGradientOpacityValueLabel->setMinimumWidth(38);
@@ -971,14 +993,21 @@ YourClassName::YourClassName(QWidget *parent)
     waterfall3DSpectrumSliceRowsLayout->setContentsMargins(0, 0, 0, 0);
     waterfall3DSpectrumSliceRowsLayout->addWidget(waterfall3DSpectrumSliceRowsLabel);
     waterfall3DSpectrumSliceRowsLayout->addWidget(waterfall3DSpectrumSliceRowsSpin);
-    waterfall3DSpectrumSliceRowsLayout->addWidget(waterfall3DSpectrumSliceCaptureCheckbox);
-    waterfall3DSpectrumSliceRowsLayout->addWidget(waterfall3DSpectrumSliceCaptureFixedCheckbox);
     waterfall3DSpectrumSliceRowsLayout->addStretch(1);
+    QHBoxLayout *waterfall3DSpectrumSliceCaptureLayout = new QHBoxLayout();
+    waterfall3DSpectrumSliceCaptureLayout->setContentsMargins(0, 0, 0, 0);
+    waterfall3DSpectrumSliceCaptureLayout->addWidget(waterfall3DSpectrumSliceCaptureCheckbox);
+    waterfall3DSpectrumSliceCaptureLayout->addWidget(waterfall3DSpectrumSliceCaptureFixedCheckbox);
+    waterfall3DSpectrumSliceCaptureLayout->addStretch(1);
     QHBoxLayout *waterfall3DVncSliceInputLayout = new QHBoxLayout();
     waterfall3DVncSliceInputLayout->setContentsMargins(0, 0, 0, 0);
+    waterfall3DVncSliceInputLayout->addWidget(waterfall3DFixedPlaneCheckbox);
     waterfall3DVncSliceInputLayout->addWidget(waterfall3DVncSliceInputCheckbox);
-    waterfall3DVncSliceInputLayout->addWidget(alternativeSpectrumGradientCheckbox);
     waterfall3DVncSliceInputLayout->addStretch(1);
+    QHBoxLayout *waterfall3DGradientLayout = new QHBoxLayout();
+    waterfall3DGradientLayout->setContentsMargins(0, 0, 0, 0);
+    waterfall3DGradientLayout->addWidget(alternativeSpectrumGradientCheckbox);
+    waterfall3DGradientLayout->addStretch(1);
     QGridLayout *alternativeSpectrumGradientOpacityLayout = new QGridLayout();
     alternativeSpectrumGradientOpacityLayout->setContentsMargins(0, 0, 0, 0);
     alternativeSpectrumGradientOpacityLayout->addWidget(alternativeSpectrumGradientOpacityLabel,
@@ -1306,6 +1335,65 @@ YourClassName::YourClassName(QWidget *parent)
     scanMeasurementExportButton = new QPushButton("CSV", spectrumMeasurementBox);
     scanMeasurementExportButton->setToolTip(uiText(QStringLiteral("csv_tooltip"),
                                                    QStringLiteral("Export spectrum measurement bins to CSV")));
+    spectrumScienceMarkerCombo = new QComboBox(spectrumMeasurementBox);
+    spectrumScienceMarkerCombo->addItem(QStringLiteral("A"), 0);
+    spectrumScienceMarkerCombo->addItem(QStringLiteral("B"), 1);
+    spectrumScienceMarkerCombo->setMaximumWidth(48);
+    spectrumScienceSetButton = new QPushButton("Set", spectrumMeasurementBox);
+    markTranslatable(spectrumScienceSetButton, QStringLiteral("science_set"), QStringLiteral("Set"));
+    spectrumScienceSetButton->setToolTip(uiText(
+        QStringLiteral("science_set_tooltip"),
+        QStringLiteral("Set the active A/B marker to the listening frequency. Shift-click on the spectrum also sets it.")));
+    spectrumSciencePeakButton = new QPushButton("Peak", spectrumMeasurementBox);
+    markTranslatable(spectrumSciencePeakButton, QStringLiteral("science_peak"), QStringLiteral("Peak"));
+    spectrumSciencePreviousButton = new QPushButton("Prev", spectrumMeasurementBox);
+    markTranslatable(spectrumSciencePreviousButton, QStringLiteral("previous_short"), QStringLiteral("Prev"));
+    spectrumSciencePreviousButton->setToolTip(uiText(QStringLiteral("science_previous_peak_tooltip"),
+                                                      QStringLiteral("Move the active marker to the previous local peak")));
+    spectrumScienceNextButton = new QPushButton("Next", spectrumMeasurementBox);
+    markTranslatable(spectrumScienceNextButton, QStringLiteral("next_short"), QStringLiteral("Next"));
+    spectrumScienceNextButton->setToolTip(uiText(QStringLiteral("science_next_peak_tooltip"),
+                                                  QStringLiteral("Move the active marker to the next local peak")));
+    spectrumScienceClearButton = new QPushButton("Clear", spectrumMeasurementBox);
+    markTranslatable(spectrumScienceClearButton, QStringLiteral("clear"), QStringLiteral("Clear"));
+    spectrumScienceMaxHoldCheckbox = new QCheckBox("Max", spectrumMeasurementBox);
+    markTranslatable(spectrumScienceMaxHoldCheckbox, QStringLiteral("science_max_hold"), QStringLiteral("Max"));
+    spectrumScienceMaxHoldCheckbox->setToolTip(uiText(QStringLiteral("science_max_hold_tooltip"), QStringLiteral("Show the maximum level retained at every visible frequency")));
+    spectrumScienceMaxHoldCheckbox->setChecked(spectrumScienceMaxHoldEnabled);
+    spectrumScienceMinHoldCheckbox = new QCheckBox("Min", spectrumMeasurementBox);
+    markTranslatable(spectrumScienceMinHoldCheckbox, QStringLiteral("science_min_hold"), QStringLiteral("Min"));
+    spectrumScienceMinHoldCheckbox->setToolTip(uiText(QStringLiteral("science_min_hold_tooltip"), QStringLiteral("Show the minimum level retained at every visible frequency")));
+    spectrumScienceMinHoldCheckbox->setChecked(spectrumScienceMinHoldEnabled);
+    spectrumScienceAverageCheckbox = new QCheckBox("Avg", spectrumMeasurementBox);
+    markTranslatable(spectrumScienceAverageCheckbox, QStringLiteral("science_average"), QStringLiteral("Avg"));
+    spectrumScienceAverageCheckbox->setToolTip(uiText(QStringLiteral("science_average_tooltip"), QStringLiteral("Show an exponential average calculated in linear power")));
+    spectrumScienceAverageCheckbox->setChecked(spectrumScienceAverageEnabled);
+    spectrumScienceAverageSpin = new QDoubleSpinBox(spectrumMeasurementBox);
+    spectrumScienceAverageSpin->setRange(0.05, 60.0);
+    spectrumScienceAverageSpin->setDecimals(2);
+    spectrumScienceAverageSpin->setSingleStep(0.25);
+    spectrumScienceAverageSpin->setSuffix(QStringLiteral(" s"));
+    spectrumScienceAverageSpin->setValue(spectrumScienceAverageSeconds);
+    spectrumScienceAverageSpin->setMaximumWidth(74);
+    spectrumScienceResetButton = new QPushButton("Reset", spectrumMeasurementBox);
+    markTranslatable(spectrumScienceResetButton, QStringLiteral("reset"), QStringLiteral("Reset"));
+    spectrumScienceResetButton->setToolTip(uiText(QStringLiteral("science_reset_tooltip"),
+                                                   QStringLiteral("Reset Max/Min hold and linear-power average traces")));
+    spectrumScienceExportButton = new QPushButton("Report", spectrumMeasurementBox);
+    markTranslatable(spectrumScienceExportButton, QStringLiteral("science_report"), QStringLiteral("Report"));
+    spectrumScienceExportButton->setToolTip(uiText(QStringLiteral("science_report_tooltip"),
+                                                    QStringLiteral("Export the current spectrum, traces, markers and metrics to CSV")));
+    zeroSpanButton = new QPushButton("Zero Span...", spectrumMeasurementBox);
+    markTranslatable(zeroSpanButton, QStringLiteral("zero_span_open"), QStringLiteral("Zero Span..."));
+    zeroSpanButton->setToolTip(uiText(QStringLiteral("zero_span_open_tooltip"),
+                                      QStringLiteral("Open time-domain level analysis at one selected frequency")));
+    researchToolsButton = new QPushButton("Research...", spectrumMeasurementBox);
+    markTranslatable(researchToolsButton,
+                     QStringLiteral("research_tools_open"),
+                     QStringLiteral("Research..."));
+    researchToolsButton->setToolTip(uiText(
+        QStringLiteral("research_tools_open_tooltip"),
+        QStringLiteral("Open interference, statistics, IQ and dual-input analysis tools.")));
     spurSuppressionCheckbox = new QCheckBox("Spur", spectrumMeasurementBox);
     markTranslatable(spurSuppressionCheckbox, QStringLiteral("spur"), QStringLiteral("Spur"));
     spurSuppressionCheckbox->setToolTip(uiText(
@@ -1338,6 +1426,16 @@ YourClassName::YourClassName(QWidget *parent)
     scanMeasurementStatusLabel->setMinimumWidth(0);
     scanMeasurementStatusLabel->setWordWrap(false);
     scanMeasurementStatusLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    spectrumScienceMarkerStatusLabel = new QLabel(QStringLiteral("A -- | B --"), spectrumMeasurementBox);
+    spectrumScienceMarkerStatusLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+    spectrumScienceMarkerStatusLabel->setMinimumWidth(0);
+    spectrumScienceMarkerStatusLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    spectrumScienceMetricsLabel = new QLabel(uiText(QStringLiteral("science_waiting"),
+                                                     QStringLiteral("Scientific analysis: waiting for spectrum")),
+                                               spectrumMeasurementBox);
+    spectrumScienceMetricsLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+    spectrumScienceMetricsLabel->setMinimumWidth(0);
+    spectrumScienceMetricsLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
     spurSuppressionStatusLabel = new QLabel(uiText(QStringLiteral("spur_mask_off"),
                                                    QStringLiteral("Spur mask: off")), spectrumMeasurementBox);
     spurSuppressionStatusLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
@@ -1353,6 +1451,11 @@ YourClassName::YourClassName(QWidget *parent)
     QVBoxLayout *scanMeasurementPanelLayout = new QVBoxLayout();
     QHBoxLayout *scanMeasurementTopLayout = new QHBoxLayout();
     QHBoxLayout *scanMeasurementButtonLayout = new QHBoxLayout();
+    QVBoxLayout *spectrumSciencePanelLayout = new QVBoxLayout();
+    QHBoxLayout *spectrumScienceMarkerLayout = new QHBoxLayout();
+    QHBoxLayout *spectrumScienceMarkerNavigationLayout = new QHBoxLayout();
+    QHBoxLayout *spectrumScienceTraceLayout = new QHBoxLayout();
+    QGridLayout *spectrumScienceActionLayout = new QGridLayout();
     QVBoxLayout *spurSuppressionPanelLayout = new QVBoxLayout();
     QHBoxLayout *spurSuppressionLayout = new QHBoxLayout();
     agileScanPresetLayout->addWidget(agileScanCheckbox);
@@ -1408,6 +1511,51 @@ YourClassName::YourClassName(QWidget *parent)
     scanMeasurementPanelLayout->addLayout(scanMeasurementButtonLayout);
     scanMeasurementPanelLayout->addWidget(scanMeasurementStatusLabel);
     spectrumMeasurementLayout->addLayout(scanMeasurementPanelLayout);
+
+    QLabel *scienceMarkerLabel = new QLabel("Marker:", spectrumMeasurementBox);
+    markTranslatable(scienceMarkerLabel, QStringLiteral("science_marker"), QStringLiteral("Marker:"));
+    spectrumScienceSetButton->setMaximumWidth(48);
+    spectrumSciencePeakButton->setMaximumWidth(52);
+    spectrumSciencePreviousButton->setMaximumWidth(72);
+    spectrumScienceNextButton->setMaximumWidth(72);
+    spectrumScienceClearButton->setMaximumWidth(54);
+    spectrumScienceMarkerLayout->setContentsMargins(0, 4, 0, 0);
+    spectrumScienceMarkerLayout->setSpacing(4);
+    spectrumScienceMarkerLayout->addWidget(scienceMarkerLabel);
+    spectrumScienceMarkerLayout->addWidget(spectrumScienceMarkerCombo);
+    spectrumScienceMarkerLayout->addWidget(spectrumScienceSetButton);
+    spectrumScienceMarkerLayout->addWidget(spectrumSciencePeakButton);
+    spectrumScienceMarkerLayout->addStretch(1);
+    spectrumScienceMarkerNavigationLayout->setContentsMargins(0, 0, 0, 0);
+    spectrumScienceMarkerNavigationLayout->setSpacing(4);
+    spectrumScienceMarkerNavigationLayout->addWidget(spectrumSciencePreviousButton);
+    spectrumScienceMarkerNavigationLayout->addWidget(spectrumScienceNextButton);
+    spectrumScienceMarkerNavigationLayout->addWidget(spectrumScienceClearButton);
+    spectrumScienceMarkerNavigationLayout->addStretch(1);
+    spectrumScienceTraceLayout->setContentsMargins(0, 0, 0, 0);
+    spectrumScienceTraceLayout->setSpacing(4);
+    spectrumScienceTraceLayout->addWidget(spectrumScienceMaxHoldCheckbox);
+    spectrumScienceTraceLayout->addWidget(spectrumScienceMinHoldCheckbox);
+    spectrumScienceTraceLayout->addWidget(spectrumScienceAverageCheckbox);
+    spectrumScienceTraceLayout->addWidget(spectrumScienceAverageSpin);
+    spectrumScienceTraceLayout->addStretch(1);
+    spectrumScienceActionLayout->setContentsMargins(0, 0, 0, 0);
+    spectrumScienceActionLayout->setSpacing(4);
+    spectrumScienceActionLayout->addWidget(spectrumScienceResetButton, 0, 0);
+    spectrumScienceActionLayout->addWidget(spectrumScienceExportButton, 0, 1);
+    spectrumScienceActionLayout->addWidget(zeroSpanButton, 1, 0);
+    spectrumScienceActionLayout->addWidget(researchToolsButton, 1, 1);
+    spectrumScienceActionLayout->setColumnStretch(0, 1);
+    spectrumScienceActionLayout->setColumnStretch(1, 1);
+    spectrumSciencePanelLayout->setContentsMargins(0, 0, 0, 0);
+    spectrumSciencePanelLayout->setSpacing(2);
+    spectrumSciencePanelLayout->addLayout(spectrumScienceMarkerLayout);
+    spectrumSciencePanelLayout->addLayout(spectrumScienceMarkerNavigationLayout);
+    spectrumSciencePanelLayout->addLayout(spectrumScienceTraceLayout);
+    spectrumSciencePanelLayout->addLayout(spectrumScienceActionLayout);
+    spectrumSciencePanelLayout->addWidget(spectrumScienceMarkerStatusLabel);
+    spectrumSciencePanelLayout->addWidget(spectrumScienceMetricsLabel);
+    spectrumMeasurementLayout->addLayout(spectrumSciencePanelLayout);
 
     spurSuppressionLayout->setContentsMargins(0, 0, 0, 0);
     spurSuppressionLayout->setSpacing(4);
@@ -2419,7 +2567,8 @@ YourClassName::YourClassName(QWidget *parent)
     hfNoiseCancelLayout->addWidget(hfInterferenceBaselineLearnButton, 0, 2);
     hfNoiseCancelLayout->addWidget(hfInterferenceBaselineClearButton, 0, 3);
     hfNoiseCancelLayout->addWidget(hfInterferenceDefaultsButton, 0, 4);
-    hfNoiseCancelLayout->addWidget(hfInterferenceBaselineStatusLabel, 1, 0, 1, 5);
+    hfNoiseCancelLayout->addWidget(hfInterferenceBaselineStatusLabel, 1, 0, 1, 4);
+    hfNoiseCancelLayout->addWidget(hfInterferenceAnalyzeButton, 1, 4);
     hfNoiseCancelLayout->addWidget(hfInterferenceBaselineDepthLabel, 2, 0);
     hfNoiseCancelLayout->addWidget(hfInterferenceBaselineDepthSlider, 2, 1, 1, 4);
     hfNoiseCancelLayout->addWidget(hfInterferenceBaselineSmoothLabel, 3, 0);
@@ -2480,26 +2629,23 @@ YourClassName::YourClassName(QWidget *parent)
     prepareReceiverCombo(fftComboBox);
     prepareReceiverCombo(sampleBox);
 
-    auto makeReceiverComboRow = [this](QLabel *label, QWidget *control) {
-        QHBoxLayout *row = new QHBoxLayout();
-        row->setContentsMargins(0, 0, 0, 0);
-        row->setSpacing(4);
-        if (label) {
-            label->setMinimumWidth(48);
-            row->addWidget(label, 0);
-        }
-        if (control) {
-            row->addWidget(control, 1);
-        }
-        return row;
-    };
-
-    QVBoxLayout *receiverRowsLayout = new QVBoxLayout();
-    receiverRowsLayout->setSpacing(2);
-    receiverRowsLayout->addLayout(makeReceiverComboRow(clockSourceLabel, clkBox));
-    receiverRowsLayout->addLayout(makeReceiverComboRow(inputModeLabel, modeBox));
-    receiverRowsLayout->addLayout(makeReceiverComboRow(fftLabel, fftComboBox));
-    receiverRowsLayout->addLayout(makeReceiverComboRow(sampleRateLabel, sampleBox));
+    QGridLayout *receiverRowsLayout = new QGridLayout();
+    receiverRowsLayout->setContentsMargins(0, 0, 0, 0);
+    receiverRowsLayout->setHorizontalSpacing(4);
+    receiverRowsLayout->setVerticalSpacing(2);
+    for (QLabel *label : {clockSourceLabel, inputModeLabel, fftLabel, sampleRateLabel}) {
+        if (label) label->setMinimumWidth(0);
+    }
+    receiverRowsLayout->addWidget(clockSourceLabel, 0, 0);
+    receiverRowsLayout->addWidget(clkBox, 0, 1);
+    receiverRowsLayout->addWidget(fftLabel, 0, 2);
+    receiverRowsLayout->addWidget(fftComboBox, 0, 3);
+    receiverRowsLayout->addWidget(inputModeLabel, 1, 0);
+    receiverRowsLayout->addWidget(modeBox, 1, 1);
+    receiverRowsLayout->addWidget(sampleRateLabel, 1, 2);
+    receiverRowsLayout->addWidget(sampleBox, 1, 3);
+    receiverRowsLayout->setColumnStretch(1, 1);
+    receiverRowsLayout->setColumnStretch(3, 1);
 
     QVBoxLayout *fineTuneLayout = new QVBoxLayout();
     fineTuneLayout->setSpacing(2);
@@ -2522,9 +2668,11 @@ YourClassName::YourClassName(QWidget *parent)
     fineTuneLayout->addWidget(fineTuneStack);
     fineTuneLayout->addWidget(presetManagerButton);
 
-    QHBoxLayout *receiverControlLayout = new QHBoxLayout();
-    receiverControlLayout->addLayout(receiverRowsLayout, 1);
-    receiverControlLayout->addLayout(fineTuneLayout, 0);
+    QVBoxLayout *receiverControlLayout = new QVBoxLayout();
+    receiverControlLayout->setContentsMargins(0, 0, 0, 0);
+    receiverControlLayout->setSpacing(3);
+    receiverControlLayout->addLayout(receiverRowsLayout);
+    receiverControlLayout->addLayout(fineTuneLayout);
 
     QHBoxLayout *startStopLayout = new QHBoxLayout();
     startStopLayout->addWidget(startButton, 2);
@@ -2667,11 +2815,14 @@ YourClassName::YourClassName(QWidget *parent)
     waterfall3DSection.contentLayout->addLayout(waterfall3DSliceWidthLayout);
     waterfall3DSection.contentLayout->addLayout(waterfall3DSpectrumSliceStepLayout);
     waterfall3DSection.contentLayout->addLayout(waterfall3DSpectrumSliceRowsLayout);
+    waterfall3DSection.contentLayout->addLayout(waterfall3DSpectrumSliceCaptureLayout);
     waterfall3DSection.contentLayout->addLayout(waterfall3DVncSliceInputLayout);
+    waterfall3DSection.contentLayout->addLayout(waterfall3DGradientLayout);
     waterfall3DSection.contentLayout->addLayout(alternativeSpectrumGradientOpacityLayout);
 
     layout->addWidget(deviceSection.widget);
     layout->addWidget(receiverSection.widget);
+    layout->addWidget(audioSection.widget);
     layout->addWidget(hfCancelSection.widget);
     layout->addWidget(scanSection.widget);
     layout->addWidget(spectrumMeasurementSection.widget);
@@ -2681,7 +2832,6 @@ YourClassName::YourClassName(QWidget *parent)
     layout->addWidget(fpvHunterSection.widget);
     layout->addWidget(digitalVideoHunterSection.widget);
     layout->addWidget(gpioSection.widget);
-    layout->addWidget(audioSection.widget);
     layout->addWidget(recordingSection.widget);
     layout->addWidget(waterfall3DSection.widget);
     layout->addStretch(1);
@@ -4225,6 +4375,56 @@ YourClassName::YourClassName(QWidget *parent)
     });
     connect(scanMeasurementResetPeakButton, &QPushButton::clicked, this, &YourClassName::resetScanMeasurementPeaks);
     connect(scanMeasurementExportButton, &QPushButton::clicked, this, &YourClassName::exportScanMeasurementCsv);
+    connect(spectrumScienceMarkerCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
+        spectrumScienceActiveMarker = (std::clamp)(index, 0, 1);
+        updateSpectrumScienceUi();
+    });
+    connect(spectrumScienceSetButton, &QPushButton::clicked, this, [this]() {
+        setSpectrumScienceMarker(pendingSettings.listeningFrequency);
+    });
+    connect(spectrumSciencePeakButton, &QPushButton::clicked, this, [this]() {
+        setSpectrumScienceMarker(spectrumScienceAnalyzer.strongestPeakFrequency());
+    });
+    connect(spectrumSciencePreviousButton, &QPushButton::clicked, this, [this]() {
+        setSpectrumScienceMarker(spectrumScienceAnalyzer.adjacentPeakFrequency(spectrumScienceActiveMarker, -1));
+    });
+    connect(spectrumScienceNextButton, &QPushButton::clicked, this, [this]() {
+        setSpectrumScienceMarker(spectrumScienceAnalyzer.adjacentPeakFrequency(spectrumScienceActiveMarker, 1));
+    });
+    connect(spectrumScienceClearButton, &QPushButton::clicked, this, [this]() {
+        spectrumScienceAnalyzer.clearMarker(spectrumScienceActiveMarker);
+        updateSpectrumScienceUi();
+    });
+    auto applyScienceTraceSettings = [this]() {
+        spectrumScienceMaxHoldEnabled = spectrumScienceMaxHoldCheckbox && spectrumScienceMaxHoldCheckbox->isChecked();
+        spectrumScienceMinHoldEnabled = spectrumScienceMinHoldCheckbox && spectrumScienceMinHoldCheckbox->isChecked();
+        spectrumScienceAverageEnabled = spectrumScienceAverageCheckbox && spectrumScienceAverageCheckbox->isChecked();
+        spectrumScienceAnalyzer.setTraceEnabled(spectrumScienceMaxHoldEnabled,
+                                                spectrumScienceMinHoldEnabled,
+                                                spectrumScienceAverageEnabled);
+        updateSpectrumScienceUi();
+        if (persistentSettingsReady) savePersistentSettings();
+    };
+    connect(spectrumScienceMaxHoldCheckbox, &QCheckBox::toggled, this, [applyScienceTraceSettings](bool) { applyScienceTraceSettings(); });
+    connect(spectrumScienceMinHoldCheckbox, &QCheckBox::toggled, this, [applyScienceTraceSettings](bool) { applyScienceTraceSettings(); });
+    connect(spectrumScienceAverageCheckbox, &QCheckBox::toggled, this, [applyScienceTraceSettings](bool) { applyScienceTraceSettings(); });
+    connect(spectrumScienceAverageSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double seconds) {
+        spectrumScienceAverageSeconds = (std::clamp)(seconds, 0.05, 60.0);
+        spectrumScienceAnalyzer.setAverageTimeSeconds(spectrumScienceAverageSeconds);
+        if (persistentSettingsReady) savePersistentSettings();
+    });
+    connect(spectrumScienceResetButton, &QPushButton::clicked, this, [this]() {
+        spectrumScienceAnalyzer.resetTraces();
+        updateSpectrumScienceUi();
+    });
+    connect(spectrumScienceExportButton, &QPushButton::clicked, this, &YourClassName::exportSpectrumScienceCsv);
+    connect(zeroSpanButton, &QPushButton::clicked, this, &YourClassName::openZeroSpanDialog);
+    connect(researchToolsButton, &QPushButton::clicked, this, [this]() {
+        openResearchAnalysis(0);
+    });
+    connect(hfInterferenceAnalyzeButton, &QPushButton::clicked, this, [this]() {
+        openResearchAnalysis(0);
+    });
     connect(dmrHunterControls, &SpectrumHunterControls::detectToggled, this, [this](bool checked) {
         dmrHunterSettings.enabled = checked;
         if (!checked) {
@@ -4487,6 +4687,17 @@ YourClassName::YourClassName(QWidget *parent)
     connect(waterfallWidget, &MyWaterfallWidget::tuneContextRequested, this, &YourClassName::showTuneContextMenu);
     connect(graphWidget, &MyGraphWidget::autoTuneRequested, this, &YourClassName::tuneSignalCenterAt);
     connect(waterfallWidget, &MyWaterfallWidget::autoTuneRequested, this, &YourClassName::tuneSignalCenterAt);
+    connect(graphWidget, &MyGraphWidget::scienceMarkerRequested, this, &YourClassName::setSpectrumScienceMarker);
+    spectrumScienceAnalyzer.setTraceEnabled(spectrumScienceMaxHoldEnabled,
+                                            spectrumScienceMinHoldEnabled,
+                                            spectrumScienceAverageEnabled);
+    spectrumScienceAnalyzer.setAverageTimeSeconds(spectrumScienceAverageSeconds);
+    spectrumScienceAnalyzer.setAverageFrameCount(spectrumAverageFrameCount);
+    spectrumScienceAnalyzer.setDetector(spectrumDetectorMode, spectrumDetectorFrames);
+    spectrumScienceAnalyzer.setVbwHz(spectrumVbwHz);
+    spectrumScienceAnalyzer.setPercentileTraces(spectrumPercentile50Enabled,
+                                                spectrumPercentile90Enabled,
+                                                spectrumPercentile99Enabled);
     connect(waterfallDisplayModeCombo,
             qOverload<int>(&QComboBox::currentIndexChanged),
             this,
@@ -4589,6 +4800,24 @@ YourClassName::YourClassName(QWidget *parent)
                 }
                 savePersistentSettings();
             });
+    connect(waterfall3DFixedPlaneCheckbox,
+            &QCheckBox::toggled,
+            this,
+            [this](bool checked) {
+                waterfall3DFixedPlane = checked;
+                if (waterfallWidget) {
+                    waterfallWidget->set3DFixedPlane(checked);
+                }
+                const bool gradientAvailable = alternativeInterfaceMode || checked;
+                if (alternativeSpectrumGradientCheckbox) {
+                    alternativeSpectrumGradientCheckbox->setEnabled(gradientAvailable);
+                }
+                if (alternativeSpectrumGradientOpacitySlider) {
+                    alternativeSpectrumGradientOpacitySlider->setEnabled(
+                        gradientAvailable && alternativeSpectrumGradientFill);
+                }
+                savePersistentSettings();
+            });
     connect(waterfall3DVncSliceInputCheckbox,
             &QCheckBox::toggled,
             this,
@@ -4606,7 +4835,7 @@ YourClassName::YourClassName(QWidget *parent)
                 alternativeSpectrumGradientFill = checked;
                 if (alternativeSpectrumGradientOpacitySlider) {
                     alternativeSpectrumGradientOpacitySlider->setEnabled(
-                        alternativeInterfaceMode && checked);
+                        (alternativeInterfaceMode || waterfall3DFixedPlane) && checked);
                 }
                 if (waterfallWidget) {
                     waterfallWidget->setAlternativeSpectrumGradientFill(checked);
@@ -4908,24 +5137,50 @@ void YourClassName::closeEvent(QCloseEvent *event) {
     QMainWindow::closeEvent(event);
 }
 
+double YourClassName::effectiveFrequencyCalibrationOffsetHz(double logicalFrequencyHz) const {
+    double offsetHz = std::isfinite(frequencyCalibrationOffsetHz)
+                          ? frequencyCalibrationOffsetHz
+                          : 0.0;
+    if (calibrationTableEnabled) {
+        const ReceiverCalibrationCorrection correction =
+            receiverCalibrationTable.correctionAt(logicalFrequencyHz);
+        if (correction.valid && std::isfinite(correction.frequencyOffsetHz)) {
+            offsetHz += correction.frequencyOffsetHz;
+        }
+    }
+    return offsetHz;
+}
+
+double YourClassName::effectiveAmplitudeCalibrationOffsetDb(double frequencyHz) const {
+    double offsetDb = std::isfinite(amplitudeCalibrationOffsetDb)
+                          ? amplitudeCalibrationOffsetDb
+                          : 0.0;
+    if (calibrationTableEnabled) {
+        const ReceiverCalibrationCorrection correction =
+            receiverCalibrationTable.correctionAt(frequencyHz);
+        if (correction.valid && std::isfinite(correction.amplitudeOffsetDb)) {
+            offsetDb += correction.amplitudeOffsetDb;
+        }
+    }
+    return offsetDb;
+}
+
 double YourClassName::calibratedHardwareFrequency(double logicalFrequencyHz) const {
     if (!std::isfinite(logicalFrequencyHz)) {
         return logicalFrequencyHz;
     }
-    const double offsetHz = std::isfinite(frequencyCalibrationOffsetHz)
-                                ? frequencyCalibrationOffsetHz
-                                : 0.0;
-    return logicalFrequencyHz + offsetHz;
+    return logicalFrequencyHz + effectiveFrequencyCalibrationOffsetHz(logicalFrequencyHz);
 }
 
 int YourClassName::setCalibratedActiveFrequencySafely(double logicalFrequencyHz,
                                                        double *logicalActualFrequencyHz) {
-    double hardwareActualFrequencyHz = calibratedHardwareFrequency(logicalFrequencyHz);
-    const int result = setActiveFrequencySafely(calibratedHardwareFrequency(logicalFrequencyHz),
+    const double offsetHz = effectiveFrequencyCalibrationOffsetHz(logicalFrequencyHz);
+    double hardwareActualFrequencyHz = logicalFrequencyHz + offsetHz;
+    const int result = setActiveFrequencySafely(hardwareActualFrequencyHz,
                                                 &hardwareActualFrequencyHz);
     if (logicalActualFrequencyHz) {
         *logicalActualFrequencyHz = result == FOBOS_ERR_OK
-                                        ? hardwareActualFrequencyHz - frequencyCalibrationOffsetHz
+                                        ? hardwareActualFrequencyHz - offsetHz
                                         : logicalFrequencyHz;
     }
     return result;
@@ -4933,7 +5188,8 @@ int YourClassName::setCalibratedActiveFrequencySafely(double logicalFrequencyHz,
 
 void YourClassName::applyReceiverCalibrationLive() {
     if (processor) {
-        processor->setFrequencyCalibrationOffset(frequencyCalibrationOffsetHz);
+        processor->setFrequencyCalibrationOffset(
+            effectiveFrequencyCalibrationOffsetHz(pendingSettings.centerFrequency));
     }
     if (pendingSettings.inputMode != INPUT_RF || pendingSettings.centerFrequency <= 0.0) {
         return;
@@ -4966,8 +5222,12 @@ void YourClassName::applyReceiverCalibrationLive() {
         liveRetuneSettleTimer.start();
     }
     qDebug() << "[Calibration] receiver offsets applied"
-             << "frequencyHz" << frequencyCalibrationOffsetHz
-             << "amplitudeDb" << amplitudeCalibrationOffsetDb
+             << "baseFrequencyHz" << frequencyCalibrationOffsetHz
+             << "effectiveFrequencyHz" << effectiveFrequencyCalibrationOffsetHz(pendingSettings.centerFrequency)
+             << "baseAmplitudeDb" << amplitudeCalibrationOffsetDb
+             << "effectiveAmplitudeDb" << effectiveAmplitudeCalibrationOffsetDb(pendingSettings.centerFrequency)
+             << "tableEnabled" << calibrationTableEnabled
+             << "tablePoints" << receiverCalibrationTable.points().size()
              << "logicalCenter" << pendingSettings.centerFrequency
              << "hardwareCenter" << calibratedHardwareFrequency(pendingSettings.centerFrequency)
              << "liveRetuned" << applied;
@@ -5163,7 +5423,7 @@ bool YourClassName::restartStreamForHardwareChange() {
                                                                  activeFobosApiKind == FobosApiKind::Agile
                                                              ? activeAgileScanFrequencies
                                                              : QVector<double>(),
-                                                         frequencyCalibrationOffsetHz));
+                                                         effectiveFrequencyCalibrationOffsetHz(pendingSettings.centerFrequency)));
 
     if (activeFobosApiKind == FobosApiKind::Agile &&
         pendingSettings.inputMode == INPUT_RF &&
@@ -5805,10 +6065,13 @@ bool YourClassName::applyCenterFrequencyToHardwareIfNeeded(const RadioSettings &
                                previousSettings.centerFrequency,
                                pendingSettings.centerFrequency,
                                pendingSettings.actualFrequency);
-        const bool retuned =
-            processor &&
-            processor->isRunning() &&
-            processor->retuneCenterFrequency(pendingSettings.centerFrequency);
+        if (processor) {
+            processor->setFrequencyCalibrationOffset(
+                effectiveFrequencyCalibrationOffsetHz(pendingSettings.centerFrequency));
+        }
+        const bool retuned = processor &&
+                             processor->isRunning() &&
+                             processor->retuneCenterFrequency(pendingSettings.centerFrequency);
         qDebug() << "[LiveTune]" << reason
                  << "RTL center retune"
                  << "previous" << previousSettings.centerFrequency
@@ -7203,7 +7466,7 @@ void YourClassName::startFobosProcessing() {
                                                                      activeFobosApiKind == FobosApiKind::Agile
                                                                  ? activeAgileScanFrequencies
                                                                  : QVector<double>(),
-                                                             frequencyCalibrationOffsetHz));
+                                                             effectiveFrequencyCalibrationOffsetHz(pendingSettings.centerFrequency)));
     }
     if (!externalBackendSelected &&
         activeFobosApiKind == FobosApiKind::Agile &&
@@ -7613,6 +7876,7 @@ void YourClassName::stopFobosProcessing() {
 
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
+    QCoreApplication::setApplicationName(QStringLiteral("FobosAPP"));
     app.setWindowIcon(QIcon(QStringLiteral(":/icons/fobosapp.png")));
     installDiagnosticLogger();
     installCrashLogger();

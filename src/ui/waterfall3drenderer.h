@@ -45,6 +45,7 @@ public:
     void setSpectrumSliceCaptureFixed(bool enabled);
     void setFixedFrontPresentation(bool enabled);
     void setFixedFrontExpanded(bool enabled);
+    void setFrontFaceGradient(bool enabled, int opacityPercent);
     bool beginFrequencySlice(int screenX, int screenY, int viewportWidth, int viewportHeight);
     bool beginSpectrumSlice(int screenX, int screenY, int viewportWidth, int viewportHeight);
     void stepFrequencySlice(int direction);
@@ -104,6 +105,8 @@ private:
     bool spectrumSliceCaptureFixed = false;
     bool fixedFrontPresentation = false;
     bool fixedFrontExpanded = false;
+    bool frontFaceGradient = false;
+    int frontFaceGradientOpacity = 70;
     std::vector<HistoryRow> capturedSpectrumRows;
     int capturedSpectrumFirstRow = -1;
     int capturedSpectrumRowsRemaining = 0;

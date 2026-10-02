@@ -367,6 +367,30 @@ void YourClassName::loadPersistentSettings() {
                                     scanMeasurementUpdateIntervalMs).toInt(),
                      SCAN_MEASUREMENT_MIN_UPDATE_MS,
                      SCAN_MEASUREMENT_MAX_UPDATE_MS);
+    spectrumScienceMaxHoldEnabled = settings.value("spectrumScience/maxHold", spectrumScienceMaxHoldEnabled).toBool();
+    spectrumScienceMinHoldEnabled = settings.value("spectrumScience/minHold", spectrumScienceMinHoldEnabled).toBool();
+    spectrumScienceAverageEnabled = settings.value("spectrumScience/average", spectrumScienceAverageEnabled).toBool();
+    spectrumScienceAverageSeconds = (std::clamp)(settings.value("spectrumScience/averageSeconds",
+                                                                spectrumScienceAverageSeconds).toDouble(),
+                                                  0.05,
+                                                  60.0);
+    spectrumDetectorMode = normalizedSpectrumDetectorMode(
+        settings.value("spectrumScience/detectorMode", spectrumDetectorMode).toInt());
+    spectrumDetectorFrames = (std::clamp)(
+        settings.value("spectrumScience/detectorFrames", spectrumDetectorFrames).toInt(), 1, 256);
+    spectrumVbwHz = (std::clamp)(
+        settings.value("spectrumScience/vbwHz", spectrumVbwHz).toDouble(), 0.0, 10000.0);
+    spectrumFftOverlapPercent = settings.value("spectrumScience/fftOverlapPercent",
+                                               spectrumFftOverlapPercent).toInt();
+    if (spectrumFftOverlapPercent != 25 && spectrumFftOverlapPercent != 50 &&
+        spectrumFftOverlapPercent != 75) spectrumFftOverlapPercent = 0;
+    spectrumAverageFrameCount = (std::clamp)(
+        settings.value("spectrumScience/averageFrameCount", spectrumAverageFrameCount).toInt(), 0, 10000);
+    spectrumPercentile50Enabled = settings.value("spectrumScience/p50", spectrumPercentile50Enabled).toBool();
+    spectrumPercentile90Enabled = settings.value("spectrumScience/p90", spectrumPercentile90Enabled).toBool();
+    spectrumPercentile99Enabled = settings.value("spectrumScience/p99", spectrumPercentile99Enabled).toBool();
+    spectrumAmplitudeUnit = (std::clamp)(settings.value("spectrumScience/amplitudeUnit",
+                                                        spectrumAmplitudeUnit).toInt(), 0, 3);
     dmrHunterSettings.enabled = settings.value("dmrHunter/enabled", dmrHunterSettings.enabled).toBool();
     dmrHunterSettings.minWidthKhz =
         settings.value("dmrHunter/minWidthKhz", dmrHunterSettings.minWidthKhz).toDouble();
@@ -643,6 +667,8 @@ void YourClassName::loadPersistentSettings() {
     diagnosticVerboseLogging =
         settings.value("diagnostics/verboseLogging",
                        fobosVerboseLoggingDefaultEnabled()).toBool();
+    extendedRecordingMetadataEnabled =
+        settings.value("recording/extendedMetadata", extendedRecordingMetadataEnabled).toBool();
     setFobosVerboseLoggingEnabled(diagnosticVerboseLogging);
     qDebug() << "[Log] Verbose diagnostic logging"
              << (diagnosticVerboseLogging ? "enabled" : "disabled")
@@ -690,6 +716,23 @@ void YourClassName::loadPersistentSettings() {
                                     amplitudeCalibrationOffsetDb).toDouble(),
                      -200.0,
                      200.0);
+    calibrationTableEnabled =
+        settings.value("calibration/tableEnabled", calibrationTableEnabled).toBool();
+    QVector<ReceiverCalibrationPoint> calibrationPoints;
+    const int calibrationPointCount = settings.beginReadArray(QStringLiteral("calibration/table"));
+    calibrationPoints.reserve(calibrationPointCount);
+    for (int i = 0; i < calibrationPointCount; ++i) {
+        settings.setArrayIndex(i);
+        ReceiverCalibrationPoint point;
+        point.frequencyHz = settings.value(QStringLiteral("frequencyHz")).toDouble();
+        point.frequencyOffsetHz = settings.value(QStringLiteral("frequencyOffsetHz")).toDouble();
+        point.amplitudeOffsetDb = settings.value(QStringLiteral("amplitudeOffsetDb")).toDouble();
+        point.uncertaintyDb = settings.value(QStringLiteral("uncertaintyDb"), 0.0).toDouble();
+        point.note = settings.value(QStringLiteral("note")).toString();
+        calibrationPoints.append(point);
+    }
+    settings.endArray();
+    receiverCalibrationTable.setPoints(calibrationPoints);
     waterfallRowsPerFrame =
         (std::clamp)(settings.value("ui/waterfallRowsPerFrame",
                                     WATERFALL_ROWS_PER_FRAME_DEFAULT).toInt(),
@@ -763,6 +806,8 @@ void YourClassName::loadPersistentSettings() {
     waterfall3DSpectrumSliceCaptureFixed =
         settings.value("ui/waterfall3DSpectrumSliceCaptureFixed",
                        waterfall3DSpectrumSliceCaptureFixed).toBool();
+    waterfall3DFixedPlane =
+        settings.value("ui/waterfall3DFixedPlane", waterfall3DFixedPlane).toBool();
     waterfall3DVncSliceInput =
         settings.value("ui/waterfall3DVncSliceInput",
                        waterfall3DVncSliceInput).toBool();
@@ -791,6 +836,10 @@ void YourClassName::loadPersistentSettings() {
         waterfall3DSpectrumSliceCaptureFixedCheckbox->setChecked(waterfall3DSpectrumSliceCaptureFixed);
         waterfall3DSpectrumSliceCaptureFixedCheckbox->setEnabled(waterfall3DSpectrumSliceCapture);
     }
+    if (waterfall3DFixedPlaneCheckbox) {
+        QSignalBlocker blocker(waterfall3DFixedPlaneCheckbox);
+        waterfall3DFixedPlaneCheckbox->setChecked(waterfall3DFixedPlane);
+    }
     if (waterfall3DVncSliceInputCheckbox) {
         QSignalBlocker blocker(waterfall3DVncSliceInputCheckbox);
         waterfall3DVncSliceInputCheckbox->setChecked(waterfall3DVncSliceInput);
@@ -802,6 +851,7 @@ void YourClassName::loadPersistentSettings() {
         waterfallWidget->set3DSpectrumSliceWidth(waterfall3DSpectrumSliceRows);
         waterfallWidget->set3DSpectrumSliceCapture(waterfall3DSpectrumSliceCapture);
         waterfallWidget->set3DSpectrumSliceCaptureFixed(waterfall3DSpectrumSliceCaptureFixed);
+        waterfallWidget->set3DFixedPlane(waterfall3DFixedPlane);
         waterfallWidget->set3DModifierFreeSliceInput(waterfall3DVncSliceInput);
     }
     alternativeInterfaceMode =
@@ -1303,6 +1353,19 @@ void YourClassName::savePersistentSettings() {
     settings.setValue("spectrumMeasurement/enabled", scanMeasurementEnabled);
     settings.setValue("spectrumMeasurement/binMhz", scanMeasurementBinMhz);
     settings.setValue("spectrumMeasurement/updateIntervalMs", scanMeasurementUpdateIntervalMs);
+    settings.setValue("spectrumScience/maxHold", spectrumScienceMaxHoldEnabled);
+    settings.setValue("spectrumScience/minHold", spectrumScienceMinHoldEnabled);
+    settings.setValue("spectrumScience/average", spectrumScienceAverageEnabled);
+    settings.setValue("spectrumScience/averageSeconds", spectrumScienceAverageSeconds);
+    settings.setValue("spectrumScience/detectorMode", spectrumDetectorMode);
+    settings.setValue("spectrumScience/detectorFrames", spectrumDetectorFrames);
+    settings.setValue("spectrumScience/vbwHz", spectrumVbwHz);
+    settings.setValue("spectrumScience/fftOverlapPercent", spectrumFftOverlapPercent);
+    settings.setValue("spectrumScience/averageFrameCount", spectrumAverageFrameCount);
+    settings.setValue("spectrumScience/p50", spectrumPercentile50Enabled);
+    settings.setValue("spectrumScience/p90", spectrumPercentile90Enabled);
+    settings.setValue("spectrumScience/p99", spectrumPercentile99Enabled);
+    settings.setValue("spectrumScience/amplitudeUnit", spectrumAmplitudeUnit);
     settings.setValue("dmrHunter/enabled", dmrHunterSettings.enabled);
     settings.setValue("dmrHunter/minWidthKhz", dmrHunterSettings.minWidthKhz);
     settings.setValue("dmrHunter/maxWidthKhz", dmrHunterSettings.maxWidthKhz);
@@ -1457,6 +1520,7 @@ void YourClassName::savePersistentSettings() {
     settings.setValue("display/compactBandMarkers", compactBandMarkers);
     settings.setValue("display/spurSuppressionEnabled", spurSuppressionEnabled);
     settings.setValue("diagnostics/verboseLogging", diagnosticVerboseLogging);
+    settings.setValue("recording/extendedMetadata", extendedRecordingMetadataEnabled);
     settings.beginWriteArray(QStringLiteral("display/spurMask"));
     int spurMaskIndex = 0;
     for (const SpurMaskEntry &entry : std::as_const(spurMaskEntries)) {
@@ -1478,6 +1542,18 @@ void YourClassName::savePersistentSettings() {
     settings.setValue("ui/spectrumUpdateIntervalMs", spectrumUpdateIntervalMs);
     settings.setValue("calibration/frequencyOffsetHz", frequencyCalibrationOffsetHz);
     settings.setValue("calibration/amplitudeOffsetDb", amplitudeCalibrationOffsetDb);
+    settings.setValue("calibration/tableEnabled", calibrationTableEnabled);
+    settings.beginWriteArray(QStringLiteral("calibration/table"));
+    int calibrationPointIndex = 0;
+    for (const ReceiverCalibrationPoint &point : receiverCalibrationTable.points()) {
+        settings.setArrayIndex(calibrationPointIndex++);
+        settings.setValue(QStringLiteral("frequencyHz"), point.frequencyHz);
+        settings.setValue(QStringLiteral("frequencyOffsetHz"), point.frequencyOffsetHz);
+        settings.setValue(QStringLiteral("amplitudeOffsetDb"), point.amplitudeOffsetDb);
+        settings.setValue(QStringLiteral("uncertaintyDb"), point.uncertaintyDb);
+        settings.setValue(QStringLiteral("note"), point.note);
+    }
+    settings.endArray();
     settings.setValue("ui/waterfallRowsPerFrame", waterfallRowsPerFrame);
     settings.setValue("ui/waterfallDisplayMode", waterfallDisplayMode);
     settings.setValue("ui/waterfall3DResolutionDivisor", waterfall3DResolutionDivisor);
@@ -1488,6 +1564,7 @@ void YourClassName::savePersistentSettings() {
     settings.setValue("ui/waterfall3DSpectrumSliceRows", waterfall3DSpectrumSliceRows);
     settings.setValue("ui/waterfall3DSpectrumSliceCapture", waterfall3DSpectrumSliceCapture);
     settings.setValue("ui/waterfall3DSpectrumSliceCaptureFixed", waterfall3DSpectrumSliceCaptureFixed);
+    settings.setValue("ui/waterfall3DFixedPlane", waterfall3DFixedPlane);
     settings.setValue("ui/waterfall3DVncSliceInput", waterfall3DVncSliceInput);
     settings.setValue("ui/alternativeInterfaceMode", alternativeInterfaceMode);
     settings.setValue("ui/alternativeSpectrumGradientFill", alternativeSpectrumGradientFill);

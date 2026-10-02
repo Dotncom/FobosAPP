@@ -5,6 +5,7 @@
 
 #include <QAbstractItemView>
 #include <QComboBox>
+#include <QCheckBox>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QHeaderView>
@@ -18,6 +19,24 @@
 
 #include <algorithm>
 #include <cmath>
+
+namespace {
+
+class NumericTableWidgetItem : public QTableWidgetItem {
+public:
+    using QTableWidgetItem::QTableWidgetItem;
+
+    bool operator<(const QTableWidgetItem &other) const override {
+        bool leftOk = false;
+        bool rightOk = false;
+        const double left = text().toDouble(&leftOk);
+        const double right = other.text().toDouble(&rightOk);
+        return leftOk && rightOk ? left < right : QTableWidgetItem::operator<(other);
+    }
+};
+
+} // namespace
+
 void YourClassName::openPresetManager() {
     ensureDefaultFrequencyPresets();
     ensureDefaultBandMarkers();
@@ -187,7 +206,7 @@ void YourClassName::openPresetManager() {
         QWidget *page = new QWidget(&dialog);
         QVBoxLayout *pageLayout = new QVBoxLayout(page);
         QTableWidget *table = new QTableWidget(page);
-        table->setColumnCount(4);
+        table->setColumnCount(5);
         table->setHorizontalHeaderLabels({uiText(QStringLiteral("name"), QStringLiteral("Name")),
                                           uiText(QStringLiteral("centers_mhz_plain"), QStringLiteral("Centers MHz")),
                                           uiText(QStringLiteral("dwell_ms"), QStringLiteral("Dwell ms")),
@@ -455,6 +474,91 @@ void YourClassName::openPresetManager() {
         return table;
     };
 
+    QCheckBox *calibrationEnabledCheckbox = nullptr;
+    auto makeCalibrationTab = [this, &dialog, &calibrationEnabledCheckbox]() -> QTableWidget * {
+        QWidget *page = new QWidget(&dialog);
+        QVBoxLayout *pageLayout = new QVBoxLayout(page);
+        calibrationEnabledCheckbox = new QCheckBox(
+            uiText(QStringLiteral("calibration_table_enabled"), QStringLiteral("Use frequency-dependent calibration table")),
+            page);
+        calibrationEnabledCheckbox->setChecked(calibrationTableEnabled);
+        calibrationEnabledCheckbox->setToolTip(uiText(
+            QStringLiteral("calibration_table_enabled_tooltip"),
+            QStringLiteral("Linearly interpolate frequency and amplitude corrections between calibration points. Outside the table range, use the nearest endpoint.")));
+        pageLayout->addWidget(calibrationEnabledCheckbox);
+
+        QTableWidget *table = new QTableWidget(page);
+        table->setColumnCount(4);
+        table->setHorizontalHeaderLabels({
+            uiText(QStringLiteral("calibration_frequency_mhz"), QStringLiteral("Frequency MHz")),
+            uiText(QStringLiteral("calibration_frequency_offset_hz"), QStringLiteral("Frequency correction Hz")),
+            uiText(QStringLiteral("calibration_amplitude_offset_db"), QStringLiteral("Amplitude correction dB")),
+            uiText(QStringLiteral("calibration_uncertainty_db"), QStringLiteral("Uncertainty +/- dB")),
+            uiText(QStringLiteral("note"), QStringLiteral("Note"))
+        });
+        table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+        table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+        table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+        table->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
+        table->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Stretch);
+        table->setSelectionBehavior(QAbstractItemView::SelectRows);
+        table->setSelectionMode(QAbstractItemView::SingleSelection);
+        table->setSortingEnabled(false);
+        table->setRowCount(receiverCalibrationTable.points().size());
+        int row = 0;
+        for (const ReceiverCalibrationPoint &point : receiverCalibrationTable.points()) {
+            table->setItem(row, 0, new NumericTableWidgetItem(QString::number(point.frequencyHz / 1000000.0, 'f', 6)));
+            table->setItem(row, 1, new QTableWidgetItem(QString::number(point.frequencyOffsetHz, 'f', 3)));
+            table->setItem(row, 2, new QTableWidgetItem(QString::number(point.amplitudeOffsetDb, 'f', 3)));
+            table->setItem(row, 3, new QTableWidgetItem(QString::number(point.uncertaintyDb, 'f', 2)));
+            table->setItem(row, 4, new QTableWidgetItem(point.note));
+            ++row;
+        }
+
+        QLabel *interpolationHint = new QLabel(
+            uiText(QStringLiteral("calibration_table_hint"),
+                   QStringLiteral("Corrections are added to the global calibration offsets. Use generator reference frequency and level; points are sorted automatically when saved.")),
+            page);
+        interpolationHint->setWordWrap(true);
+
+        QHBoxLayout *buttonLayout = new QHBoxLayout();
+        QPushButton *addButton = new QPushButton(uiText(QStringLiteral("add"), QStringLiteral("Add")), page);
+        QPushButton *removeButton = new QPushButton(uiText(QStringLiteral("remove"), QStringLiteral("Remove")), page);
+        QPushButton *sortButton = new QPushButton(
+            uiText(QStringLiteral("sort_by_frequency"), QStringLiteral("Sort by frequency")), page);
+        buttonLayout->addWidget(addButton);
+        buttonLayout->addWidget(removeButton);
+        buttonLayout->addWidget(sortButton);
+        buttonLayout->addStretch();
+        pageLayout->addWidget(table);
+        pageLayout->addWidget(interpolationHint);
+        pageLayout->addLayout(buttonLayout);
+
+        QObject::connect(addButton, &QPushButton::clicked, table, [this, table]() {
+            const int row = table->rowCount();
+            table->insertRow(row);
+            table->setItem(row, 0, new NumericTableWidgetItem(
+                QString::number((std::max)(0.0, pendingSettings.centerFrequency) / 1000000.0, 'f', 6)));
+            table->setItem(row, 1, new QTableWidgetItem(QStringLiteral("0.000")));
+            table->setItem(row, 2, new QTableWidgetItem(QStringLiteral("0.000")));
+            table->setItem(row, 3, new QTableWidgetItem(QStringLiteral("0.00")));
+            table->setItem(row, 4, new QTableWidgetItem());
+            table->setCurrentCell(row, 0);
+            table->editItem(table->item(row, 0));
+        });
+        QObject::connect(removeButton, &QPushButton::clicked, table, [table]() {
+            if (table->currentRow() >= 0) table->removeRow(table->currentRow());
+        });
+        QObject::connect(sortButton, &QPushButton::clicked, table, [table]() {
+            table->setSortingEnabled(true);
+            table->sortItems(0, Qt::AscendingOrder);
+            table->setSortingEnabled(false);
+        });
+
+        table->setProperty("pageWidget", QVariant::fromValue(static_cast<void*>(page)));
+        return table;
+    };
+
     QTableWidget *centerTable = makeNumericTab(centerFrequencyPresets,
                                               centerFrequencyPresetOrder,
                                               uiText(QStringLiteral("frequency_hz"), QStringLiteral("Frequency Hz")),
@@ -475,6 +579,7 @@ void YourClassName::openPresetManager() {
     QTableWidget *listeningScanTable = makeListeningScanTab(listeningScanPresets, listeningScanPresetOrder);
     QTableWidget *bandMarkerTable = makeBandMarkerTab(bandMarkers);
     QTableWidget *qthMarkerTable = makeQthMarkerTab(qthUserMarkers);
+    QTableWidget *calibrationTable = makeCalibrationTab();
 
     tabs->addTab(static_cast<QWidget*>(centerTable->property("pageWidget").value<void*>()),
                  uiText(QStringLiteral("preset_tab_center"), QStringLiteral("Center")));
@@ -492,6 +597,8 @@ void YourClassName::openPresetManager() {
                  uiText(QStringLiteral("general_band_markers"), QStringLiteral("Band markers")));
     tabs->addTab(static_cast<QWidget*>(qthMarkerTable->property("pageWidget").value<void*>()),
                  uiText(QStringLiteral("preset_tab_qth_markers"), QStringLiteral("QTH markers")));
+    tabs->addTab(static_cast<QWidget*>(calibrationTable->property("pageWidget").value<void*>()),
+                 uiText(QStringLiteral("preset_tab_calibration"), QStringLiteral("Calibration")));
 
     QLabel *hintLabel = new QLabel(uiText(QStringLiteral("presets_hint"),
                                           QStringLiteral("Values are stored in Hz for frequency/audio presets. Scan presets and band-marker ranges are edited in MHz. HAM defaults are Region-1-style hints; edit them for local rules.")),
@@ -767,6 +874,65 @@ void YourClassName::openPresetManager() {
         return true;
     };
 
+    auto readCalibrationTable = [this](QTableWidget *table,
+                                       QVector<ReceiverCalibrationPoint> &target,
+                                       QString *error) {
+        QVector<ReceiverCalibrationPoint> next;
+        for (int row = 0; row < table->rowCount(); ++row) {
+            const QString frequencyText = table->item(row, 0) ? table->item(row, 0)->text().trimmed() : QString();
+            const QString frequencyOffsetText = table->item(row, 1) ? table->item(row, 1)->text().trimmed() : QString();
+            const QString amplitudeOffsetText = table->item(row, 2) ? table->item(row, 2)->text().trimmed() : QString();
+            const QString uncertaintyText = table->item(row, 3) ? table->item(row, 3)->text().trimmed() : QString();
+            const QString note = table->item(row, 4) ? table->item(row, 4)->text().trimmed() : QString();
+            if (frequencyText.isEmpty() && frequencyOffsetText.isEmpty() &&
+                amplitudeOffsetText.isEmpty() && uncertaintyText.isEmpty() && note.isEmpty()) {
+                continue;
+            }
+            bool frequencyOk = false;
+            bool frequencyOffsetOk = false;
+            bool amplitudeOffsetOk = false;
+            bool uncertaintyOk = uncertaintyText.isEmpty();
+            const double frequencyMhz = frequencyText.toDouble(&frequencyOk);
+            const double frequencyOffsetHz = frequencyOffsetText.toDouble(&frequencyOffsetOk);
+            const double amplitudeOffsetDb = amplitudeOffsetText.toDouble(&amplitudeOffsetOk);
+            const double uncertaintyDb = uncertaintyText.isEmpty() ? 0.0 : uncertaintyText.toDouble(&uncertaintyOk);
+            if (!frequencyOk || !frequencyOffsetOk || !amplitudeOffsetOk ||
+                !std::isfinite(frequencyMhz) || frequencyMhz < 0.0 || frequencyMhz > 100000.0 ||
+                !std::isfinite(frequencyOffsetHz) || std::abs(frequencyOffsetHz) > 10000000.0 ||
+                !std::isfinite(amplitudeOffsetDb) || std::abs(amplitudeOffsetDb) > 200.0 ||
+                !uncertaintyOk || !std::isfinite(uncertaintyDb) || uncertaintyDb < 0.0 || uncertaintyDb > 100.0) {
+                if (error) {
+                    *error = uiText(QStringLiteral("bad_calibration_row"),
+                                    QStringLiteral("Bad calibration point at row %1"))
+                                 .arg(row + 1);
+                }
+                return false;
+            }
+            ReceiverCalibrationPoint point;
+            point.frequencyHz = frequencyMhz * 1000000.0;
+            point.frequencyOffsetHz = frequencyOffsetHz;
+            point.amplitudeOffsetDb = amplitudeOffsetDb;
+            point.uncertaintyDb = uncertaintyDb;
+            point.note = note.left(256);
+            next.append(point);
+        }
+        std::sort(next.begin(), next.end(),
+                  [](const ReceiverCalibrationPoint &a, const ReceiverCalibrationPoint &b) {
+                      return a.frequencyHz < b.frequencyHz;
+                  });
+        for (int i = 1; i < next.size(); ++i) {
+            if (std::abs(next.at(i).frequencyHz - next.at(i - 1).frequencyHz) < 0.001) {
+                if (error) {
+                    *error = uiText(QStringLiteral("duplicate_calibration_frequency"),
+                                    QStringLiteral("Calibration frequencies must be unique."));
+                }
+                return false;
+            }
+        }
+        target = next;
+        return true;
+    };
+
     connect(buttonBox, &QDialogButtonBox::accepted, &dialog, [&]() {
         QString error;
         QMap<QString, double> nextCenter = centerFrequencyPresets;
@@ -777,6 +943,7 @@ void YourClassName::openPresetManager() {
         QMap<QString, QString> nextListeningScan = listeningScanPresets;
         QVector<GraphBandMarker> nextBandMarkers = bandMarkers;
         QVector<qth::UserMarker> nextQthMarkers = qthUserMarkers;
+        QVector<ReceiverCalibrationPoint> nextCalibrationPoints = receiverCalibrationTable.points();
         if (!readNumericTable(centerTable,
                               uiText(QStringLiteral("preset_tab_center"), QStringLiteral("Center")),
                               nextCenter,
@@ -793,7 +960,8 @@ void YourClassName::openPresetManager() {
             !readStandardScanTable(standardScanTable, nextStandardScan, &error) ||
             !readListeningScanTable(listeningScanTable, nextListeningScan, &error) ||
             !readBandMarkerTable(bandMarkerTable, nextBandMarkers, &error) ||
-            !readQthMarkerTable(qthMarkerTable, nextQthMarkers, &error)) {
+            !readQthMarkerTable(qthMarkerTable, nextQthMarkers, &error) ||
+            !readCalibrationTable(calibrationTable, nextCalibrationPoints, &error)) {
             QMessageBox::warning(&dialog,
                                   uiText(QStringLiteral("preset_manager"), QStringLiteral("Preset Manager")),
                                   error);
@@ -819,10 +987,13 @@ void YourClassName::openPresetManager() {
             normalizedPresetOrder(tableNameOrder(listeningScanTable), listeningScanPresets);
         bandMarkers = nextBandMarkers;
         qthUserMarkers = nextQthMarkers;
+        calibrationTableEnabled = calibrationEnabledCheckbox && calibrationEnabledCheckbox->isChecked();
+        receiverCalibrationTable.setPoints(nextCalibrationPoints);
         bandMarkersCustomized = true;
         updateFrequencyPresetControls();
         updateGraphBandMarkers();
         updateQthControls();
+        applyReceiverCalibrationLive();
         savePersistentSettings();
         dialog.accept();
     });

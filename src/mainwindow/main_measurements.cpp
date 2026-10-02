@@ -1,18 +1,336 @@
 #include "main.h"
 #include "appconstants.h"
 #include "gnssqthhelpers.h"
+#include "researchanalysisdialog.h"
+#include "zerospandialog.h"
 
 #include <QDebug>
+#include <QDateTime>
+#include <QDir>
+#include <QFile>
+#include <QFileDialog>
 #include <QMap>
+#include <QMessageBox>
 #include <QPair>
 #include <QSignalBlocker>
 #include <QStringList>
+#include <QTextStream>
 
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <utility>
 #include <vector>
+
+namespace {
+QString scienceFrequencyText(double frequencyHz) {
+    if (!std::isfinite(frequencyHz)) return QStringLiteral("--");
+    return QStringLiteral("%1 MHz").arg(frequencyHz / 1.0e6, 0, 'f', 6);
+}
+
+QString scienceLevelText(double levelDb, int unit) {
+    if (!std::isfinite(levelDb)) return QStringLiteral("--");
+    switch ((std::clamp)(unit, 0, 3)) {
+    case 1:
+        return QStringLiteral("%1 dBm").arg(levelDb, 0, 'f', 2);
+    case 2:
+        return QStringLiteral("%1 dBuV").arg(levelDb + 106.9897, 0, 'f', 2);
+    case 3: {
+        const double microvolts = std::pow(10.0, (levelDb + 106.9897) / 20.0);
+        return QStringLiteral("%1 uV").arg(microvolts, 0, 'g', 6);
+    }
+    default:
+        return QStringLiteral("%1 dBFS").arg(levelDb, 0, 'f', 2);
+    }
+}
+}
+
+void YourClassName::updateSpectrumScience(const std::vector<float> &frequencies,
+                                          const std::vector<float> &levels) {
+    spectrumScienceAnalyzer.setTraceEnabled(spectrumScienceMaxHoldEnabled,
+                                            spectrumScienceMinHoldEnabled,
+                                            spectrumScienceAverageEnabled);
+    spectrumScienceAnalyzer.setAverageTimeSeconds(spectrumScienceAverageSeconds);
+    spectrumScienceAnalyzer.setAverageFrameCount(spectrumAverageFrameCount);
+    spectrumScienceAnalyzer.setDetector(spectrumDetectorMode, spectrumDetectorFrames);
+    spectrumScienceAnalyzer.setVbwHz(spectrumVbwHz);
+    spectrumScienceAnalyzer.setPercentileTraces(spectrumPercentile50Enabled,
+                                                spectrumPercentile90Enabled,
+                                                spectrumPercentile99Enabled);
+    spectrumScienceAnalyzer.update(frequencies, levels);
+    if (researchAnalysisDialog && researchAnalysisDialog->isVisible()) {
+        researchAnalysisDialog->appendSpectrumFrame(frequencies,
+                                                    levels,
+                                                    spectrumScienceAnalyzer.metrics());
+    }
+    updateSpectrumScienceUi();
+}
+
+void YourClassName::openResearchAnalysis(int tabIndex) {
+    if (!researchAnalysisDialog) {
+        researchAnalysisDialog = new ResearchAnalysisDialog(
+            [this](const QString &key, const QString &fallback) {
+                return uiText(key, fallback);
+            },
+            [this]() {
+                ResearchRadioContext context;
+                context.sampleRateHz = pendingSettings.sampleRate;
+                context.centerFrequencyHz = pendingSettings.centerFrequency;
+                context.listeningFrequencyHz = pendingSettings.listeningFrequency;
+                context.inputMode = pendingSettings.inputMode;
+                context.fftLength = pendingSettings.fftLength;
+                context.fftWindowType = pendingSettings.fftWindowType;
+                return context;
+            },
+            [this]() {
+                ResearchSpectrumSettings settings;
+                settings.detectorMode = spectrumDetectorMode;
+                settings.detectorFrames = spectrumDetectorFrames;
+                settings.vbwHz = spectrumVbwHz;
+                settings.fftOverlapPercent = spectrumFftOverlapPercent;
+                settings.averageFrameCount = spectrumAverageFrameCount;
+                settings.percentile50 = spectrumPercentile50Enabled;
+                settings.percentile90 = spectrumPercentile90Enabled;
+                settings.percentile99 = spectrumPercentile99Enabled;
+                settings.amplitudeUnit = spectrumAmplitudeUnit;
+                return settings;
+            },
+            [this](const ResearchSpectrumSettings &settings) {
+                spectrumDetectorMode = normalizedSpectrumDetectorMode(settings.detectorMode);
+                spectrumDetectorFrames = (std::clamp)(settings.detectorFrames, 1, 256);
+                spectrumVbwHz = (std::clamp)(settings.vbwHz, 0.0, 10000.0);
+                spectrumFftOverlapPercent = settings.fftOverlapPercent == 25 ||
+                                                    settings.fftOverlapPercent == 50 ||
+                                                    settings.fftOverlapPercent == 75
+                                                ? settings.fftOverlapPercent
+                                                : 0;
+                spectrumAverageFrameCount = (std::clamp)(settings.averageFrameCount, 0, 10000);
+                spectrumPercentile50Enabled = settings.percentile50;
+                spectrumPercentile90Enabled = settings.percentile90;
+                spectrumPercentile99Enabled = settings.percentile99;
+                spectrumAmplitudeUnit = (std::clamp)(settings.amplitudeUnit, 0, 3);
+                spectrumScienceAnalyzer.setDetector(spectrumDetectorMode, spectrumDetectorFrames);
+                spectrumScienceAnalyzer.setVbwHz(spectrumVbwHz);
+                spectrumScienceAnalyzer.setAverageFrameCount(spectrumAverageFrameCount);
+                spectrumScienceAnalyzer.setPercentileTraces(spectrumPercentile50Enabled,
+                                                            spectrumPercentile90Enabled,
+                                                            spectrumPercentile99Enabled);
+                savePersistentSettings();
+                updateSpectrumScienceUi();
+            },
+            this);
+    }
+    const int clampedTab = (std::clamp)(tabIndex,
+                                        static_cast<int>(ResearchAnalysisDialog::InterferenceTab),
+                                        static_cast<int>(ResearchAnalysisDialog::AnalyzerTab));
+    researchAnalysisDialog->selectTab(static_cast<ResearchAnalysisDialog::Tab>(clampedTab));
+    if (!spectrumScienceAnalyzer.frequencies().empty() &&
+        !spectrumScienceAnalyzer.levels().empty()) {
+        researchAnalysisDialog->appendSpectrumFrame(spectrumScienceAnalyzer.frequencies(),
+                                                    spectrumScienceAnalyzer.levels(),
+                                                    spectrumScienceAnalyzer.metrics());
+    }
+}
+
+void YourClassName::feedZeroSpanFrame(const std::vector<float> &frequencies,
+                                      const std::vector<float> &levels,
+                                      bool fftShiftedStorage) {
+    if (zeroSpanDialog && zeroSpanDialog->isVisible()) {
+        zeroSpanDialog->appendSpectrumFrame(frequencies,
+                                            levels,
+                                            pendingSettings.listeningFrequency,
+                                            spectrumScienceAnalyzer.marker(0),
+                                            spectrumScienceAnalyzer.marker(1),
+                                            spectrumScienceAnalyzer.metrics(),
+                                            fftShiftedStorage);
+    }
+}
+
+void YourClassName::openZeroSpanDialog() {
+    if (!zeroSpanDialog) {
+        zeroSpanDialog = new ZeroSpanDialog(
+            [this](const QString &key, const QString &fallback) {
+                return uiText(key, fallback);
+            },
+            this);
+    }
+    zeroSpanDialog->show();
+    zeroSpanDialog->raise();
+    zeroSpanDialog->activateWindow();
+}
+
+void YourClassName::setSpectrumScienceMarker(double frequencyHz) {
+    if (!std::isfinite(frequencyHz)) return;
+    spectrumScienceAnalyzer.setMarker(spectrumScienceActiveMarker, frequencyHz);
+    updateSpectrumScienceUi();
+}
+
+void YourClassName::updateSpectrumScienceUi() {
+    QVector<SpectrumScienceMarker> markers;
+    markers.reserve(2);
+    markers.append(spectrumScienceAnalyzer.marker(0));
+    markers.append(spectrumScienceAnalyzer.marker(1));
+    if (graphWidget) {
+        graphWidget->setScienceAnalysisData(spectrumScienceAnalyzer.maxHoldTrace(),
+                                            spectrumScienceAnalyzer.minHoldTrace(),
+                                            spectrumScienceAnalyzer.averageTrace(),
+                                            spectrumScienceAnalyzer.percentile50Trace(),
+                                            spectrumScienceAnalyzer.percentile90Trace(),
+                                            spectrumScienceAnalyzer.percentile99Trace(),
+                                            spectrumScienceMaxHoldEnabled,
+                                            spectrumScienceMinHoldEnabled,
+                                            spectrumScienceAverageEnabled,
+                                            spectrumPercentile50Enabled,
+                                            spectrumPercentile90Enabled,
+                                            spectrumPercentile99Enabled,
+                                            markers);
+    }
+    if (waterfallWidget) {
+        waterfallWidget->setScienceAnalysisData(spectrumScienceAnalyzer.maxHoldTrace(),
+                                                spectrumScienceAnalyzer.minHoldTrace(),
+                                                spectrumScienceAnalyzer.averageTrace(),
+                                                spectrumScienceAnalyzer.percentile50Trace(),
+                                                spectrumScienceAnalyzer.percentile90Trace(),
+                                                spectrumScienceAnalyzer.percentile99Trace(),
+                                                spectrumScienceMaxHoldEnabled,
+                                                spectrumScienceMinHoldEnabled,
+                                                spectrumScienceAverageEnabled,
+                                                spectrumPercentile50Enabled,
+                                                spectrumPercentile90Enabled,
+                                                spectrumPercentile99Enabled,
+                                                markers);
+    }
+
+    if (spectrumScienceMarkerStatusLabel) {
+        auto markerText = [this](const SpectrumScienceMarker &marker) {
+            return marker.enabled
+                       ? QStringLiteral("%1 %2 / %3")
+                             .arg(marker.label)
+                             .arg(scienceFrequencyText(marker.frequencyHz))
+                             .arg(scienceLevelText(marker.levelDb, spectrumAmplitudeUnit))
+                       : QStringLiteral("%1 --").arg(marker.label);
+        };
+        QString status = QStringLiteral("%1 | %2").arg(markerText(markers.at(0)), markerText(markers.at(1)));
+        if (markers.at(0).enabled && markers.at(1).enabled) {
+            status += QStringLiteral(" | dF %1 kHz | dL %2 dB")
+                          .arg(std::abs(markers.at(1).frequencyHz - markers.at(0).frequencyHz) / 1.0e3, 0, 'f', 3)
+                          .arg(markers.at(1).levelDb - markers.at(0).levelDb, 0, 'f', 1);
+        }
+        spectrumScienceMarkerStatusLabel->setText(status);
+        spectrumScienceMarkerStatusLabel->setToolTip(status);
+    }
+
+    if (spectrumScienceMetricsLabel) {
+        const SpectrumScienceMetrics &metrics = spectrumScienceAnalyzer.metrics();
+        QString status = metrics.valid
+            ? uiText(QStringLiteral("science_metrics_format_units"),
+                     QStringLiteral("Peak %1 / %2 | Noise %3 | SNR %4 dB | Power %5 | OBW 90/95/99: %6/%7/%8 kHz"))
+                  .arg(scienceFrequencyText(metrics.peakFrequencyHz))
+                  .arg(scienceLevelText(metrics.peakDb, spectrumAmplitudeUnit))
+                  .arg(scienceLevelText(metrics.noiseFloorDb, spectrumAmplitudeUnit))
+                  .arg(metrics.snrDb, 0, 'f', 1)
+                  .arg(scienceLevelText(metrics.channelPowerDb, spectrumAmplitudeUnit))
+                  .arg(metrics.occupiedBandwidth90Hz / 1.0e3, 0, 'f', 3)
+                  .arg(metrics.occupiedBandwidth95Hz / 1.0e3, 0, 'f', 3)
+                  .arg(metrics.occupiedBandwidthHz / 1.0e3, 0, 'f', 3)
+            : uiText(QStringLiteral("science_waiting"),
+                     QStringLiteral("Scientific analysis: waiting for spectrum"));
+        if (metrics.valid && calibrationTableEnabled) {
+            const ReceiverCalibrationCorrection correction =
+                receiverCalibrationTable.correctionAt(metrics.peakFrequencyHz);
+            if (correction.valid && correction.uncertaintyDb > 0.0) {
+                status += uiText(QStringLiteral("science_uncertainty_suffix"),
+                                 QStringLiteral(" | uncertainty +/- %1 dB"))
+                              .arg(correction.uncertaintyDb, 0, 'f', 2);
+            }
+        }
+        spectrumScienceMetricsLabel->setText(status);
+        spectrumScienceMetricsLabel->setToolTip(status);
+    }
+}
+
+void YourClassName::exportSpectrumScienceCsv() {
+    const auto &frequencies = spectrumScienceAnalyzer.frequencies();
+    const auto &levels = spectrumScienceAnalyzer.levels();
+    if (frequencies.empty() || levels.empty()) {
+        QMessageBox::information(this,
+                                 uiText(QStringLiteral("science_title"), QStringLiteral("Scientific spectrum analysis")),
+                                 uiText(QStringLiteral("science_no_data"), QStringLiteral("No spectrum data to export.")));
+        return;
+    }
+    const QString defaultPath = QDir(QCoreApplication::applicationDirPath()).filePath(
+        QStringLiteral("spectrum_science_%1.csv").arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss"))));
+    const QString path = QFileDialog::getSaveFileName(
+        this,
+        uiText(QStringLiteral("science_export_title"), QStringLiteral("Export scientific spectrum report")),
+        defaultPath,
+        uiText(QStringLiteral("csv_files_filter"), QStringLiteral("CSV files (*.csv)")));
+    if (path.isEmpty()) return;
+
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+        QMessageBox::warning(this,
+                             uiText(QStringLiteral("science_title"), QStringLiteral("Scientific spectrum analysis")),
+                             uiText(QStringLiteral("scan_measurement_csv_write_failed"), QStringLiteral("Cannot write CSV file.")));
+        return;
+    }
+
+    const SpectrumScienceMetrics &metrics = spectrumScienceAnalyzer.metrics();
+    const SpectrumScienceMarker markerA = spectrumScienceAnalyzer.marker(0);
+    const SpectrumScienceMarker markerB = spectrumScienceAnalyzer.marker(1);
+    QTextStream out(&file);
+    out.setCodec("UTF-8");
+    out << "# FobosAPP scientific spectrum report\n";
+    out << "# created," << QDateTime::currentDateTime().toString(Qt::ISODateWithMs) << '\n';
+    out << "# center_hz," << QString::number(pendingSettings.centerFrequency, 'f', 3) << '\n';
+    out << "# listening_hz," << QString::number(pendingSettings.listeningFrequency, 'f', 3) << '\n';
+    out << "# sample_rate_hz," << QString::number(pendingSettings.sampleRate, 'f', 3) << '\n';
+    out << "# fft_length," << pendingSettings.fftLength << '\n';
+    out << "# detector_mode," << spectrumDetectorMode << '\n';
+    out << "# detector_frames," << spectrumDetectorFrames << '\n';
+    out << "# vbw_hz," << QString::number(spectrumVbwHz, 'f', 3) << '\n';
+    out << "# fft_overlap_percent," << spectrumFftOverlapPercent << '\n';
+    out << "# amplitude_unit," << (spectrumAmplitudeUnit == 1 ? "dBm" :
+                                      spectrumAmplitudeUnit == 2 ? "dBuV_50ohm" :
+                                      spectrumAmplitudeUnit == 3 ? "uV_50ohm" : "dBFS") << '\n';
+    out << "# marker_a_hz," << (markerA.enabled ? QString::number(markerA.frequencyHz, 'f', 3) : QString()) << '\n';
+    out << "# marker_b_hz," << (markerB.enabled ? QString::number(markerB.frequencyHz, 'f', 3) : QString()) << '\n';
+    if (metrics.valid) {
+        out << "# peak_hz," << QString::number(metrics.peakFrequencyHz, 'f', 3) << '\n';
+        out << "# peak_db," << QString::number(metrics.peakDb, 'f', 3) << '\n';
+        out << "# noise_floor_db," << QString::number(metrics.noiseFloorDb, 'f', 3) << '\n';
+        out << "# snr_db," << QString::number(metrics.snrDb, 'f', 3) << '\n';
+        out << "# channel_power_dbfs," << QString::number(metrics.channelPowerDb, 'f', 3) << '\n';
+        out << "# occupied_bandwidth_99_hz," << QString::number(metrics.occupiedBandwidthHz, 'f', 3) << '\n';
+        out << "# occupied_bandwidth_90_hz," << QString::number(metrics.occupiedBandwidth90Hz, 'f', 3) << '\n';
+        out << "# occupied_bandwidth_95_hz," << QString::number(metrics.occupiedBandwidth95Hz, 'f', 3) << '\n';
+        out << "# width_3db_hz," << QString::number(metrics.width3DbHz, 'f', 3) << '\n';
+        out << "# width_6db_hz," << QString::number(metrics.width6DbHz, 'f', 3) << '\n';
+        out << "# width_20db_hz," << QString::number(metrics.width20DbHz, 'f', 3) << '\n';
+        out << "# acpr_lower_db," << QString::number(metrics.acprLowerDb, 'f', 3) << '\n';
+        out << "# acpr_upper_db," << QString::number(metrics.acprUpperDb, 'f', 3) << '\n';
+        out << "# centroid_hz," << QString::number(metrics.centroidFrequencyHz, 'f', 3) << '\n';
+    }
+    out << "frequency_hz,current_db,max_hold_db,min_hold_db,linear_average_db,p50_db,p90_db,p99_db\n";
+    const auto &maxHold = spectrumScienceAnalyzer.maxHoldTrace();
+    const auto &minHold = spectrumScienceAnalyzer.minHoldTrace();
+    const auto &average = spectrumScienceAnalyzer.averageTrace();
+    const auto &p50 = spectrumScienceAnalyzer.percentile50Trace();
+    const auto &p90 = spectrumScienceAnalyzer.percentile90Trace();
+    const auto &p99 = spectrumScienceAnalyzer.percentile99Trace();
+    const std::size_t count = std::min(frequencies.size(), levels.size());
+    for (std::size_t i = 0; i < count; ++i) {
+        out << QString::number(frequencies[i], 'f', 3) << ','
+            << QString::number(levels[i], 'f', 3) << ','
+            << (i < maxHold.size() ? QString::number(maxHold[i], 'f', 3) : QString()) << ','
+            << (i < minHold.size() ? QString::number(minHold[i], 'f', 3) : QString()) << ','
+            << (i < average.size() ? QString::number(average[i], 'f', 3) : QString()) << ','
+            << (i < p50.size() ? QString::number(p50[i], 'f', 3) : QString()) << ','
+            << (i < p90.size() ? QString::number(p90[i], 'f', 3) : QString()) << ','
+            << (i < p99.size() ? QString::number(p99[i], 'f', 3) : QString()) << '\n';
+    }
+}
+
 void YourClassName::startSpurCalibration() {
     spurCalibrationBins.clear();
     spurCalibrationFramesDone = 0;

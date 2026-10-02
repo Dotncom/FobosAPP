@@ -111,11 +111,16 @@ void YourClassName::applyAlternativeInterfaceMode() {
                      QStringLiteral("Choose 2D waterfall, 3D waterfall, or 3D with a 2D overview.")));
     }
     if (alternativeSpectrumGradientCheckbox) {
-        alternativeSpectrumGradientCheckbox->setEnabled(alternativeInterfaceMode);
+        alternativeSpectrumGradientCheckbox->setEnabled(
+            alternativeInterfaceMode || waterfall3DFixedPlane);
     }
     if (alternativeSpectrumGradientOpacitySlider) {
         alternativeSpectrumGradientOpacitySlider->setEnabled(
-            alternativeInterfaceMode && alternativeSpectrumGradientFill);
+            (alternativeInterfaceMode || waterfall3DFixedPlane) &&
+            alternativeSpectrumGradientFill);
+    }
+    if (waterfall3DFixedPlaneCheckbox) {
+        waterfall3DFixedPlaneCheckbox->setEnabled(!alternativeInterfaceMode);
     }
 
     centralWidget->updateGeometry();
@@ -271,7 +276,7 @@ void YourClassName::openApplicationSettings() {
     frequencyCalibrationSpin->setValue(frequencyCalibrationOffsetHz);
     frequencyCalibrationSpin->setToolTip(uiText(
         QStringLiteral("frequency_calibration_offset_tooltip"),
-        QStringLiteral("Added to the receiver hardware tuning while the displayed frequency remains unchanged. Use a positive value when the receiver must tune higher to align a known signal.")));
+        QStringLiteral("Global correction added to receiver hardware tuning while displayed frequency remains unchanged. Frequency-dependent table corrections from Presets are added to this value.")));
 
     QDoubleSpinBox *amplitudeCalibrationSpin = new QDoubleSpinBox(calibrationBox);
     amplitudeCalibrationSpin->setRange(-200.0, 200.0);
@@ -282,7 +287,7 @@ void YourClassName::openApplicationSettings() {
     amplitudeCalibrationSpin->setValue(amplitudeCalibrationOffsetDb);
     amplitudeCalibrationSpin->setToolTip(uiText(
         QStringLiteral("amplitude_calibration_offset_tooltip"),
-        QStringLiteral("Added to displayed spectrum levels and measurements. It does not change IQ samples or audio gain.")));
+        QStringLiteral("Global correction added to displayed spectrum levels and measurements. Frequency-dependent table corrections from Presets are added to this value; IQ samples and audio gain are unchanged.")));
 
     QPushButton *resetCalibrationButton = new QPushButton(
         uiText(QStringLiteral("reset_calibration"), QStringLiteral("Reset calibration")),
@@ -302,7 +307,7 @@ void YourClassName::openApplicationSettings() {
     QVBoxLayout *settingsBackupLayout = new QVBoxLayout(settingsBackupBox);
     QLabel *settingsBackupHint = new QLabel(
         uiText(QStringLiteral("settings_backup_hint"),
-               QStringLiteral("Export FobosAPP.ini before updating the app to keep custom presets, scan lists, map markers and UI settings.")),
+               QStringLiteral("Settings are stored in your user profile and survive application updates. Export FobosAPP.ini for backup or transfer to another computer.")),
         settingsBackupBox);
     settingsBackupHint->setWordWrap(true);
     QHBoxLayout *settingsBackupButtons = new QHBoxLayout();
@@ -365,6 +370,12 @@ void YourClassName::openApplicationSettings() {
     extendedSpectrumInfoOption->setToolTip(uiText(
         QStringLiteral("extended_spectrum_info_tooltip"),
         QStringLiteral("Show detailed frequency, level, sample-rate, FFT-window, RBW and bin-width information under the FPS overlays.")));
+    QCheckBox *extendedRecordingMetadataOption = new QCheckBox(
+        uiText(QStringLiteral("extended_recording_metadata"), QStringLiteral("Extended recording metadata")),
+        quickOptionsBox);
+    extendedRecordingMetadataOption->setToolTip(uiText(
+        QStringLiteral("extended_recording_metadata_tooltip"),
+        QStringLiteral("Add versioned scientific metadata, calibration, FFT/RBW, spectrum markers and measurements to recording metadata. Location, device serials, keys and API tokens are excluded.")));
     audioOption->setChecked(audioCheckbox && audioCheckbox->isChecked());
     syncOption->setChecked(syncCheckbox && syncCheckbox->isChecked());
     syncOption->setEnabled(false);
@@ -381,6 +392,7 @@ void YourClassName::openApplicationSettings() {
     spectrumFpsOption->setChecked(showSpectrumFps);
     waterfallFpsOption->setChecked(showWaterfallFps);
     extendedSpectrumInfoOption->setChecked(showExtendedSpectrumInfo);
+    extendedRecordingMetadataOption->setChecked(extendedRecordingMetadataEnabled);
     quickOptionsLayout->addWidget(audioOption, 0, 0);
     quickOptionsLayout->addWidget(syncOption, 0, 1);
     quickOptionsLayout->addWidget(spectrum2Option, 1, 0);
@@ -394,7 +406,8 @@ void YourClassName::openApplicationSettings() {
     quickOptionsLayout->addWidget(spectrumFpsOption, 4, 0);
     quickOptionsLayout->addWidget(waterfallFpsOption, 4, 1);
     quickOptionsLayout->addWidget(extendedSpectrumInfoOption, 4, 2);
-    quickOptionsLayout->addWidget(alternativeInterfaceOption, 5, 0, 1, 3);
+    quickOptionsLayout->addWidget(extendedRecordingMetadataOption, 5, 0, 1, 3);
+    quickOptionsLayout->addWidget(alternativeInterfaceOption, 6, 0, 1, 3);
     rootLayout->addWidget(quickOptionsBox);
 
     auto applyLanguage = [this, languageCombo]() {
@@ -592,6 +605,10 @@ void YourClassName::openApplicationSettings() {
         }
         savePersistentSettings();
     });
+    connect(extendedRecordingMetadataOption, &QCheckBox::toggled, &dialog, [this](bool checked) {
+        extendedRecordingMetadataEnabled = checked;
+        savePersistentSettings();
+    });
 
     QDialogButtonBox *buttonBox = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
     if (QPushButton *closeButton = buttonBox->button(QDialogButtonBox::Close)) {
@@ -672,7 +689,7 @@ void YourClassName::importSettingsBackup() {
                               uiText(QStringLiteral("settings_import_confirm_title"),
                                      QStringLiteral("Import settings?")),
                               uiText(QStringLiteral("settings_import_confirm"),
-                                     QStringLiteral("Importing settings will replace the current FobosAPP.ini. A timestamped backup of the current file will be created first.")),
+                                     QStringLiteral("Importing settings will replace the active per-user FobosAPP.ini. A timestamped backup of the current file will be created first.")),
                               QMessageBox::Yes | QMessageBox::No,
                               QMessageBox::No);
     if (answer != QMessageBox::Yes) {

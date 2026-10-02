@@ -203,12 +203,12 @@ void YourClassName::applyUiLanguage() {
     if (alternativeSpectrumGradientCheckbox) {
         alternativeSpectrumGradientCheckbox->setToolTip(uiText(
             QStringLiteral("alternative_spectrum_gradient_tooltip"),
-            QStringLiteral("Fill the area below the transparent spectrum contour in Alternative interface mode.")));
+            QStringLiteral("Fill below the spectrum contour in Alternative interface mode, or fill the visible front face of a fixed 3D plane.")));
     }
     if (alternativeSpectrumGradientOpacitySlider) {
         alternativeSpectrumGradientOpacitySlider->setToolTip(uiText(
             QStringLiteral("alternative_spectrum_gradient_opacity_tooltip"),
-            QStringLiteral("Set spectrum gradient opacity from transparent to solid.")));
+            QStringLiteral("Set gradient opacity from transparent to solid.")));
     }
     if (waterfall3DResolutionCombo) {
         waterfall3DResolutionCombo->setToolTip(uiText(
@@ -261,6 +261,14 @@ void YourClassName::applyUiLanguage() {
         waterfall3DSpectrumSliceCaptureFixedCheckbox->setToolTip(uiText(
             QStringLiteral("waterfall_3d_spectrum_slice_capture_fixed_tooltip"),
             QStringLiteral("Freeze a copy of the captured rows at the picked model position until those rows expire from the rolling history.")));
+    }
+    if (waterfall3DFixedPlaneCheckbox) {
+        waterfall3DFixedPlaneCheckbox->setText(uiText(
+            QStringLiteral("waterfall_3d_fixed_plane"),
+            QStringLiteral("Fix plane")));
+        waterfall3DFixedPlaneCheckbox->setToolTip(uiText(
+            QStringLiteral("waterfall_3d_fixed_plane_tooltip"),
+            QStringLiteral("Use the fixed front-facing 3D plane from Alternative interface mode and lock camera controls.")));
     }
     if (waterfall3DVncSliceInputCheckbox) {
         waterfall3DVncSliceInputCheckbox->setText(uiText(
@@ -614,6 +622,7 @@ void YourClassName::applyUiLanguage() {
                                                    ? uiText(QStringLiteral("stop_bg"), QStringLiteral("Stop BG"))
                                                    : uiText(QStringLiteral("bg_rec"), QStringLiteral("BG Rec")));
     }
+    updateSpectrumScienceUi();
     if (recordingStatusLabel) {
         const QString rawStatus = recordingStatusLabel->property("statusRawText").toString();
         const QString localized = localizedStatusText(rawStatus.isEmpty()

@@ -117,6 +117,12 @@ QJsonObject YourClassName::networkClientSettingsForCommand(const QJsonObject &se
         return sanitized;
     }
 
+    // Calibration belongs to the physical receiver host.  A client may learn
+    // the server table from authoritative state for local IQ rendering, but
+    // must not overwrite it when sending ordinary tuning commands.
+    sanitized.remove(QStringLiteral("calibrationTableEnabled"));
+    sanitized.remove(QStringLiteral("calibrationTable"));
+
     const bool maySendReceiverChoice =
         remoteReceiverDeviceListValid &&
         isRemoteReceiverDeviceValue(pendingSettings.deviceIndex);

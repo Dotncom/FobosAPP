@@ -68,6 +68,8 @@
 #include "remoteaudioplayer.h"
 #include "spectrumframerecorder.h"
 #include "spectrumiqeventrecorder.h"
+#include "spectrumscienceanalyzer.h"
+#include "receivercalibrationtable.h"
 #include "radiosettings.h"
 #include "videoprocessor.h"
 #include "videowidget.h"
@@ -87,6 +89,9 @@
 #include "MyGraphWidget.h"
 #include "MyWaterfallWidget.h"
 #include <fftw3.h>
+
+class ZeroSpanDialog;
+class ResearchAnalysisDialog;
 
 extern fobos_dev_t *device;
 extern float* dataq;
@@ -265,6 +270,8 @@ private:
     bool prepareFobosSessionFromSettings(const QString &reason);
     bool applyFobosSettings(bool forceFrequencyApply = false);
     double calibratedHardwareFrequency(double logicalFrequencyHz) const;
+    double effectiveFrequencyCalibrationOffsetHz(double logicalFrequencyHz) const;
+    double effectiveAmplitudeCalibrationOffsetDb(double frequencyHz) const;
     int setCalibratedActiveFrequencySafely(double logicalFrequencyHz, double *logicalActualFrequencyHz);
     void applyReceiverCalibrationLive();
     bool applyAgileStartupFrequencyKick(const QString &reason);
@@ -300,6 +307,16 @@ private:
     void resetScanMeasurementPeaks();
     void clearScanMeasurement();
     void exportScanMeasurementCsv();
+    void updateSpectrumScience(const std::vector<float> &frequencies,
+                               const std::vector<float> &levels);
+    void feedZeroSpanFrame(const std::vector<float> &frequencies,
+                           const std::vector<float> &levels,
+                           bool fftShiftedStorage);
+    void updateSpectrumScienceUi();
+    void setSpectrumScienceMarker(double frequencyHz);
+    void exportSpectrumScienceCsv();
+    void openZeroSpanDialog();
+    void openResearchAnalysis(int tabIndex = 0);
     void updateFpvHunter(const std::vector<float> &frequencies,
                          const std::vector<float> &magnitudes);
     void updateFpvHunterControls();
@@ -547,6 +564,8 @@ private:
     void handlePlaybackIqFrame(const QByteArray &iqData, double sampleRate, int sampleCount);
     QString selectedPlaybackFilePath() const;
     QJsonObject recordingLabMetadata() const;
+    QJsonObject recordingScientificSnapshot(const QString &phase) const;
+    QJsonObject recordingScientificMetadata(const QString &captureKind) const;
     void showTuneContextMenu(double frequency, const QPoint &globalPos);
     void tuneSignalCenterAt(double frequency);
     void tuneSidebandEdgeAt(double frequency, int modulationType);
@@ -602,6 +621,7 @@ private:
     QSpinBox *waterfall3DSpectrumSliceRowsSpin = nullptr;
     QCheckBox *waterfall3DSpectrumSliceCaptureCheckbox = nullptr;
     QCheckBox *waterfall3DSpectrumSliceCaptureFixedCheckbox = nullptr;
+    QCheckBox *waterfall3DFixedPlaneCheckbox = nullptr;
     QCheckBox *waterfall3DVncSliceInputCheckbox = nullptr;
     QCheckBox *dmrAdaptiveSlicerCheckbox = nullptr;
     QCheckBox *dmrPrivacyForwardCheckbox = nullptr;
@@ -787,6 +807,8 @@ private:
     QComboBox *spectrumFrameBinsCombo = nullptr;
     QSpinBox *spectrumFramePrebufferSpin = nullptr;
     QDoubleSpinBox *scanMeasurementBinSpin = nullptr;
+    QDoubleSpinBox *spectrumScienceAverageSpin = nullptr;
+    QComboBox *spectrumScienceMarkerCombo = nullptr;
     QPushButton *agileScanSavePresetButton = nullptr;
     QPushButton *agileScanDeletePresetButton = nullptr;
     QPushButton *standardScanSavePresetButton = nullptr;
@@ -801,6 +823,16 @@ private:
     QPushButton *scanMeasurementBaselineButton = nullptr;
     QPushButton *scanMeasurementResetPeakButton = nullptr;
     QPushButton *scanMeasurementExportButton = nullptr;
+    QPushButton *spectrumScienceSetButton = nullptr;
+    QPushButton *spectrumSciencePeakButton = nullptr;
+    QPushButton *spectrumSciencePreviousButton = nullptr;
+    QPushButton *spectrumScienceNextButton = nullptr;
+    QPushButton *spectrumScienceClearButton = nullptr;
+    QPushButton *spectrumScienceResetButton = nullptr;
+    QPushButton *spectrumScienceExportButton = nullptr;
+    QPushButton *zeroSpanButton = nullptr;
+    QPushButton *researchToolsButton = nullptr;
+    QPushButton *hfInterferenceAnalyzeButton = nullptr;
     QPushButton *spurCalibrateButton = nullptr;
     QPushButton *spurClearButton = nullptr;
     QPushButton *qthSelectTilesButton = nullptr;
@@ -822,6 +854,8 @@ private:
     QLabel *standardScanStatusLabel = nullptr;
     QLabel *listeningScanStatusLabel = nullptr;
     QLabel *scanMeasurementStatusLabel = nullptr;
+    QLabel *spectrumScienceMarkerStatusLabel = nullptr;
+    QLabel *spectrumScienceMetricsLabel = nullptr;
     QLabel *spurSuppressionStatusLabel = nullptr;
     QLabel *qthLocatorLabel = nullptr;
     QLabel *qthStatusLabel = nullptr;
@@ -975,6 +1009,8 @@ private:
     int additionalScaleDivisor = 1;
     double frequencyCalibrationOffsetHz = 0.0;
     double amplitudeCalibrationOffsetDb = 0.0;
+    bool calibrationTableEnabled = false;
+    ReceiverCalibrationTable receiverCalibrationTable;
     int waterfallRowsPerFrame = 1;
     int waterfallDisplayMode = static_cast<int>(MyWaterfallWidget::DisplayMode::Waterfall2D);
     bool alternativeInterfaceMode = false;
@@ -988,6 +1024,7 @@ private:
     int waterfall3DSpectrumSliceRows = 1;
     bool waterfall3DSpectrumSliceCapture = false;
     bool waterfall3DSpectrumSliceCaptureFixed = false;
+    bool waterfall3DFixedPlane = false;
     bool waterfall3DVncSliceInput = false;
     bool experimentalGpuWaterfall = false;
     bool showSpectrumFps = false;
@@ -1017,6 +1054,29 @@ private:
     bool scanMeasurementBaselineRecording = false;
     double scanMeasurementBinMhz = 0.1;
     int scanMeasurementUpdateIntervalMs = SCAN_MEASUREMENT_DEFAULT_UPDATE_MS;
+    SpectrumScienceAnalyzer spectrumScienceAnalyzer;
+    bool spectrumScienceMaxHoldEnabled = false;
+    bool spectrumScienceMinHoldEnabled = false;
+    bool spectrumScienceAverageEnabled = false;
+    double spectrumScienceAverageSeconds = 2.0;
+    int spectrumDetectorMode = SPECTRUM_DETECTOR_SAMPLE;
+    int spectrumDetectorFrames = 8;
+    double spectrumVbwHz = 0.0;
+    int spectrumFftOverlapPercent = 0;
+    int spectrumAverageFrameCount = 0;
+    bool spectrumPercentile50Enabled = false;
+    bool spectrumPercentile90Enabled = false;
+    bool spectrumPercentile99Enabled = false;
+    int spectrumAmplitudeUnit = 0;
+    std::uint64_t lastSpectrumFftEpoch = 0;
+    std::uint64_t lastSpectrumFftEndFloats = 0;
+    int lastSpectrumFftLength = 0;
+    int spectrumScienceActiveMarker = 0;
+    QCheckBox *spectrumScienceMaxHoldCheckbox = nullptr;
+    QCheckBox *spectrumScienceMinHoldCheckbox = nullptr;
+    QCheckBox *spectrumScienceAverageCheckbox = nullptr;
+    ZeroSpanDialog *zeroSpanDialog = nullptr;
+    ResearchAnalysisDialog *researchAnalysisDialog = nullptr;
     DmrHunterSettings dmrHunterSettings;
     DmrHunterResult dmrHunterLastResult;
     std::vector<DmrHunterCandidate> dmrHunterCandidates;
@@ -1146,6 +1206,7 @@ private:
     bool showAmateurBandMarkers = true;
     bool compactBandMarkers = false;
     bool diagnosticVerboseLogging = false;
+    bool extendedRecordingMetadataEnabled = false;
     bool gnssMonitorEnabled = false;
     bool gnssAcquisitionRunning = false;
     bool gnssContinuousAcquisitionEnabled = false;
@@ -1245,6 +1306,7 @@ private:
     QVector<qth::UserMarker> qthUserMarkers;
     std::atomic_bool videoIqFramePending{false};
     bool momentaryRecordingActive = false;
+    QJsonObject activeRecordingLabMetadata;
     bool offlineIqPlaybackActive = false;
     bool offlineIqPlaybackHasMetadata = false;
     double offlineIqPlaybackSampleRate = 0.0;

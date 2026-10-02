@@ -10,4 +10,11 @@ struct GraphBandMarker {
     bool amateur = false;
 };
 
+struct SpectrumScienceMarker {
+    bool enabled = false;
+    double frequencyHz = 0.0;
+    float levelDb = -160.0f;
+    QString label;
+};
+
 #endif // SPECTRUMOVERLAYTYPES_H

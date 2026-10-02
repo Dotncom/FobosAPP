@@ -57,6 +57,7 @@ public:
     void set3DSpectrumSliceCapture(bool enabled);
     void set3DSpectrumSliceCaptureFixed(bool enabled);
     void set3DModifierFreeSliceInput(bool enabled);
+    void set3DFixedPlane(bool enabled);
     void setAlternativeInterfaceMode(bool enabled);
     void setAlternativeSpectrumGradientFill(bool enabled);
     void setAlternativeSpectrumGradientOpacity(int percent);
@@ -73,6 +74,19 @@ public:
                              int fftWindowType);
     void setFpsOverlayEnabled(bool enabled);
     void setExtendedInfoOverlayEnabled(bool enabled);
+    void setScienceAnalysisData(const std::vector<float> &maxHold,
+                                const std::vector<float> &minHold,
+                                const std::vector<float> &average,
+                                const std::vector<float> &percentile50,
+                                const std::vector<float> &percentile90,
+                                const std::vector<float> &percentile99,
+                                bool showMaxHold,
+                                bool showMinHold,
+                                bool showAverage,
+                                bool showPercentile50,
+                                bool showPercentile90,
+                                bool showPercentile99,
+                                const QVector<SpectrumScienceMarker> &markers);
     void clearData();
     void computeLineData();
 signals:
@@ -102,6 +116,7 @@ private:
     void drawAlternativeSpectrumOverlay(QPainter &painter,
                                         const std::vector<float> &normalizedLevels) const;
     void drawAlternativeBandMarkers(QPainter &painter, const QRect &plotRect) const;
+    void drawAlternativeScienceOverlays(QPainter &painter, const QRect &plotRect) const;
     QRect alternativeSpectrumPlotRect() const;
     QString formatFrequencyLabel(double frequencyHz) const;
     QString formatFrequencySpanLabel(double spanHz) const;
@@ -161,6 +176,7 @@ private:
     bool spectrumFrameSliceMouseActive = false;
     bool modifierFreeSliceInput = false;
     bool alternativeInterfaceMode = false;
+    bool fixed3DPlane = false;
     bool alternativeSpectrumGradientFill = false;
     int alternativeSpectrumGradientOpacity = 70;
     bool alternativeSpectrumHoverVisible = false;
@@ -180,6 +196,19 @@ private:
     bool scanSegmentMarkersVisible = true;
     bool fpsOverlayEnabled = false;
     bool extendedInfoOverlayEnabled = false;
+    std::vector<float> scienceMaxHoldData;
+    std::vector<float> scienceMinHoldData;
+    std::vector<float> scienceAverageData;
+    std::vector<float> sciencePercentile50Data;
+    std::vector<float> sciencePercentile90Data;
+    std::vector<float> sciencePercentile99Data;
+    QVector<SpectrumScienceMarker> scienceMarkers;
+    bool scienceMaxHoldVisible = false;
+    bool scienceMinHoldVisible = false;
+    bool scienceAverageVisible = false;
+    bool sciencePercentile50Visible = false;
+    bool sciencePercentile90Visible = false;
+    bool sciencePercentile99Visible = false;
     QElapsedTimer fpsElapsedTimer;
     QElapsedTimer sliceOverlayUpdateTimer;
     int fpsFrameCount = 0;

@@ -658,6 +658,11 @@ void Waterfall3DRenderer::setFixedFrontExpanded(bool enabled) {
     fixedFrontExpanded = enabled;
 }
 
+void Waterfall3DRenderer::setFrontFaceGradient(bool enabled, int opacityPercent) {
+    frontFaceGradient = enabled;
+    frontFaceGradientOpacity = std::clamp(opacityPercent, 0, 100);
+}
+
 bool Waterfall3DRenderer::ensureSurfaceProgram() {
     if (surfaceProgramReady) {
         return true;
@@ -1161,6 +1166,40 @@ void Waterfall3DRenderer::render(int viewportWidth, int viewportHeight) {
                 glVertex3f(time1, frequency, sample1.height * 0.72f);
             }
             glEnd();
+        }
+
+        if (fixedFrontPresentation && frontFaceGradient &&
+            frontFaceGradientOpacity > 0 && !historyRows.back().empty()) {
+            const HistoryRow &frontRow = historyRows.back();
+            const unsigned char faceAlpha = static_cast<unsigned char>(
+                std::lround(255.0 * static_cast<double>(frontFaceGradientOpacity) / 100.0));
+            constexpr float FrontTime = 1.0f;
+            constexpr float BottomBrightness = 0.08f;
+
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glDepthMask(GL_FALSE);
+            glDisable(GL_DEPTH_TEST);
+            glShadeModel(GL_SMOOTH);
+            glBegin(GL_TRIANGLE_STRIP);
+            for (int column = 0; column < columnCount; ++column) {
+                const float frequency = columnCount > 1
+                                            ? -1.0f + 2.0f * static_cast<float>(column) /
+                                                          static_cast<float>(columnCount - 1)
+                                            : 0.0f;
+                const VertexSample &sample = frontRow[static_cast<std::size_t>(column)];
+                glColor4ub(static_cast<unsigned char>(sample.color[0] * BottomBrightness),
+                           static_cast<unsigned char>(sample.color[1] * BottomBrightness),
+                           static_cast<unsigned char>(sample.color[2] * BottomBrightness),
+                           faceAlpha);
+                glVertex3f(FrontTime, frequency, 0.0f);
+                glColor4ub(sample.color[0], sample.color[1], sample.color[2], faceAlpha);
+                glVertex3f(FrontTime, frequency, sample.height * 0.72f);
+            }
+            glEnd();
+            glEnable(GL_DEPTH_TEST);
+            glDepthMask(GL_TRUE);
+            glDisable(GL_BLEND);
         }
 
         if (highlightedHistoryRow >= 0 && highlightedHistoryRow < rowCount) {

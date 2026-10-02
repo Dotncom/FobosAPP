@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <QPainterPath>
 #include <QStringList>
 
 namespace {
@@ -152,6 +153,35 @@ void MyGraphWidget::setFrequencyAxisLabelsVisible(bool visible) {
         return;
     }
     frequencyAxisLabelsVisible = visible;
+    update();
+}
+
+void MyGraphWidget::setScienceAnalysisData(const std::vector<float> &maxHold,
+                                           const std::vector<float> &minHold,
+                                           const std::vector<float> &average,
+                                           const std::vector<float> &percentile50,
+                                           const std::vector<float> &percentile90,
+                                           const std::vector<float> &percentile99,
+                                           bool showMaxHold,
+                                           bool showMinHold,
+                                           bool showAverage,
+                                           bool showPercentile50,
+                                           bool showPercentile90,
+                                           bool showPercentile99,
+                                           const QVector<SpectrumScienceMarker> &markers) {
+    scienceMaxHoldData = maxHold;
+    scienceMinHoldData = minHold;
+    scienceAverageData = average;
+    sciencePercentile50Data = percentile50;
+    sciencePercentile90Data = percentile90;
+    sciencePercentile99Data = percentile99;
+    scienceMaxHoldVisible = showMaxHold && !scienceMaxHoldData.empty();
+    scienceMinHoldVisible = showMinHold && !scienceMinHoldData.empty();
+    scienceAverageVisible = showAverage && !scienceAverageData.empty();
+    sciencePercentile50Visible = showPercentile50 && !sciencePercentile50Data.empty();
+    sciencePercentile90Visible = showPercentile90 && !sciencePercentile90Data.empty();
+    sciencePercentile99Visible = showPercentile99 && !sciencePercentile99Data.empty();
+    scienceMarkers = markers;
     update();
 }
 
@@ -344,11 +374,90 @@ void MyGraphWidget::paintGL() {
     drawBandMarkers(painter);
     drawYAxis(painter);
     drawXAxis(painter);
+    drawScienceTraces(painter);
     drawTuningMarker(painter);
+    drawScienceMarkers(painter);
     drawBandwidthMeasurement(painter);
     drawHoverCursor(painter);
     drawFpsOverlay(painter);
     drawExtendedInfoOverlay(painter);
+}
+
+void MyGraphWidget::drawScienceTraces(QPainter &painter) const {
+    const int dataCount = std::min({fftLength,
+                                    static_cast<int>(xData.size()),
+                                    static_cast<int>(yData.size())});
+    if (dataCount < 2) return;
+    const int top = GRAPH_TOP_MARGIN;
+    const int bottom = (std::max)(top + 1, height() - bottomMargin());
+    const int plotHeight = bottom - top;
+    auto drawTrace = [&](const std::vector<float> &trace, const QColor &color) {
+        const int count = std::min(dataCount, static_cast<int>(trace.size()));
+        if (count < 2) return;
+        QPainterPath path;
+        bool started = false;
+        for (int i = 0; i < count; ++i) {
+            const float level = trace[static_cast<std::size_t>(i)];
+            if (!std::isfinite(level)) continue;
+            const double frequency = displayFrequencyAt(i, dataCount);
+            if (!std::isfinite(frequency)) continue;
+            const int x = xForFrequency(frequency);
+            const int y = bottom - static_cast<int>(std::lround(normalizedLevel(level) * plotHeight));
+            if (!started) {
+                path.moveTo(x, y);
+                started = true;
+            } else {
+                path.lineTo(x, y);
+            }
+        }
+        if (started) {
+            painter.setPen(QPen(color, 1));
+            painter.drawPath(path);
+        }
+    };
+    painter.save();
+    painter.setClipRect(QRect(GRAPH_LEFT_MARGIN, top,
+                              (std::max)(1, width() - GRAPH_LEFT_MARGIN - GRAPH_RIGHT_MARGIN),
+                              plotHeight));
+    painter.setRenderHint(QPainter::Antialiasing, false);
+    if (scienceMinHoldVisible) drawTrace(scienceMinHoldData, QColor(85, 155, 255, 210));
+    if (sciencePercentile50Visible) drawTrace(sciencePercentile50Data, QColor(75, 220, 145, 220));
+    if (sciencePercentile90Visible) drawTrace(sciencePercentile90Data, QColor(215, 105, 245, 220));
+    if (sciencePercentile99Visible) drawTrace(sciencePercentile99Data, QColor(255, 80, 95, 230));
+    if (scienceAverageVisible) drawTrace(scienceAverageData, QColor(235, 235, 235, 220));
+    if (scienceMaxHoldVisible) drawTrace(scienceMaxHoldData, QColor(255, 170, 35, 235));
+    painter.restore();
+}
+
+void MyGraphWidget::drawScienceMarkers(QPainter &painter) const {
+    if (scienceMarkers.isEmpty() || qFuzzyCompare(xMin, xMax)) return;
+    const int top = GRAPH_TOP_MARGIN;
+    const int bottom = (std::max)(top + 1, height() - bottomMargin());
+    const QColor colors[] = {QColor(255, 225, 60), QColor(80, 220, 255)};
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing, false);
+    for (int index = 0; index < scienceMarkers.size(); ++index) {
+        const SpectrumScienceMarker &marker = scienceMarkers.at(index);
+        if (!marker.enabled || !std::isfinite(marker.frequencyHz)) continue;
+        const double displayFrequency = displayFrequencyForActualFrequency(marker.frequencyHz);
+        if (displayFrequency < (std::min)(xMin, xMax) || displayFrequency > (std::max)(xMin, xMax)) continue;
+        const int x = xForFrequency(displayFrequency);
+        const QColor color = colors[index % 2];
+        painter.setPen(QPen(color, 1, Qt::DashLine));
+        painter.drawLine(x, top, x, bottom);
+        const QString text = QStringLiteral("%1  %2 MHz  %3 dB")
+                                 .arg(marker.label)
+                                 .arg(marker.frequencyHz / 1.0e6, 0, 'f', 6)
+                                 .arg(marker.levelDb, 0, 'f', 1);
+        const QFontMetrics metrics(painter.font());
+        QRect labelRect = metrics.boundingRect(text).adjusted(-4, -2, 4, 2);
+        labelRect.moveTop(top + 3 + index * (labelRect.height() + 2));
+        labelRect.moveLeft((std::clamp)(x + 4, 2, (std::max)(2, width() - labelRect.width() - 2)));
+        painter.fillRect(labelRect, QColor(0, 0, 0, 190));
+        painter.setPen(color);
+        painter.drawText(labelRect, Qt::AlignCenter, text);
+    }
+    painter.restore();
 }
 
 void MyGraphWidget::updateFpsCounter() {
@@ -536,6 +645,11 @@ void MyGraphWidget::mouseMoveEvent(QMouseEvent *event) {
 
 void MyGraphWidget::mousePressEvent(QMouseEvent *event) {
     if (event->button() == Qt::LeftButton) {
+        if (event->modifiers().testFlag(Qt::ShiftModifier)) {
+            emit scienceMarkerRequested(frequencyAtX(event->x()));
+            event->accept();
+            return;
+        }
         bandwidthMeasurementActive = true;
         bandwidthMeasurementVisible = true;
         bandwidthMeasureStartPos = event->pos();

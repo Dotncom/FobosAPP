@@ -884,7 +884,8 @@ bool YourClassName::applyAgileScanSettings(bool forceStop) {
              << "points" << frequencies.size()
              << "firstHz" << frequencies.first()
              << "lastHz" << frequencies.last()
-             << "calibrationHz" << frequencyCalibrationOffsetHz
+             << "baseCalibrationHz" << frequencyCalibrationOffsetHz
+             << "tableCalibration" << calibrationTableEnabled
              << "isScanning" << scanning
              << "index" << index;
     agileScanRunning = result == FOBOS_ERR_OK;
@@ -949,9 +950,12 @@ bool YourClassName::applyStandardScanRetune(double targetFrequencyHz, const char
 
         QElapsedTimer retuneTimer;
         retuneTimer.start();
-        const bool retuned =
-            !streamRunning ||
-            processor->retuneCenterFrequency(requestedFrequency);
+        if (streamRunning) {
+            processor->setFrequencyCalibrationOffset(
+                effectiveFrequencyCalibrationOffsetHz(requestedFrequency));
+        }
+        const bool retuned = !streamRunning ||
+                             processor->retuneCenterFrequency(requestedFrequency);
         const qint64 retuneCallMs = retuneTimer.elapsed();
         if (!retuned) {
             qDebug() << "[StandardScan] external retune failed"

@@ -443,6 +443,26 @@ void YourClassName::updateUiFromPendingSettings() {
         QSignalBlocker blocker(scanMeasurementBinSpin);
         scanMeasurementBinSpin->setValue(scanMeasurementBinMhz);
     }
+    if (spectrumScienceMaxHoldCheckbox) {
+        QSignalBlocker blocker(spectrumScienceMaxHoldCheckbox);
+        spectrumScienceMaxHoldCheckbox->setChecked(spectrumScienceMaxHoldEnabled);
+    }
+    if (spectrumScienceMinHoldCheckbox) {
+        QSignalBlocker blocker(spectrumScienceMinHoldCheckbox);
+        spectrumScienceMinHoldCheckbox->setChecked(spectrumScienceMinHoldEnabled);
+    }
+    if (spectrumScienceAverageCheckbox) {
+        QSignalBlocker blocker(spectrumScienceAverageCheckbox);
+        spectrumScienceAverageCheckbox->setChecked(spectrumScienceAverageEnabled);
+    }
+    if (spectrumScienceAverageSpin) {
+        QSignalBlocker blocker(spectrumScienceAverageSpin);
+        spectrumScienceAverageSpin->setValue(spectrumScienceAverageSeconds);
+    }
+    spectrumScienceAnalyzer.setTraceEnabled(spectrumScienceMaxHoldEnabled,
+                                            spectrumScienceMinHoldEnabled,
+                                            spectrumScienceAverageEnabled);
+    spectrumScienceAnalyzer.setAverageTimeSeconds(spectrumScienceAverageSeconds);
     if (dmrHunterControls) {
         dmrHunterControls->setDetectChecked(dmrHunterSettings.enabled);
         dmrHunterControls->setWidthValues(dmrHunterSettings.minWidthKhz,

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(FobosAPP VERSION 4.7.2)
+project(FobosAPP VERSION 4.8.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -180,6 +180,14 @@ set(SOURCES
     src/research/spectrumframereplaydialog.h
     src/research/spectrumiqeventrecorder.cpp
     src/research/spectrumiqeventrecorder.h
+    src/research/spectrumscienceanalyzer.cpp
+    src/research/spectrumscienceanalyzer.h
+    src/research/receivercalibrationtable.cpp
+    src/research/receivercalibrationtable.h
+    src/research/researchanalysisdialog.cpp
+    src/research/researchanalysisdialog.h
+    src/research/zerospandialog.cpp
+    src/research/zerospandialog.h
     src/audio/playbackmanager.cpp
     src/audio/playbackmanager.h
     src/presets/presethelpers.cpp
@@ -245,6 +253,8 @@ if(WIN32)
 endif()
 
 add_executable(FobosAPP ${SOURCES})
+
+target_compile_definitions(FobosAPP PRIVATE FOBOSAPP_VERSION="${PROJECT_VERSION}")
 
 target_include_directories(FobosAPP PRIVATE
     ${CMAKE_SOURCE_DIR}/src

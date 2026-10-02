@@ -25,6 +25,7 @@ std::deque<std::uint64_t> g_iqBlockSequences;
 std::size_t g_iqQueuedFloatCount = 0;
 std::uint64_t g_iqSequence = 0;
 std::uint64_t g_iqEpoch = 1;
+std::uint64_t g_totalSnapshotFloatCount = 0;
 double g_sampleRateEstimate = 0.0;
 IqBuffer::BlockMetadata g_latestMetadata;
 std::uint64_t g_traceEpoch = 0;
@@ -227,9 +228,12 @@ bool publish(const float *samples,
 
     if (updateSnapshot) {
         appendToSnapshot(samples, floatCount);
+        g_totalSnapshotFloatCount += static_cast<std::uint64_t>(floatCount);
         ++g_iqSequence;
         g_latestMetadata = metadata ? *metadata : BlockMetadata();
         g_latestMetadata.sequence = g_iqSequence;
+        g_latestMetadata.epoch = g_iqEpoch;
+        g_latestMetadata.totalFloatCount = g_totalSnapshotFloatCount;
         g_latestMetadata.floatCount = floatCount;
     }
 
@@ -358,6 +362,7 @@ void clear(std::uint64_t epoch) {
     g_iqBlockSequences.clear();
     g_iqQueuedFloatCount = 0;
     g_latestMetadata = BlockMetadata();
+    g_totalSnapshotFloatCount = 0;
     ++g_iqSequence;
     if (epoch != 0 && traceMatchesCurrentEpoch()) {
         qDebug() << "[IqBufferTrace] clear"
@@ -398,6 +403,7 @@ Stats stats() {
     result.queuedBlocks = g_iqBlocks.size();
     result.queuedFloatCount = g_iqQueuedFloatCount;
     result.sampleRateEstimate = g_sampleRateEstimate;
+    result.totalFloatCount = g_totalSnapshotFloatCount;
     return result;
 }
 

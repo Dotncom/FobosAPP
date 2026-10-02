@@ -53,8 +53,9 @@ Before every public upload:
    `FobosAPP.ini`, diagnostic logs, real IQ/audio recordings, GNSS raw logs,
    GNSS reports, screenshots, private tokens, API keys, local tool folders, or
    temporary downloads.
-5. Keep `release/bin/FobosAPP.ini` local only. It may contain QTH coordinates,
-   map API keys, DMR keys, ports, and personal presets.
+5. Keep the per-user `FobosAPP.ini` and any legacy `release/bin/FobosAPP.ini`
+   local only. They may contain QTH coordinates, map API keys, DMR keys, ports,
+   and personal presets.
 6. Verify `translations.json` parses.
 7. Verify README and release notes describe:
    Fobos Agile startup-shift risk, optional DMR backends, RTL-SDR runtime files,
@@ -108,6 +109,41 @@ The order below is the useful path after the current release checkpoint.
    - keep rows-per-frame and update interval as user controls;
    - optimize measurement overlay cost only if it visibly slows the waterfall;
    - GPU waterfall remains a later opt-in prototype, not a release blocker.
+
+## Scientific Analyzer
+
+Implemented in the current development tree:
+
+1. Frequency-dependent frequency/amplitude calibration with interpolation,
+   per-point uncertainty, global chain offset, and dBFS/dBm/dBuV/uV readout.
+2. FFT window ENBW-based RBW, linear-power VBW, and deterministic
+   0/25/50/75% FFT overlap based on cumulative IQ sample counters.
+3. Sample, positive/negative peak, RMS, average, median, and quasi-peak
+   detector modes.
+4. Max/min hold, exponential or finite-frame average, and P50/P90/P99 traces.
+5. A/B and delta markers, peak navigation, channel power, SNR, OBW90/95/99,
+   -3/-6/-20 dB widths, adjacent-channel power, and ACPR export.
+6. Zero-span timeline with rising/falling level trigger, auto/normal modes,
+   pre/post-trigger capture, single-shot arm, and CSV export.
+7. Research views for comb/harmonic families, long-term statistics, IQ/DC/
+   imbalance/image estimates, autocorrelation, and dual-HF correlation,
+   coherence, phase, gain, delay, and cancellation potential.
+8. IQ buffer epoch/sequence/queue counters, measured arrival rate, clipping,
+   invalid-sample indication, extended recording metadata, CSV reports, and
+   SigMF metadata for full-IQ event recordings.
+
+Still requires physical validation or a later dependency decision:
+
+1. Calibrate every receiver/input/sample-rate/gain combination with a known
+   generator and attenuator before calling dBm accuracy traceable. The present
+   uncertainty field records the measured result; it cannot create accuracy.
+2. Add a guided calibration wizard after the manual table has been validated
+   against the external generator.
+3. Add whole-spectrum mask/baseline triggers and visible discontinuity rows
+   only after the receiver backend exposes a trustworthy dropped-block signal.
+4. HDF5 remains optional. Do not add a large runtime dependency until a real
+   large-series workflow needs it; current portable outputs are CSV, JSON,
+   spectrum-frame recordings, raw IQ, and SigMF metadata.
 
 ## GNSS Roadmap
 

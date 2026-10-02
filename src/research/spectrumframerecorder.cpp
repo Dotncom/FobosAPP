@@ -87,6 +87,10 @@ qint64 SpectrumFrameRecorder::firstFrameUtcMs() const {
     return firstUtcMs;
 }
 
+void SpectrumFrameRecorder::setExtendedMetadata(const QJsonObject &metadata) {
+    extendedMetadata = metadata;
+}
+
 bool SpectrumFrameRecorder::appendFrame(const std::vector<float> &frequencies,
                                         const std::vector<float> &magnitudes,
                                         double centerFrequency,
@@ -302,6 +306,9 @@ QJsonObject SpectrumFrameRecorder::makeMetadataObject() const {
     root["lnaGain"] = recordingSettings.lnaGain;
     root["vgaGain"] = recordingSettings.vgaGain;
     root["gpoValue"] = static_cast<int>(recordingSettings.gpoValue);
+    if (!extendedMetadata.isEmpty()) {
+        root["scientificMetadata"] = extendedMetadata;
+    }
     return root;
 }
 

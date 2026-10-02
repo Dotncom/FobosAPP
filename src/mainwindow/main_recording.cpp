@@ -14,10 +14,45 @@
 #include <QMessageBox>
 #include <QMetaObject>
 #include <QSignalBlocker>
+#include <QSysInfo>
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <vector>
+
+#ifndef FOBOSAPP_VERSION
+#define FOBOSAPP_VERSION "unknown"
+#endif
+
+namespace {
+
+QString recordingModulationName(int modulationType) {
+    switch (modulationType) {
+    case MOD_AM: return QStringLiteral("AM");
+    case MOD_NFM: return QStringLiteral("NFM");
+    case MOD_SAM: return QStringLiteral("SAM");
+    case MOD_USB: return QStringLiteral("USB");
+    case MOD_LSB: return QStringLiteral("LSB");
+    case MOD_DSB: return QStringLiteral("DSB");
+    case MOD_CW: return QStringLiteral("CW");
+    case MOD_WFM: return QStringLiteral("WFM");
+    case MOD_FT8: return QStringLiteral("FT8");
+    case MOD_RTTY: return QStringLiteral("RTTY");
+    case MOD_FSK: return QStringLiteral("FSK");
+    case MOD_PSK: return QStringLiteral("PSK");
+    case MOD_ATV: return QStringLiteral("ATV");
+    case MOD_SSTV: return QStringLiteral("SSTV");
+    case MOD_APT: return QStringLiteral("APT");
+    case MOD_WEFAX: return QStringLiteral("WEFAX");
+    case MOD_LRPT: return QStringLiteral("LRPT");
+    case MOD_DMR: return QStringLiteral("DMR");
+    default: return QStringLiteral("unknown");
+    }
+}
+
+} // namespace
+
 RecordingManager::Mode YourClassName::selectedRecordingMode() const {
     if (!recordingModeCombo) {
         return RecordingManager::Mode::AudioWav;
@@ -100,6 +135,179 @@ QJsonObject YourClassName::recordingLabMetadata() const {
         return QJsonObject();
     }
     return lab;
+}
+
+QJsonObject YourClassName::recordingScientificSnapshot(const QString &phase) const {
+    QJsonObject snapshot;
+    snapshot["phase"] = phase;
+    snapshot["capturedAtUtc"] = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
+
+    QJsonObject software;
+    software["name"] = QStringLiteral("FobosAPP");
+    software["version"] = QStringLiteral(FOBOSAPP_VERSION);
+    software["buildAbi"] = QSysInfo::buildAbi();
+    software["cpuArchitecture"] = QSysInfo::currentCpuArchitecture();
+    software["kernelType"] = QSysInfo::kernelType();
+    software["kernelVersion"] = QSysInfo::kernelVersion();
+    snapshot["software"] = software;
+
+    QString backend = QStringLiteral("fobos");
+    QString receiverVariant;
+    if (isNetworkClientMode()) {
+        backend = QStringLiteral("network-client");
+    } else if (isRtlTcpSelected()) {
+        backend = QStringLiteral("rtl_tcp");
+    } else if (isRtlSdrNativeSelected()) {
+        backend = QStringLiteral("rtlsdr-native");
+    } else if (isSoapySdrSelected()) {
+        backend = QStringLiteral("soapysdr");
+    } else if (isBladeRfNativeSelected()) {
+        backend = QStringLiteral("bladerf-native");
+    } else {
+        receiverVariant = selectedFobosDeviceInfo().apiKind == FobosApiKind::Agile
+                              ? QStringLiteral("agile")
+                              : QStringLiteral("standard");
+    }
+    QJsonObject receiver;
+    receiver["backend"] = backend;
+    if (!receiverVariant.isEmpty()) {
+        receiver["variant"] = receiverVariant;
+    }
+    receiver["runState"] = static_cast<int>(runState);
+    receiver["networkMode"] = static_cast<int>(networkMode);
+    receiver["deviceIndex"] = pendingSettings.deviceIndex;
+    snapshot["receiver"] = receiver;
+
+    QJsonObject radio;
+    radio["centerFrequencyHz"] = pendingSettings.centerFrequency;
+    radio["actualFrequencyHz"] = pendingSettings.actualFrequency;
+    radio["listeningFrequencyHz"] = pendingSettings.listeningFrequency;
+    radio["sampleRateHz"] = pendingSettings.sampleRate;
+    radio["bandwidthHz"] = pendingSettings.bandwidth;
+    radio["modulationType"] = pendingSettings.modulationType;
+    radio["modulationName"] = recordingModulationName(pendingSettings.modulationType);
+    radio["clockSource"] = pendingSettings.clockSource;
+    radio["inputMode"] = pendingSettings.inputMode;
+    radio["lnaGain"] = pendingSettings.lnaGain;
+    radio["vgaGain"] = pendingSettings.vgaGain;
+    radio["rtlAgc"] = pendingSettings.rtlAgc;
+    radio["rtlTunerGainTenthsDb"] = pendingSettings.rtlTunerGainTenthsDb;
+    snapshot["radio"] = radio;
+
+    const double fftBinWidthHz = pendingSettings.fftLength > 0
+                                     ? pendingSettings.sampleRate /
+                                           static_cast<double>(pendingSettings.fftLength)
+                                     : 0.0;
+    QJsonObject analysis;
+    analysis["fftLength"] = pendingSettings.fftLength;
+    analysis["fftWindowType"] = normalizedFftWindowType(pendingSettings.fftWindowType);
+    analysis["fftWindowName"] = QString::fromLatin1(fftWindowTypeName(pendingSettings.fftWindowType));
+    analysis["fftBinWidthHz"] = fftBinWidthHz;
+    analysis["rbwHz"] = fftBinWidthHz * fftWindowEnbwBins(pendingSettings.fftWindowType);
+    analysis["displayScalePercent"] = effectiveScalePercent();
+    analysis["displayLevelMinDb"] = displayLevelMin;
+    analysis["displayLevelMaxDb"] = displayLevelMax;
+    analysis["spectrumUpdateIntervalMs"] = spectrumUpdateIntervalMs;
+    analysis["frequencyCalibrationOffsetHz"] = frequencyCalibrationOffsetHz;
+    analysis["amplitudeCalibrationOffsetDb"] = amplitudeCalibrationOffsetDb;
+    analysis["effectiveFrequencyCalibrationOffsetHz"] =
+        effectiveFrequencyCalibrationOffsetHz(pendingSettings.centerFrequency);
+    analysis["effectiveAmplitudeCalibrationOffsetDb"] =
+        effectiveAmplitudeCalibrationOffsetDb(pendingSettings.centerFrequency);
+    analysis["calibrationTableEnabled"] = calibrationTableEnabled;
+    QJsonArray calibrationPoints;
+    if (calibrationTableEnabled) {
+        for (const ReceiverCalibrationPoint &point : receiverCalibrationTable.points()) {
+            QJsonObject object;
+            object["frequencyHz"] = point.frequencyHz;
+            object["frequencyOffsetHz"] = point.frequencyOffsetHz;
+            object["amplitudeOffsetDb"] = point.amplitudeOffsetDb;
+            object["uncertaintyDb"] = point.uncertaintyDb;
+            object["note"] = point.note;
+            calibrationPoints.append(object);
+        }
+    }
+    analysis["calibrationTable"] = calibrationPoints;
+    analysis["maxHoldEnabled"] = spectrumScienceMaxHoldEnabled;
+    analysis["minHoldEnabled"] = spectrumScienceMinHoldEnabled;
+    analysis["averageEnabled"] = spectrumScienceAverageEnabled;
+    analysis["averageTimeSeconds"] = spectrumScienceAverageSeconds;
+    analysis["detectorMode"] = spectrumDetectorMode;
+    analysis["detectorFrames"] = spectrumDetectorFrames;
+    analysis["vbwHz"] = spectrumVbwHz;
+    analysis["fftOverlapPercent"] = spectrumFftOverlapPercent;
+    analysis["averageFrameCount"] = spectrumAverageFrameCount;
+    analysis["percentile50Enabled"] = spectrumPercentile50Enabled;
+    analysis["percentile90Enabled"] = spectrumPercentile90Enabled;
+    analysis["percentile99Enabled"] = spectrumPercentile99Enabled;
+    analysis["amplitudeUnit"] = spectrumAmplitudeUnit;
+    analysis["amplitudeUnitName"] = spectrumAmplitudeUnit == 1
+                                         ? QStringLiteral("dBm")
+                                         : spectrumAmplitudeUnit == 2
+                                               ? QStringLiteral("dBuV_50ohm")
+                                               : spectrumAmplitudeUnit == 3
+                                                     ? QStringLiteral("uV_50ohm")
+                                                     : QStringLiteral("dBFS");
+    snapshot["analysis"] = analysis;
+
+    auto markerJson = [](const SpectrumScienceMarker &marker) {
+        QJsonObject object;
+        object["enabled"] = marker.enabled;
+        object["label"] = marker.label;
+        if (marker.enabled) {
+            object["frequencyHz"] = marker.frequencyHz;
+            object["levelDb"] = marker.levelDb;
+        }
+        return object;
+    };
+    QJsonObject markers;
+    markers["a"] = markerJson(spectrumScienceAnalyzer.marker(0));
+    markers["b"] = markerJson(spectrumScienceAnalyzer.marker(1));
+    snapshot["markers"] = markers;
+
+    const SpectrumScienceMetrics &metrics = spectrumScienceAnalyzer.metrics();
+    QJsonObject measurement;
+    measurement["valid"] = metrics.valid;
+    if (metrics.valid) {
+        measurement["rangeStartHz"] = metrics.rangeStartHz;
+        measurement["rangeEndHz"] = metrics.rangeEndHz;
+        measurement["peakFrequencyHz"] = metrics.peakFrequencyHz;
+        measurement["centroidFrequencyHz"] = metrics.centroidFrequencyHz;
+        measurement["occupiedBandwidth99Hz"] = metrics.occupiedBandwidthHz;
+        measurement["occupiedBandwidth90Hz"] = metrics.occupiedBandwidth90Hz;
+        measurement["occupiedBandwidth95Hz"] = metrics.occupiedBandwidth95Hz;
+        measurement["width3DbHz"] = metrics.width3DbHz;
+        measurement["width6DbHz"] = metrics.width6DbHz;
+        measurement["width20DbHz"] = metrics.width20DbHz;
+        measurement["peakDb"] = metrics.peakDb;
+        measurement["noiseFloorDb"] = metrics.noiseFloorDb;
+        measurement["snrDb"] = metrics.snrDb;
+        measurement["channelPowerDb"] = metrics.channelPowerDb;
+        measurement["adjacentPowerLowerDb"] = metrics.adjacentPowerLowerDb;
+        measurement["adjacentPowerUpperDb"] = metrics.adjacentPowerUpperDb;
+        measurement["acprLowerDb"] = metrics.acprLowerDb;
+        measurement["acprUpperDb"] = metrics.acprUpperDb;
+        measurement["binCount"] = metrics.binCount;
+    }
+    snapshot["measurement"] = measurement;
+    return snapshot;
+}
+
+QJsonObject YourClassName::recordingScientificMetadata(const QString &captureKind) const {
+    QJsonObject metadata;
+    metadata["schema"] = QStringLiteral("fobosapp-scientific-recording");
+    metadata["schemaVersion"] = 1;
+    metadata["captureKind"] = captureKind;
+    metadata["start"] = recordingScientificSnapshot(QStringLiteral("start"));
+
+    QJsonObject privacy;
+    privacy["coordinatesIncluded"] = false;
+    privacy["deviceSerialIncluded"] = false;
+    privacy["decryptionKeysIncluded"] = false;
+    privacy["apiTokensIncluded"] = false;
+    privacy["note"] = QStringLiteral("Sensitive location, receiver serial, keys and API tokens are intentionally excluded.");
+    metadata["privacy"] = privacy;
+    return metadata;
 }
 
 bool YourClassName::isChannelIqRecordingActive() const {
@@ -186,6 +394,11 @@ void YourClassName::startSpectrumFrameRecording() {
             firstUtcMs = 0;
         }
     }
+    const QJsonObject extendedMetadata = extendedRecordingMetadataEnabled
+                                             ? recordingScientificMetadata(QStringLiteral("spectrum_event"))
+                                             : QJsonObject();
+    spectrumFrameRecorder.setExtendedMetadata(extendedMetadata);
+    spectrumIqEventRecorder.setExtendedMetadata(extendedMetadata);
     if (!spectrumFrameRecorder.start(pendingSettings, effectiveScalePercent(), bins, firstUtcMs, &errorMessage)) {
         updateSpectrumFrameRecordingStatus(QStringLiteral("Spectrum recording failed: %1").arg(errorMessage));
         if (spectrumFrameRecordButton) {
@@ -459,8 +672,16 @@ void YourClassName::startRecording(bool momentary) {
 
     QString errorMessage;
     recordingManager->setDisplayScalePercent(effectiveScalePercent());
-    recordingManager->setLabMetadata(recordingLabMetadata());
+    activeRecordingLabMetadata = recordingLabMetadata();
+    if (extendedRecordingMetadataEnabled) {
+        activeRecordingLabMetadata["scientificMetadata"] = recordingScientificMetadata(
+            mode == RecordingManager::Mode::ChannelIqWav
+                ? QStringLiteral("channel_iq_wav")
+                : QStringLiteral("audio_wav"));
+    }
+    recordingManager->setLabMetadata(activeRecordingLabMetadata);
     if (!recordingManager->start(mode, pendingSettings, &errorMessage)) {
+        activeRecordingLabMetadata = QJsonObject();
         updateRecordingStatus(QStringLiteral("Recording failed: %1").arg(errorMessage));
         if (recordButton) {
             QSignalBlocker blocker(recordButton);
@@ -507,7 +728,16 @@ void YourClassName::stopRecording(bool momentaryRelease) {
 
     const bool wasChannelIqRecording = isChannelIqRecordingActive();
     momentaryRecordingActive = false;
+    if (activeRecordingLabMetadata.contains(QStringLiteral("scientificMetadata"))) {
+        QJsonObject scientific = activeRecordingLabMetadata
+                                     .value(QStringLiteral("scientificMetadata"))
+                                     .toObject();
+        scientific["end"] = recordingScientificSnapshot(QStringLiteral("end"));
+        activeRecordingLabMetadata["scientificMetadata"] = scientific;
+        recordingManager->setLabMetadata(activeRecordingLabMetadata);
+    }
     recordingManager->stop();
+    activeRecordingLabMetadata = QJsonObject();
     if (recordButton) {
         QSignalBlocker blocker(recordButton);
         recordButton->setChecked(false);

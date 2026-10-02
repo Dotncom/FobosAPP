@@ -89,6 +89,20 @@ QJsonObject YourClassName::settingsToJson() const {
     settings["scanMeasurementEnabled"] = scanMeasurementEnabled;
     settings["scanMeasurementBinMhz"] = scanMeasurementBinMhz;
     settings["scanMeasurementUpdateIntervalMs"] = scanMeasurementUpdateIntervalMs;
+    settings["spectrumScienceMaxHold"] = spectrumScienceMaxHoldEnabled;
+    settings["spectrumScienceMinHold"] = spectrumScienceMinHoldEnabled;
+    settings["spectrumScienceAverage"] = spectrumScienceAverageEnabled;
+    settings["spectrumScienceAverageSeconds"] = spectrumScienceAverageSeconds;
+    settings["spectrumDetectorMode"] = spectrumDetectorMode;
+    settings["spectrumDetectorFrames"] = spectrumDetectorFrames;
+    settings["spectrumVbwHz"] = spectrumVbwHz;
+    settings["spectrumFftOverlapPercent"] = spectrumFftOverlapPercent;
+    settings["spectrumAverageFrameCount"] = spectrumAverageFrameCount;
+    settings["spectrumPercentile50"] = spectrumPercentile50Enabled;
+    settings["spectrumPercentile90"] = spectrumPercentile90Enabled;
+    settings["spectrumPercentile99"] = spectrumPercentile99Enabled;
+    settings["spectrumAmplitudeUnit"] = spectrumAmplitudeUnit;
+    settings["extendedRecordingMetadata"] = extendedRecordingMetadataEnabled;
     settings["qthLatitude"] = qthLatitude;
     settings["qthLongitude"] = qthLongitude;
     settings["qthPositionVisible"] = qthPositionVisible;
@@ -150,6 +164,18 @@ QJsonObject YourClassName::settingsToJson() const {
     settings["spectrumUpdateIntervalMs"] = spectrumUpdateIntervalMs;
     settings["frequencyCalibrationOffsetHz"] = frequencyCalibrationOffsetHz;
     settings["amplitudeCalibrationOffsetDb"] = amplitudeCalibrationOffsetDb;
+    settings["calibrationTableEnabled"] = calibrationTableEnabled;
+    QJsonArray calibrationPointsJson;
+    for (const ReceiverCalibrationPoint &point : receiverCalibrationTable.points()) {
+        QJsonObject object;
+        object["frequencyHz"] = point.frequencyHz;
+        object["frequencyOffsetHz"] = point.frequencyOffsetHz;
+        object["amplitudeOffsetDb"] = point.amplitudeOffsetDb;
+        object["uncertaintyDb"] = point.uncertaintyDb;
+        object["note"] = point.note;
+        calibrationPointsJson.append(object);
+    }
+    settings["calibrationTable"] = calibrationPointsJson;
     settings["waterfallRowsPerFrame"] = waterfallRowsPerFrame;
     settings["waterfallDisplayMode"] = waterfallDisplayMode;
     settings["waterfall3DResolutionDivisor"] = waterfall3DResolutionDivisor;
@@ -160,6 +186,7 @@ QJsonObject YourClassName::settingsToJson() const {
     settings["waterfall3DSpectrumSliceRows"] = waterfall3DSpectrumSliceRows;
     settings["waterfall3DSpectrumSliceCapture"] = waterfall3DSpectrumSliceCapture;
     settings["waterfall3DSpectrumSliceCaptureFixed"] = waterfall3DSpectrumSliceCaptureFixed;
+    settings["waterfall3DFixedPlane"] = waterfall3DFixedPlane;
     settings["waterfall3DVncSliceInput"] = waterfall3DVncSliceInput;
     settings["alternativeInterfaceMode"] = alternativeInterfaceMode;
     settings["alternativeSpectrumGradientFill"] = alternativeSpectrumGradientFill;
@@ -322,6 +349,26 @@ void YourClassName::applySettingsFromJson(const QJsonObject &settingsJson, bool 
         (std::clamp)(readInt("scanMeasurementUpdateIntervalMs", scanMeasurementUpdateIntervalMs),
                      SCAN_MEASUREMENT_MIN_UPDATE_MS,
                      SCAN_MEASUREMENT_MAX_UPDATE_MS);
+    spectrumScienceMaxHoldEnabled = readBool("spectrumScienceMaxHold", spectrumScienceMaxHoldEnabled);
+    spectrumScienceMinHoldEnabled = readBool("spectrumScienceMinHold", spectrumScienceMinHoldEnabled);
+    spectrumScienceAverageEnabled = readBool("spectrumScienceAverage", spectrumScienceAverageEnabled);
+    spectrumScienceAverageSeconds = (std::clamp)(readDouble("spectrumScienceAverageSeconds",
+                                                            spectrumScienceAverageSeconds),
+                                                  0.05,
+                                                  60.0);
+    spectrumDetectorMode = normalizedSpectrumDetectorMode(readInt("spectrumDetectorMode", spectrumDetectorMode));
+    spectrumDetectorFrames = (std::clamp)(readInt("spectrumDetectorFrames", spectrumDetectorFrames), 1, 256);
+    spectrumVbwHz = (std::clamp)(readDouble("spectrumVbwHz", spectrumVbwHz), 0.0, 10000.0);
+    spectrumFftOverlapPercent = readInt("spectrumFftOverlapPercent", spectrumFftOverlapPercent);
+    if (spectrumFftOverlapPercent != 25 && spectrumFftOverlapPercent != 50 &&
+        spectrumFftOverlapPercent != 75) spectrumFftOverlapPercent = 0;
+    spectrumAverageFrameCount = (std::clamp)(readInt("spectrumAverageFrameCount", spectrumAverageFrameCount), 0, 10000);
+    spectrumPercentile50Enabled = readBool("spectrumPercentile50", spectrumPercentile50Enabled);
+    spectrumPercentile90Enabled = readBool("spectrumPercentile90", spectrumPercentile90Enabled);
+    spectrumPercentile99Enabled = readBool("spectrumPercentile99", spectrumPercentile99Enabled);
+    spectrumAmplitudeUnit = (std::clamp)(readInt("spectrumAmplitudeUnit", spectrumAmplitudeUnit), 0, 3);
+    extendedRecordingMetadataEnabled =
+        readBool("extendedRecordingMetadata", extendedRecordingMetadataEnabled);
     if (previousScanMeasurementEnabled != scanMeasurementEnabled ||
         std::abs(previousScanMeasurementBinMhz - scanMeasurementBinMhz) > 0.000001) {
         clearScanMeasurement();
@@ -451,8 +498,29 @@ void YourClassName::applySettingsFromJson(const QJsonObject &settingsJson, bool 
         (std::clamp)(readDouble("amplitudeCalibrationOffsetDb", amplitudeCalibrationOffsetDb),
                      -200.0,
                      200.0);
+    calibrationTableEnabled = readBool("calibrationTableEnabled", calibrationTableEnabled);
+    if (settingsJson.contains(QStringLiteral("calibrationTable"))) {
+        QVector<ReceiverCalibrationPoint> calibrationPoints;
+        const QJsonArray array = settingsJson.value(QStringLiteral("calibrationTable")).toArray();
+        calibrationPoints.reserve(array.size());
+        for (const QJsonValue &value : array) {
+            const QJsonObject object = value.toObject();
+            ReceiverCalibrationPoint point;
+            point.frequencyHz = object.value(QStringLiteral("frequencyHz")).toDouble(
+                std::numeric_limits<double>::quiet_NaN());
+            point.frequencyOffsetHz = object.value(QStringLiteral("frequencyOffsetHz")).toDouble(
+                std::numeric_limits<double>::quiet_NaN());
+            point.amplitudeOffsetDb = object.value(QStringLiteral("amplitudeOffsetDb")).toDouble(
+                std::numeric_limits<double>::quiet_NaN());
+            point.uncertaintyDb = object.value(QStringLiteral("uncertaintyDb")).toDouble(0.0);
+            point.note = object.value(QStringLiteral("note")).toString();
+            calibrationPoints.append(point);
+        }
+        receiverCalibrationTable.setPoints(calibrationPoints);
+    }
     if (processor) {
-        processor->setFrequencyCalibrationOffset(frequencyCalibrationOffsetHz);
+        processor->setFrequencyCalibrationOffset(
+            effectiveFrequencyCalibrationOffsetHz(pendingSettings.centerFrequency));
     }
     waterfallRowsPerFrame = (std::clamp)(readInt("waterfallRowsPerFrame", waterfallRowsPerFrame),
                                          WATERFALL_ROWS_PER_FRAME_MIN,
@@ -512,6 +580,7 @@ void YourClassName::applySettingsFromJson(const QJsonObject &settingsJson, bool 
         readBool("waterfall3DSpectrumSliceCapture", waterfall3DSpectrumSliceCapture);
     waterfall3DSpectrumSliceCaptureFixed =
         readBool("waterfall3DSpectrumSliceCaptureFixed", waterfall3DSpectrumSliceCaptureFixed);
+    waterfall3DFixedPlane = readBool("waterfall3DFixedPlane", waterfall3DFixedPlane);
     waterfall3DVncSliceInput =
         readBool("waterfall3DVncSliceInput", waterfall3DVncSliceInput);
     if (waterfall3DSliceStepSpin) {
@@ -539,6 +608,10 @@ void YourClassName::applySettingsFromJson(const QJsonObject &settingsJson, bool 
         waterfall3DSpectrumSliceCaptureFixedCheckbox->setChecked(waterfall3DSpectrumSliceCaptureFixed);
         waterfall3DSpectrumSliceCaptureFixedCheckbox->setEnabled(waterfall3DSpectrumSliceCapture);
     }
+    if (waterfall3DFixedPlaneCheckbox) {
+        QSignalBlocker blocker(waterfall3DFixedPlaneCheckbox);
+        waterfall3DFixedPlaneCheckbox->setChecked(waterfall3DFixedPlane);
+    }
     if (waterfall3DVncSliceInputCheckbox) {
         QSignalBlocker blocker(waterfall3DVncSliceInputCheckbox);
         waterfall3DVncSliceInputCheckbox->setChecked(waterfall3DVncSliceInput);
@@ -550,6 +623,7 @@ void YourClassName::applySettingsFromJson(const QJsonObject &settingsJson, bool 
         waterfallWidget->set3DSpectrumSliceWidth(waterfall3DSpectrumSliceRows);
         waterfallWidget->set3DSpectrumSliceCapture(waterfall3DSpectrumSliceCapture);
         waterfallWidget->set3DSpectrumSliceCaptureFixed(waterfall3DSpectrumSliceCaptureFixed);
+        waterfallWidget->set3DFixedPlane(waterfall3DFixedPlane);
         waterfallWidget->set3DModifierFreeSliceInput(waterfall3DVncSliceInput);
     }
     alternativeInterfaceMode = readBool("alternativeInterfaceMode", alternativeInterfaceMode);

@@ -3,6 +3,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
+#include <QJsonArray>
 #include <QJsonDocument>
 
 #include <algorithm>
@@ -88,6 +89,7 @@ void SpectrumIqEventRecorder::stop() {
         outputFile.close();
     }
     writeSidecar();
+    writeSigMfMetadata();
     active = false;
 }
 
@@ -105,6 +107,10 @@ quint64 SpectrumIqEventRecorder::bytesWritten() const {
 
 SpectrumIqEventRecorder::Mode SpectrumIqEventRecorder::mode() const {
     return activeMode;
+}
+
+void SpectrumIqEventRecorder::setExtendedMetadata(const QJsonObject &metadata) {
+    extendedMetadata = metadata;
 }
 
 bool SpectrumIqEventRecorder::appendFrame(const QByteArray &iqData,
@@ -231,6 +237,38 @@ bool SpectrumIqEventRecorder::writeSidecar() const {
     return true;
 }
 
+bool SpectrumIqEventRecorder::writeSigMfMetadata() const {
+    if (activeMode != Mode::FullIqS8 || filePath.isEmpty()) return false;
+    const QFileInfo dataInfo(filePath);
+    const QString metadataPath = dataInfo.absoluteDir().filePath(
+        dataInfo.completeBaseName() + QStringLiteral(".sigmf-meta"));
+    QFile metadataFile(metadataPath);
+    if (!metadataFile.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) return false;
+
+    QJsonObject global;
+    global["core:datatype"] = QStringLiteral("ci8");
+    global["core:sample_rate"] = recordingSampleRate;
+    global["core:version"] = QStringLiteral("1.0.0");
+    global["core:recorder"] = QStringLiteral("FobosAPP");
+    global["core:dataset"] = dataInfo.fileName();
+    global["core:description"] = QStringLiteral("FobosAPP full-band IQ event recording");
+
+    QJsonObject capture;
+    capture["core:sample_start"] = 0;
+    capture["core:frequency"] = recordingSettings.centerFrequency;
+    if (firstFrameUtcMs > 0) {
+        capture["core:datetime"] = QDateTime::fromMSecsSinceEpoch(firstFrameUtcMs, Qt::UTC)
+                                       .toString(Qt::ISODateWithMs);
+    }
+
+    QJsonObject root;
+    root["global"] = global;
+    root["captures"] = QJsonArray{capture};
+    root["annotations"] = QJsonArray();
+    metadataFile.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+    return true;
+}
+
 QJsonObject SpectrumIqEventRecorder::makeMetadataObject() const {
     QJsonObject root;
     root["app"] = QStringLiteral("FobosAPP");
@@ -264,5 +302,8 @@ QJsonObject SpectrumIqEventRecorder::makeMetadataObject() const {
     root["sourceSampleRate"] = recordingSettings.sampleRate;
     root["inputMode"] = recordingSettings.inputMode;
     root["modulationType"] = recordingSettings.modulationType;
+    if (!extendedMetadata.isEmpty()) {
+        root["scientificMetadata"] = extendedMetadata;
+    }
     return root;
 }

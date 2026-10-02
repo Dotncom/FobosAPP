@@ -63,6 +63,10 @@ foreach ($file in $files) {
         $normalized -ne "THIRD_PARTY_LICENSES.txt") {
         continue
     }
+    if (-not $normalized.Contains("/") -and
+        ([System.IO.Path]::GetExtension($normalized) -in @(".bmp", ".png", ".jpg", ".jpeg"))) {
+        continue
+    }
     if ($excludeExactPaths -contains $normalizedExact) {
         continue
     }

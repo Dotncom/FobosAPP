@@ -37,6 +37,7 @@ public:
     quint64 frameCount() const;
     int targetBins() const;
     qint64 firstFrameUtcMs() const;
+    void setExtendedMetadata(const QJsonObject &metadata);
 
     bool appendFrame(const std::vector<float> &frequencies,
                      const std::vector<float> &magnitudes,
@@ -66,6 +67,7 @@ private:
 
     QFile outputFile;
     RadioSettings recordingSettings;
+    QJsonObject extendedMetadata;
     QDateTime startedAtUtc;
     QString filePath;
     double scalePercent = 100.0;

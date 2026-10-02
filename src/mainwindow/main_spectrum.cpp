@@ -741,6 +741,30 @@ void YourClassName::updateSpectrum() {
         return;
     }
 
+    // Gate successive FFT snapshots by the exact amount of newly published IQ.
+    // This makes 0/25/50/75% overlap deterministic without copying or queuing
+    // another full FFT block in the UI thread.
+    if (fftBlockMetadata.totalFloatCount > 0) {
+        const std::uint64_t frameEnd = fftBlockMetadata.totalFloatCount;
+        const std::uint64_t fftFloats = static_cast<std::uint64_t>(
+            (std::max)(1, spectrumSettings.fftLength)) * 2ULL;
+        const std::uint64_t hopFloats = (std::max)(2ULL,
+            fftFloats * static_cast<std::uint64_t>(100 - spectrumFftOverlapPercent) / 100ULL);
+        const bool sameGeometry = lastSpectrumFftEpoch == fftBlockMetadata.epoch &&
+                                  lastSpectrumFftLength == spectrumSettings.fftLength;
+        if (sameGeometry && frameEnd <= lastSpectrumFftEndFloats) {
+            finishTrace("fft_duplicate_snapshot", spectrumFrequencies, spectrumMagnitudes);
+            return;
+        }
+        if (sameGeometry && frameEnd - lastSpectrumFftEndFloats < hopFloats) {
+            finishTrace("fft_overlap_wait", spectrumFrequencies, spectrumMagnitudes);
+            return;
+        }
+        lastSpectrumFftEpoch = fftBlockMetadata.epoch;
+        lastSpectrumFftEndFloats = frameEnd;
+        lastSpectrumFftLength = spectrumSettings.fftLength;
+    }
+
     const bool profileDisplayFrame = verboseLogging &&
                                      spectrumSettings.fftLength >= 524288;
     QElapsedTimer displayProfileTimer;
@@ -748,18 +772,19 @@ void YourClassName::updateSpectrum() {
         displayProfileTimer.start();
     }
 
-    if (std::isfinite(amplitudeCalibrationOffsetDb) &&
-        std::abs(amplitudeCalibrationOffsetDb) > 0.000001) {
+    if (calibrationTableEnabled) {
+        receiverCalibrationTable.applyAmplitudeCorrection(spectrumFrequencies,
+                                                           spectrumMagnitudes,
+                                                           &referenceMagnitudes,
+                                                           amplitudeCalibrationOffsetDb);
+    } else if (std::isfinite(amplitudeCalibrationOffsetDb) &&
+               std::abs(amplitudeCalibrationOffsetDb) > 0.000001) {
         const float offsetDb = static_cast<float>(amplitudeCalibrationOffsetDb);
         for (float &magnitude : spectrumMagnitudes) {
-            if (std::isfinite(magnitude)) {
-                magnitude += offsetDb;
-            }
+            if (std::isfinite(magnitude)) magnitude += offsetDb;
         }
         for (float &magnitude : referenceMagnitudes) {
-            if (std::isfinite(magnitude)) {
-                magnitude += offsetDb;
-            }
+            if (std::isfinite(magnitude)) magnitude += offsetDb;
         }
     }
 
@@ -1162,6 +1187,24 @@ void YourClassName::updateSpectrum() {
                                     displayTargetBins,
                                     displayLevelMin,
                                     preparedDisplayFrame);
+        const std::vector<float> scienceFrequencies =
+            !displayScanSegments.isEmpty()
+                ? actualFrequenciesFromScanSegments(preparedDisplayFrame.frequencies,
+                                                    displayScanSegments)
+                : std::vector<float>();
+        updateSpectrumScience(scienceFrequencies.size() == preparedDisplayFrame.frequencies.size()
+                                  ? scienceFrequencies
+                                  : preparedDisplayFrame.frequencies,
+                              preparedDisplayFrame.levels);
+        if (displayScanSegments.isEmpty()) {
+            feedZeroSpanFrame(displayFrequencies, visualMagnitudes, true);
+        } else {
+            feedZeroSpanFrame(scienceFrequencies.size() == preparedDisplayFrame.frequencies.size()
+                                  ? scienceFrequencies
+                                  : preparedDisplayFrame.frequencies,
+                              preparedDisplayFrame.levels,
+                              false);
+        }
         const qint64 afterReduceNs = profileDisplayFrame
                                          ? displayProfileTimer.nsecsElapsed()
                                          : 0;

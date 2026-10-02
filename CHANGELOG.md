@@ -1,5 +1,43 @@
 # Changelog
 
+## 4.8.0 - 2026-10-02
+
+### Added
+
+- Added spectrum-research tools covering calibrated amplitude units, detector
+  modes, RBW/VBW, FFT overlap, multi-trace analysis, percentile traces,
+  automatic bandwidth/channel-power measurements, Zero Span, and triggers.
+- Added a dedicated research window with interference-comb analysis, IQ
+  waveform/constellation diagnostics, autocorrelation, and dual-HF-input
+  comparison tools.
+- Added receiver calibration tables with interpolation, uncertainty, external
+  path corrections, and preset import/export support.
+- Added richer scientific recording metadata and SigMF-compatible IQ metadata.
+- Added a normal-interface `Fix plane` 3D mode plus a dense gradient-filled
+  front face using the same fixed projection as the Alternative interface.
+
+### Changed
+
+- Reorganized receiver and spectrum-measurement controls for better readability.
+- Moved `Capture` and `Fix capture` to their own row in the 3D waterfall panel.
+- Stored `FobosAPP.ini` in the per-user configuration directory instead of next
+  to the executable. Existing portable settings migrate automatically on first
+  launch, so normal use no longer requires administrator rights.
+- Updated translations, in-app help, settings backup guidance, release privacy
+  checks, and Raspberry source packaging for the new tools.
+
+### Fixed
+
+- Fixed the normal fixed-plane gradient appearing as flickering lines by
+  rendering a dense color gradient without depth-buffer conflict.
+- Preserved settings, presets, calibration data, scan lists, and map markers
+  across release-folder replacement.
+
+### Notes
+
+- Android is unchanged and is not published with this desktop and Raspberry
+  source update.
+
 ## 4.7.2 - 2026-10-01
 
 ### Added

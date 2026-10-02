@@ -26,6 +26,7 @@ public:
     QString currentFilePath() const;
     quint64 bytesWritten() const;
     Mode mode() const;
+    void setExtendedMetadata(const QJsonObject &metadata);
 
     bool appendFrame(const QByteArray &iqData, double sampleRate, int sampleCount, qint64 frameUtcMs = 0);
 
@@ -35,6 +36,7 @@ private:
     void writeWavHeader();
     void patchWavHeader();
     bool writeSidecar() const;
+    bool writeSigMfMetadata() const;
     QJsonObject makeMetadataObject() const;
 
     QFile outputFile;
@@ -42,6 +44,7 @@ private:
     QString sidecarPath;
     Mode activeMode = Mode::ChannelIqS16;
     RadioSettings recordingSettings;
+    QJsonObject extendedMetadata;
     double recordingSampleRate = 0.0;
     qint64 firstFrameUtcMs = 0;
     qint64 lastFrameUtcMs = 0;
