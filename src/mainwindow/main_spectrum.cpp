@@ -15,6 +15,7 @@
 #include <QSignalBlocker>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <memory>
@@ -31,6 +32,14 @@ extern float contrast;
 extern bool colorf;
 
 namespace {
+constexpr int MinFftLength = 2048;
+constexpr int MaxCustomFftLength = 134217728;
+constexpr std::array<int, 16> StandardFftLengths = {
+    2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144,
+    524288, 1048576, 2097152, 4194304, 8388608, 16777216,
+    33554432, 67108864
+};
+
 struct SpectrumDisplayProfile {
     int fftLength = 0;
     int frames = 0;
@@ -76,8 +85,126 @@ void recordSpectrumDisplayProfile(int fftLength,
 }
 
 void YourClassName::onfftLengthEntered() {
+    if (fftBinWidthModeEnabled) {
+        syncFftResolutionControls();
+        return;
+    }
     const int newFftLength = fftComboBox->currentText().toInt();
     applyFftLengthChange(newFftLength, true);
+}
+
+int YourClassName::fftLengthForBinWidth(double sampleRate, double hzPerPoint) const {
+    if (!std::isfinite(sampleRate) || sampleRate <= 0.0 ||
+        !std::isfinite(hzPerPoint) || hzPerPoint <= 0.0) {
+        return (std::clamp)(pendingSettings.fftLength, MinFftLength, MaxCustomFftLength);
+    }
+
+    qint64 length = qRound64(sampleRate / hzPerPoint);
+    length = (std::clamp)(length,
+                          static_cast<qint64>(MinFftLength),
+                          static_cast<qint64>(MaxCustomFftLength));
+    if ((length & 1) != 0 && length < MaxCustomFftLength) {
+        ++length;
+    }
+    return static_cast<int>(length);
+}
+
+int YourClassName::nearestStandardFftLength(int requestedLength) const {
+    const auto best = std::min_element(
+        StandardFftLengths.begin(),
+        StandardFftLengths.end(),
+        [requestedLength](int left, int right) {
+            const qint64 leftDistance = std::abs(static_cast<qint64>(left) - requestedLength);
+            const qint64 rightDistance = std::abs(static_cast<qint64>(right) - requestedLength);
+            if (leftDistance == rightDistance) {
+                return left > right;
+            }
+            return leftDistance < rightDistance;
+        });
+    return best != StandardFftLengths.end() ? *best : 65536;
+}
+
+void YourClassName::syncFftResolutionControls() {
+    const double actualBinWidth = pendingSettings.fftLength > 0 && pendingSettings.sampleRate > 0.0
+                                      ? pendingSettings.sampleRate / pendingSettings.fftLength
+                                      : 0.0;
+    const double displayedBinWidth =
+        fftBinWidthModeEnabled ? fftTargetBinWidthHz : actualBinWidth;
+
+    if (fftBinWidthModeCheckbox) {
+        QSignalBlocker blocker(fftBinWidthModeCheckbox);
+        fftBinWidthModeCheckbox->setChecked(fftBinWidthModeEnabled);
+    }
+    if (fftBinWidthSpin) {
+        QSignalBlocker blocker(fftBinWidthSpin);
+        fftBinWidthSpin->setValue(displayedBinWidth);
+        fftBinWidthSpin->setEnabled(fftBinWidthModeEnabled);
+    }
+    if (fftComboBox) {
+        QSignalBlocker blocker(fftComboBox);
+        fftComboBox->setEnabled(!fftBinWidthModeEnabled);
+        fftComboBox->setEditText(QString::number(pendingSettings.fftLength));
+    }
+
+    const QString status = uiText(
+                               QStringLiteral("fft_hz_per_point_status"),
+                               QStringLiteral("Target: %1 Hz/point | actual: %2 Hz/point | FFT: %3"))
+                               .arg(displayedBinWidth, 0, 'f', 3)
+                               .arg(actualBinWidth, 0, 'f', 6)
+                               .arg(pendingSettings.fftLength);
+    const QString modeTip = uiText(
+        QStringLiteral("fft_hz_per_point_tooltip"),
+        QStringLiteral("Calculate an exact even FFT length from sample rate / target Hz per point. Disabling this mode selects the nearest standard FFT length."));
+    if (fftBinWidthModeCheckbox) {
+        fftBinWidthModeCheckbox->setToolTip(modeTip + QStringLiteral("\n") + status);
+    }
+    if (fftBinWidthSpin) {
+        fftBinWidthSpin->setToolTip(status);
+    }
+    if (fftComboBox) {
+        fftComboBox->setToolTip(
+            uiText(QStringLiteral("fft_length_tooltip"),
+                   QStringLiteral("Spectrum FFT length. Very large transforms can use several gigabytes of memory.")) +
+            QStringLiteral("\n") + status);
+    }
+}
+
+void YourClassName::applyFftBinWidthTarget(bool notifyRemote) {
+    if (!fftBinWidthModeEnabled) {
+        syncFftResolutionControls();
+        return;
+    }
+    const int calculatedLength = fftLengthForBinWidth(pendingSettings.sampleRate,
+                                                       fftTargetBinWidthHz);
+    applyFftLengthChange(calculatedLength, notifyRemote);
+    syncFftResolutionControls();
+}
+
+void YourClassName::onFftBinWidthModeChanged(bool checked) {
+    if (checked) {
+        const double actualBinWidth =
+            pendingSettings.fftLength > 0 && pendingSettings.sampleRate > 0.0
+                ? pendingSettings.sampleRate / pendingSettings.fftLength
+                : fftTargetBinWidthHz;
+        fftTargetBinWidthHz = (std::clamp)(actualBinWidth, 0.1, 1000000.0);
+        fftBinWidthModeEnabled = true;
+        applyFftBinWidthTarget(true);
+    } else {
+        fftBinWidthModeEnabled = false;
+        applyFftLengthChange(nearestStandardFftLength(pendingSettings.fftLength), true);
+        syncFftResolutionControls();
+    }
+    savePersistentSettings();
+}
+
+void YourClassName::onFftBinWidthChanged(double value) {
+    fftTargetBinWidthHz = (std::clamp)(value, 0.1, 1000000.0);
+    if (fftBinWidthModeEnabled) {
+        applyFftBinWidthTarget(true);
+        savePersistentSettings();
+    } else {
+        syncFftResolutionControls();
+    }
 }
 
 bool YourClassName::applyFftLengthChange(int newFftLength, bool notifyRemote) {
@@ -87,6 +214,7 @@ bool YourClassName::applyFftLengthChange(int newFftLength, bool notifyRemote) {
     }
 
     if (pendingSettings.fftLength == newFftLength && fftResult) {
+        syncFftResolutionControls();
         return true;
     }
 
@@ -109,9 +237,11 @@ bool YourClassName::applyFftLengthChange(int newFftLength, bool notifyRemote) {
 
     if (fftComboBox) {
         fftComboBox->blockSignals(true);
-        fftComboBox->setCurrentText(QString::number(pendingSettings.fftLength));
+        fftComboBox->setEditText(QString::number(pendingSettings.fftLength));
         fftComboBox->blockSignals(false);
     }
+
+    syncFftResolutionControls();
 
     if (notifyRemote && isNetworkClientMode()) {
         scheduleRemoteSettingsCommand();
@@ -669,14 +799,14 @@ void YourClassName::updateSpectrum() {
     if (spectrumWorkerAllowed) {
         if (!spectrumFftWorker) {
             spectrumFftWorker = std::make_unique<SpectrumFftWorker>();
-            spectrumFftWorker->request(spectrumSettings);
+            spectrumFftWorker->request(spectrumSettings, fftBackendPreference);
             finishTrace("fft_worker_start", spectrumFrequencies, spectrumMagnitudes);
             return;
         }
 
         SpectrumFftFrame frame;
         if (!spectrumFftWorker->takeLatest(frame)) {
-            spectrumFftWorker->request(spectrumSettings);
+            spectrumFftWorker->request(spectrumSettings, fftBackendPreference);
             finishTrace("fft_worker_pending", spectrumFrequencies, spectrumMagnitudes);
             return;
         }
@@ -692,13 +822,13 @@ void YourClassName::updateSpectrum() {
 
         if (!frame.error.isEmpty()) {
             qCritical() << "[Spectrum] worker exception" << frame.error;
-            spectrumFftWorker->request(spectrumSettings);
+            spectrumFftWorker->request(spectrumSettings, fftBackendPreference);
             finishTrace("fft_worker_exception", spectrumFrequencies, spectrumMagnitudes);
             return;
         }
 
         if (!frame.valid || !spectrumFftSettingsMatch(frame.settings, spectrumSettings)) {
-            spectrumFftWorker->request(spectrumSettings);
+            spectrumFftWorker->request(spectrumSettings, fftBackendPreference);
             finishTrace(frame.valid ? "fft_worker_stale" : "fft_worker_no_data",
                         spectrumFrequencies,
                         spectrumMagnitudes);
@@ -710,9 +840,10 @@ void YourClassName::updateSpectrum() {
         referenceMagnitudes = std::move(frame.referenceMagnitudes);
         fftBlockMetadata = frame.metadata;
         haveSpectrum = true;
-        spectrumFftWorker->request(spectrumSettings);
+        spectrumFftWorker->request(spectrumSettings, fftBackendPreference);
     } else {
         try {
+            fftResult->setBackendPreference(fftBackendPreference);
             haveSpectrum = fftResult->storeFFTResults(spectrumSettings,
                                                       spectrumFrequencies,
                                                       spectrumMagnitudes,

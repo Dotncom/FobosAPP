@@ -179,6 +179,8 @@ void YourClassName::applyUiLanguage() {
         }
     }
 
+    syncFftResolutionControls();
+
     setComboItemText(clkBox, 0, QStringLiteral("internal"), QStringLiteral("Internal"));
     setComboItemText(clkBox, 1, QStringLiteral("external"), QStringLiteral("External"));
     setComboItemText(waterfallDisplayModeCombo,

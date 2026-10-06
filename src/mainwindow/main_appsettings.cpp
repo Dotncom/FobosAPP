@@ -193,6 +193,29 @@ void YourClassName::openApplicationSettings() {
         QStringLiteral("fft_window_tooltip"),
         QStringLiteral("FFT window applied before the transform. Hann is a good general-purpose choice; Blackman-Harris suppresses leakage near strong signals; Flat-top improves amplitude accuracy but widens RBW.")));
 
+    QComboBox *fftBackendCombo = new QComboBox(&dialog);
+    fftBackendCombo->addItem(uiText(QStringLiteral("fft_backend_auto"),
+                                     QStringLiteral("Auto (benchmark CPU/GPU)")),
+                             FFT_BACKEND_AUTO);
+    fftBackendCombo->addItem(uiText(QStringLiteral("fft_backend_cpu"),
+                                     QStringLiteral("CPU FFTW")),
+                             FFT_BACKEND_CPU_FFTW);
+    fftBackendCombo->addItem(uiText(QStringLiteral("fft_backend_gpu"),
+                                     QStringLiteral("GPU VkFFT (experimental)")),
+                             FFT_BACKEND_GPU_VKFFT);
+    const int fftBackendIndex = fftBackendCombo->findData(
+        normalizedFftBackendPreference(fftBackendPreference));
+    fftBackendCombo->setCurrentIndex(fftBackendIndex >= 0 ? fftBackendIndex : 0);
+    fftBackendCombo->setToolTip(uiText(
+        QStringLiteral("fft_backend_tooltip"),
+        QStringLiteral("Auto benchmarks FFTW and Vulkan VkFFT for large transforms and keeps the faster backend. Every GPU error falls back to FFTW without stopping reception.")));
+#ifndef FOBOSAPP_HAS_VKFFT
+    fftBackendCombo->setItemText(
+        fftBackendCombo->findData(FFT_BACKEND_GPU_VKFFT),
+        uiText(QStringLiteral("fft_backend_gpu_unavailable"),
+               QStringLiteral("GPU VkFFT (not included in this build)")));
+#endif
+
     QSpinBox *spectrumUpdateSpin = new QSpinBox(&dialog);
     spectrumUpdateSpin->setRange(SPECTRUM_UPDATE_AUTO_MS, SPECTRUM_UPDATE_MAX_MS);
     spectrumUpdateSpin->setSpecialValueText(uiText(QStringLiteral("auto"), QStringLiteral("Auto")));
@@ -255,6 +278,7 @@ void YourClassName::openApplicationSettings() {
     generalLayout->addRow(uiText(QStringLiteral("language"), QStringLiteral("Lang:")), languageCombo);
     generalLayout->addRow(uiText(QStringLiteral("fine_tune"), QStringLiteral("Fine tune")), fineTuneModeCombo);
     generalLayout->addRow(uiText(QStringLiteral("fft_window"), QStringLiteral("FFT window")), fftWindowCombo);
+    generalLayout->addRow(uiText(QStringLiteral("fft_backend"), QStringLiteral("FFT backend")), fftBackendCombo);
     generalLayout->addRow(uiText(QStringLiteral("spectrum_update_interval"), QStringLiteral("Spectrum/waterfall update")), spectrumUpdateSpin);
     generalLayout->addRow(uiText(QStringLiteral("waterfall_speed"), QStringLiteral("Waterfall speed")), waterfallRowsSpin);
     generalLayout->addRow(uiText(QStringLiteral("scan_measurement_update_interval"), QStringLiteral("Measurement accumulation")), scanMeasurementUpdateSpin);
@@ -429,6 +453,11 @@ void YourClassName::openApplicationSettings() {
             fftWindowCombo->currentData().toInt());
         savePersistentSettings();
     };
+    auto applyFftBackend = [this, fftBackendCombo]() {
+        fftBackendPreference = normalizedFftBackendPreference(
+            fftBackendCombo->currentData().toInt());
+        savePersistentSettings();
+    };
     auto applySpectrumUpdateInterval = [this, spectrumUpdateSpin]() {
         int value = spectrumUpdateSpin->value();
         if (value > SPECTRUM_UPDATE_AUTO_MS && value < SPECTRUM_UPDATE_MIN_MS) {
@@ -486,6 +515,9 @@ void YourClassName::openApplicationSettings() {
     });
     connect(fftWindowCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), &dialog, [applyFftWindow](int) {
         applyFftWindow();
+    });
+    connect(fftBackendCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), &dialog, [applyFftBackend](int) {
+        applyFftBackend();
     });
     connect(spectrumUpdateSpin, QOverload<int>::of(&QSpinBox::valueChanged), &dialog, [applySpectrumUpdateInterval](int) {
         applySpectrumUpdateInterval();

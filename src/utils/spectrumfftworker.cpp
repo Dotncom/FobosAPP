@@ -24,10 +24,11 @@ SpectrumFftWorker::~SpectrumFftWorker() {
     }
 }
 
-void SpectrumFftWorker::request(const RadioSettings &settings) {
+void SpectrumFftWorker::request(const RadioSettings &settings, int fftBackendPreference) {
     {
         std::lock_guard<std::mutex> lock(mutex);
         pendingSettings = settings;
+        pendingFftBackendPreference = normalizedFftBackendPreference(fftBackendPreference);
         pendingGeneration = generation;
         hasRequest = true;
         ++nextRequestId;
@@ -63,6 +64,7 @@ void SpectrumFftWorker::run() {
         RadioSettings settings;
         quint64 requestId = 0;
         quint64 requestGeneration = 0;
+        int backendPreference = FFT_BACKEND_AUTO;
         bool doReset = false;
 
         {
@@ -85,6 +87,7 @@ void SpectrumFftWorker::run() {
             }
 
             settings = pendingSettings;
+            backendPreference = pendingFftBackendPreference;
             requestId = nextRequestId;
             requestGeneration = pendingGeneration;
             hasRequest = false;
@@ -96,6 +99,7 @@ void SpectrumFftWorker::run() {
         frame.settings = settings;
 
         try {
+            fft.setBackendPreference(backendPreference);
             frame.valid = fft.storeFFTResults(settings,
                                               frame.frequencies,
                                               frame.magnitudes,

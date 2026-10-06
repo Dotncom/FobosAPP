@@ -1,5 +1,5 @@
 FobosAPP third-party components
-Version: 4.2.2 release preparation
+Version: 4.8.0
 
 FobosAPP is prepared for publication as a GPL project. The repository root
 contains the GNU General Public License version 2 text in LICENSE.
@@ -184,6 +184,42 @@ using AMBE-capable binaries.
    License: Boost Software License 1.0 for SoapySDR itself. Individual
    SoapySDR device modules may use their own licenses and should be checked
    separately before bundling them in a binary release.
+
+13. VkFFT
+   Project path:
+   - third_party/VkFFT/vkFFT/
+
+   Upstream:
+   - https://github.com/DTolm/VkFFT
+
+   Purpose: optional Vulkan GPU acceleration for large complex FFTs. Builds
+   without a compatible Vulkan SDK retain the CPU FFTW path.
+
+   Copyright: 2020-present Dmitrii Tolmachev
+   License: MIT License.
+   Local license text:
+   - licenses/VkFFT-LICENSE.txt
+
+14. Khronos glslang, SPIRV-Tools, and SPIRV-Headers
+   Build-time/static components used by the Windows VkFFT backend:
+   - glslang
+   - SPIRV-Tools
+   - SPIRV-Tools-opt
+   - SPIRV-Headers
+
+   Upstream:
+   - https://github.com/KhronosGroup/glslang
+   - https://github.com/KhronosGroup/SPIRV-Tools
+   - https://github.com/KhronosGroup/SPIRV-Headers
+
+   These components come from the LunarG Vulkan SDK and are linked statically
+   into VkFFT-enabled Windows builds. Their upstream license files include the
+   applicable BSD, Apache-2.0, MIT, and component-specific notices.
+
+   Local license texts:
+   - licenses/glslang-LICENSE.txt
+   - licenses/SPIRV-Tools-LICENSE.txt
+   - licenses/SPIRV-Headers-LICENSE.txt
 
 Release/source obligation note:
 If a binary release includes GPL DMR voice backend DLLs, publish the

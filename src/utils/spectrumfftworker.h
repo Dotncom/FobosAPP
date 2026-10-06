@@ -33,7 +33,7 @@ public:
     SpectrumFftWorker(const SpectrumFftWorker &) = delete;
     SpectrumFftWorker &operator=(const SpectrumFftWorker &) = delete;
 
-    void request(const RadioSettings &settings);
+    void request(const RadioSettings &settings, int fftBackendPreference);
     bool takeLatest(SpectrumFftFrame &frame);
     void resetHfNoiseCancelState();
 
@@ -51,6 +51,7 @@ private:
     quint64 generation = 0;
     quint64 pendingGeneration = 0;
     RadioSettings pendingSettings;
+    int pendingFftBackendPreference = 0;
     SpectrumFftFrame latestResult;
 };
 

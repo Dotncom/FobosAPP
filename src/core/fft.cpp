@@ -1,4 +1,5 @@
 #include "fft.h"
+#include "gpufftbackend.h"
 #include "diagnosticlogging.h"
 #include "iqbuffer.h"
 
@@ -27,6 +28,7 @@ constexpr float HF_NOISE_CANCEL_MAX_COEFF = 2.5f;
 constexpr int FFT_THREADED_PLAN_MIN_LENGTH = 524288;
 constexpr int FFT_PARALLEL_POSTPROCESS_MIN_LENGTH = 1048576;
 constexpr int FFT_PROFILE_MIN_LENGTH = 524288;
+constexpr int FFT_AUTO_GPU_BENCHMARK_MAX_LENGTH = 8388608;
 constexpr unsigned int FFT_MAX_WORKER_THREADS = 4;
 
 std::mutex fftwPlannerMutex;
@@ -160,6 +162,21 @@ FFTResult::~FFTResult() {
     releasePlan();
 }
 
+void FFTResult::setBackendPreference(int preference) {
+    const int normalized = normalizedFftBackendPreference(preference);
+    if (backendPreference == normalized) {
+        return;
+    }
+    backendPreference = normalized;
+    loggedGpuSuccessLength = 0;
+    loggedGpuFailureLength = 0;
+    autoBackendDecisionLength = 0;
+    autoBackendDecision = -1;
+    if (backendPreference == FFT_BACKEND_CPU_FFTW && gpuBackend) {
+        gpuBackend->releasePlan();
+    }
+}
+
 void FFTResult::resetHfNoiseCancelState() {
     hfNoiseCancelBins.clear();
     hfNoiseCancelCrossPower.clear();
@@ -168,6 +185,9 @@ void FFTResult::resetHfNoiseCancelState() {
 }
 
 void FFTResult::releasePlan() {
+    if (gpuBackend) {
+        gpuBackend->releasePlan();
+    }
     if (plan) {
         fftwf_destroy_plan(plan);
         plan = nullptr;
@@ -181,6 +201,89 @@ void FFTResult::releasePlan() {
         fftOut = nullptr;
     }
     planLength = 0;
+    autoBackendDecisionLength = 0;
+    autoBackendDecision = -1;
+}
+
+void FFTResult::executeTransform(int length) {
+    constexpr int AutoGpuMinimumLength = 1048576;
+    const bool automaticGpuCandidate =
+        backendPreference == FFT_BACKEND_AUTO &&
+        length >= AutoGpuMinimumLength &&
+        length <= FFT_AUTO_GPU_BENCHMARK_MAX_LENGTH;
+    const bool gpuRequested = backendPreference == FFT_BACKEND_GPU_VKFFT ||
+                              automaticGpuCandidate;
+    if (automaticGpuCandidate && autoBackendDecisionLength != length) {
+        autoBackendDecisionLength = length;
+        autoBackendDecision = -1;
+    }
+    if (automaticGpuCandidate && autoBackendDecision == 0) {
+        fftwf_execute(plan);
+        return;
+    }
+    if (gpuRequested && GpuFftBackend::isCompiled()) {
+        if (!gpuBackend) {
+            gpuBackend = std::make_unique<GpuFftBackend>();
+        }
+        QString error;
+        const auto executeGpu = [&]() {
+            return gpuBackend->execute(reinterpret_cast<const float *>(fftIn),
+                                       reinterpret_cast<float *>(fftOut),
+                                       length,
+                                       &error);
+        };
+        if (automaticGpuCandidate && autoBackendDecision < 0) {
+            QElapsedTimer gpuTimer;
+            if (!executeGpu()) {
+                autoBackendDecision = 0;
+            } else {
+                gpuTimer.start();
+                const bool measuredGpu = executeGpu();
+                const qint64 gpuNs = gpuTimer.nsecsElapsed();
+
+                fftwf_execute(plan);
+                QElapsedTimer cpuTimer;
+                cpuTimer.start();
+                fftwf_execute(plan);
+                const qint64 cpuNs = cpuTimer.nsecsElapsed();
+
+                autoBackendDecision = measuredGpu && gpuNs < cpuNs - cpuNs / 10 ? 1 : 0;
+                qInfo() << "[FFT] Auto backend benchmark"
+                        << "length" << length
+                        << "device" << gpuBackend->deviceName()
+                        << "cpuMs" << (cpuNs / 1000000.0)
+                        << "gpuMs" << (gpuNs / 1000000.0)
+                        << "selected" << (autoBackendDecision == 1 ? "VkFFT" : "FFTW");
+                if (autoBackendDecision == 0) {
+                    gpuBackend->releasePlan();
+                }
+                return;
+            }
+        } else if (executeGpu()) {
+            if (loggedGpuSuccessLength != length) {
+                loggedGpuSuccessLength = length;
+                loggedGpuFailureLength = 0;
+                qInfo() << "[FFT] VkFFT active"
+                        << "length" << length
+                        << "device" << gpuBackend->deviceName();
+            }
+            return;
+        }
+        if (automaticGpuCandidate) {
+            autoBackendDecision = 0;
+            gpuBackend->releasePlan();
+        }
+        if (loggedGpuFailureLength != length) {
+            loggedGpuFailureLength = length;
+            qWarning() << "[FFT] VkFFT unavailable, using FFTW"
+                       << "length" << length
+                       << "error" << error;
+        }
+    } else if (gpuRequested && loggedGpuFailureLength != length) {
+        loggedGpuFailureLength = length;
+        qWarning() << "[FFT] GPU backend requested but this build has no VkFFT; using FFTW";
+    }
+    fftwf_execute(plan);
 }
 
 bool FFTResult::ensurePlan(int length) {
@@ -205,7 +308,7 @@ bool FFTResult::ensurePlan(int length) {
     {
         std::lock_guard<std::mutex> plannerLock(fftwPlannerMutex);
         importFftwWisdom();
-        const bool compareThreadedPlans =
+        const bool useThreadedPlan =
             optimizeLargePlans && length >= FFT_THREADED_PLAN_MIN_LENGTH;
         int planThreads = 1;
 #ifdef FOBOSAPP_HAS_FFTW_THREADS
@@ -213,70 +316,21 @@ bool FFTResult::ensurePlan(int length) {
             fftwThreadsInitializationAttempted = true;
             fftwThreadsAvailable = fftwf_init_threads() != 0;
         }
-        if (compareThreadedPlans && fftwThreadsAvailable) {
+        if (useThreadedPlan && fftwThreadsAvailable) {
             planThreads = fftWorkerCount(length);
         }
 #endif
-        if (!compareThreadedPlans || planThreads <= 1) {
 #ifdef FOBOSAPP_HAS_FFTW_THREADS
-            if (fftwThreadsAvailable) {
-                fftwf_plan_with_nthreads(1);
-            }
+        if (fftwThreadsAvailable) {
+            fftwf_plan_with_nthreads(planThreads);
+        }
 #endif
-            plan = fftwf_plan_dft_1d(length, fftIn, fftOut, FFTW_FORWARD, FFTW_ESTIMATE);
-        } else {
-            const auto makeCandidate = [&](int threads) {
-#ifdef FOBOSAPP_HAS_FFTW_THREADS
-                fftwf_plan_with_nthreads(threads);
-#endif
-                fftwf_plan candidate = fftwf_plan_dft_1d(length,
-                                                          fftIn,
-                                                          fftOut,
-                                                          FFTW_FORWARD,
-                                                          FFTW_MEASURE | FFTW_WISDOM_ONLY);
-                if (!candidate) {
-                    candidate = fftwf_plan_dft_1d(length,
-                                                  fftIn,
-                                                  fftOut,
-                                                  FFTW_FORWARD,
-                                                  FFTW_ESTIMATE);
-                }
-                return candidate;
-            };
-            const auto benchmarkCandidate = [](fftwf_plan candidate) {
-                if (!candidate) {
-                    return std::numeric_limits<qint64>::max();
-                }
-                fftwf_execute(candidate);
-                QElapsedTimer timer;
-                timer.start();
-                constexpr int Runs = 3;
-                for (int run = 0; run < Runs; ++run) {
-                    fftwf_execute(candidate);
-                }
-                return timer.nsecsElapsed() / Runs;
-            };
-
-            fftwf_plan singleThreadPlan = makeCandidate(1);
-            fftwf_plan multiThreadPlan = makeCandidate(planThreads);
-            const qint64 singleThreadNs = benchmarkCandidate(singleThreadPlan);
-            const qint64 multiThreadNs = benchmarkCandidate(multiThreadPlan);
-            const bool useMultiThread = multiThreadPlan &&
-                                        (!singleThreadPlan ||
-                                         multiThreadNs < singleThreadNs - singleThreadNs / 10);
-            plan = useMultiThread ? multiThreadPlan : singleThreadPlan;
-            if (useMultiThread) {
-                if (singleThreadPlan) {
-                    fftwf_destroy_plan(singleThreadPlan);
-                }
-            } else if (multiThreadPlan) {
-                fftwf_destroy_plan(multiThreadPlan);
-            }
+        plan = fftwf_plan_dft_1d(length, fftIn, fftOut, FFTW_FORWARD, FFTW_ESTIMATE);
+        if (fobosVerboseLoggingEnabled()) {
             qInfo() << "[FFT] adaptive plan selected"
                     << "length" << length
-                    << "threads" << (useMultiThread ? planThreads : 1)
-                    << "singleMs" << (singleThreadNs / 1000000.0)
-                    << "multiMs" << (multiThreadNs / 1000000.0);
+                    << "threads" << planThreads
+                    << "benchmark" << "skipped";
         }
 #ifdef FOBOSAPP_HAS_FFTW_THREADS
         if (fftwThreadsAvailable) {
@@ -464,7 +518,7 @@ bool FFTResult::storeFFTResults(const RadioSettings &settings,
             const float iValue = iqSnapshotScratch[2 * sourceIndex];
             fftIn[i][0] = std::isfinite(iValue) ? iValue * windowCoefficient(i) : 0.0f;
         }
-        fftwf_execute(plan);
+        executeTransform(currentFftLength);
         for (int k = 0; k <= halfLength; ++k) {
             hf1Positive[k] = magnitudeDb(k);
         }
@@ -478,7 +532,7 @@ bool FFTResult::storeFFTResults(const RadioSettings &settings,
             const float qValue = iqSnapshotScratch[2 * sourceIndex + 1];
             fftIn[i][0] = std::isfinite(qValue) ? qValue * windowCoefficient(i) : 0.0f;
         }
-        fftwf_execute(plan);
+        executeTransform(currentFftLength);
         for (int k = 0; k <= halfLength; ++k) {
             hf2Positive[k] = magnitudeDb(k);
         }
@@ -511,7 +565,7 @@ bool FFTResult::storeFFTResults(const RadioSettings &settings,
             const float iValue = iqSnapshotScratch[2 * sourceIndex];
             fftIn[i][0] = std::isfinite(iValue) ? iValue * windowCoefficient(i) : 0.0f;
         }
-        fftwf_execute(plan);
+        executeTransform(currentFftLength);
         for (int i = 0; i < currentFftLength; ++i) {
             mainSpectrum[i] = std::complex<float>(std::isfinite(fftOut[i][0]) ? fftOut[i][0] : 0.0f,
                                                   std::isfinite(fftOut[i][1]) ? fftOut[i][1] : 0.0f);
@@ -526,7 +580,7 @@ bool FFTResult::storeFFTResults(const RadioSettings &settings,
             const float qValue = iqSnapshotScratch[2 * sourceIndex + 1];
             fftIn[i][0] = std::isfinite(qValue) ? qValue * windowCoefficient(i) : 0.0f;
         }
-        fftwf_execute(plan);
+        executeTransform(currentFftLength);
         for (int i = 0; i < currentFftLength; ++i) {
             refSpectrum[i] = std::complex<float>(std::isfinite(fftOut[i][0]) ? fftOut[i][0] : 0.0f,
                                                  std::isfinite(fftOut[i][1]) ? fftOut[i][1] : 0.0f);
@@ -655,7 +709,7 @@ bool FFTResult::storeFFTResults(const RadioSettings &settings,
     if (profileFrame) {
         profileTimer.restart();
     }
-    fftwf_execute(plan);
+    executeTransform(currentFftLength);
     const qint64 executeNs = profileFrame ? profileTimer.nsecsElapsed() : 0;
     if (profileFrame) {
         profileTimer.restart();

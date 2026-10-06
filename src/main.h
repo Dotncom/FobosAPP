@@ -177,6 +177,8 @@ private slots:
     void stopFobosProcessing();
     void onSampleRateChanged(int index);
     void onfftLengthEntered();
+    void onFftBinWidthModeChanged(bool checked);
+    void onFftBinWidthChanged(double value);
     void onClkChanged(int index);
     void onCheckboxStateChanged(int state);
     void onAudioDeviceChanged(int index);
@@ -571,6 +573,10 @@ private:
     void tuneSidebandEdgeAt(double frequency, int modulationType);
     void centerReceiverAt(double frequency);
     bool applyFftLengthChange(int newFftLength, bool notifyRemote);
+    int fftLengthForBinWidth(double sampleRate, double hzPerPoint) const;
+    int nearestStandardFftLength(int requestedLength) const;
+    void applyFftBinWidthTarget(bool notifyRemote);
+    void syncFftResolutionControls();
     bool stopAgileScanForNormalRf(const char *reason);
     
     QComboBox *clkBox = nullptr;
@@ -578,6 +584,8 @@ private:
     QComboBox *modeBox = nullptr;
     QComboBox *sampleBox = nullptr;
     QComboBox *fftComboBox = nullptr;
+    QCheckBox *fftBinWidthModeCheckbox = nullptr;
+    QDoubleSpinBox *fftBinWidthSpin = nullptr;
     QComboBox *waterfallDisplayModeCombo = nullptr;
     QCheckBox *alternativeSpectrumGradientCheckbox = nullptr;
     QComboBox *waterfall3DResolutionCombo = nullptr;
@@ -1006,6 +1014,9 @@ private:
     QMap<QString, QString> listeningScanPresets;
     QStringList listeningScanPresetOrder;
     int spectrumUpdateIntervalMs = 0;
+    int fftBackendPreference = FFT_BACKEND_AUTO;
+    bool fftBinWidthModeEnabled = false;
+    double fftTargetBinWidthHz = 2.0;
     int additionalScaleDivisor = 1;
     double frequencyCalibrationOffsetHz = 0.0;
     double amplitudeCalibrationOffsetDb = 0.0;

@@ -533,7 +533,25 @@ YourClassName::YourClassName(QWidget *parent)
     fftComboBox->addItem("4194304");
     fftComboBox->addItem("8388608");
     fftComboBox->addItem("16777216");
+    fftComboBox->addItem("33554432");
+    fftComboBox->addItem("67108864");
+    fftComboBox->setEditable(true);
+    if (fftComboBox->lineEdit()) {
+        fftComboBox->lineEdit()->setReadOnly(true);
+    }
     fftComboBox->setCurrentText(QString::number(pendingSettings.fftLength));
+
+    fftBinWidthModeCheckbox = new QCheckBox(QStringLiteral("Hz/point"), this);
+    markTranslatable(fftBinWidthModeCheckbox,
+                     QStringLiteral("fft_hz_per_point"),
+                     QStringLiteral("Hz/point"));
+    fftBinWidthSpin = new QDoubleSpinBox(this);
+    fftBinWidthSpin->setRange(0.1, 1000000.0);
+    fftBinWidthSpin->setDecimals(3);
+    fftBinWidthSpin->setSingleStep(0.1);
+    fftBinWidthSpin->setKeyboardTracking(false);
+    fftBinWidthSpin->setSuffix(QStringLiteral(" Hz"));
+    fftBinWidthSpin->setValue(fftTargetBinWidthHz);
     
     lnaGainSlider = new QSlider(Qt::Horizontal, this);
     lnaGainSlider->setRange(1, 3);
@@ -2629,23 +2647,50 @@ YourClassName::YourClassName(QWidget *parent)
     prepareReceiverCombo(fftComboBox);
     prepareReceiverCombo(sampleBox);
 
-    QGridLayout *receiverRowsLayout = new QGridLayout();
-    receiverRowsLayout->setContentsMargins(0, 0, 0, 0);
-    receiverRowsLayout->setHorizontalSpacing(4);
-    receiverRowsLayout->setVerticalSpacing(2);
+    QGridLayout *receiverLeftColumnLayout = new QGridLayout();
+    receiverLeftColumnLayout->setContentsMargins(0, 0, 0, 0);
+    receiverLeftColumnLayout->setHorizontalSpacing(4);
+    receiverLeftColumnLayout->setVerticalSpacing(2);
+    QGridLayout *receiverRightColumnLayout = new QGridLayout();
+    receiverRightColumnLayout->setContentsMargins(0, 0, 0, 0);
+    receiverRightColumnLayout->setHorizontalSpacing(4);
+    receiverRightColumnLayout->setVerticalSpacing(2);
     for (QLabel *label : {clockSourceLabel, inputModeLabel, fftLabel, sampleRateLabel}) {
         if (label) label->setMinimumWidth(0);
     }
-    receiverRowsLayout->addWidget(clockSourceLabel, 0, 0);
-    receiverRowsLayout->addWidget(clkBox, 0, 1);
-    receiverRowsLayout->addWidget(fftLabel, 0, 2);
-    receiverRowsLayout->addWidget(fftComboBox, 0, 3);
-    receiverRowsLayout->addWidget(inputModeLabel, 1, 0);
-    receiverRowsLayout->addWidget(modeBox, 1, 1);
-    receiverRowsLayout->addWidget(sampleRateLabel, 1, 2);
-    receiverRowsLayout->addWidget(sampleBox, 1, 3);
-    receiverRowsLayout->setColumnStretch(1, 1);
-    receiverRowsLayout->setColumnStretch(3, 1);
+    receiverLeftColumnLayout->addWidget(clockSourceLabel, 0, 0);
+    receiverLeftColumnLayout->addWidget(clkBox, 0, 1);
+    receiverLeftColumnLayout->addWidget(inputModeLabel, 1, 0);
+    receiverLeftColumnLayout->addWidget(modeBox, 1, 1);
+    receiverLeftColumnLayout->addWidget(fftBinWidthModeCheckbox, 2, 0, 1, 2);
+    receiverLeftColumnLayout->setColumnStretch(1, 1);
+
+    receiverRightColumnLayout->addWidget(fftLabel, 0, 0);
+    receiverRightColumnLayout->addWidget(fftComboBox, 0, 1);
+    receiverRightColumnLayout->addWidget(sampleRateLabel, 1, 0);
+    receiverRightColumnLayout->addWidget(sampleBox, 1, 1);
+    receiverRightColumnLayout->addWidget(fftBinWidthSpin, 2, 0, 1, 2);
+    receiverRightColumnLayout->setColumnStretch(1, 1);
+
+    fftBinWidthModeCheckbox->setMinimumWidth(0);
+    fftBinWidthModeCheckbox->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+    fftBinWidthSpin->setMinimumWidth(0);
+    fftBinWidthSpin->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+
+    QWidget *receiverLeftColumn = new QWidget(this);
+    receiverLeftColumn->setLayout(receiverLeftColumnLayout);
+    receiverLeftColumn->setMinimumWidth(0);
+    receiverLeftColumn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+    QWidget *receiverRightColumn = new QWidget(this);
+    receiverRightColumn->setLayout(receiverRightColumnLayout);
+    receiverRightColumn->setMinimumWidth(0);
+    receiverRightColumn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+
+    QHBoxLayout *receiverRowsLayout = new QHBoxLayout();
+    receiverRowsLayout->setContentsMargins(0, 0, 0, 0);
+    receiverRowsLayout->setSpacing(4);
+    receiverRowsLayout->addWidget(receiverLeftColumn, 1);
+    receiverRowsLayout->addWidget(receiverRightColumn, 1);
 
     QVBoxLayout *fineTuneLayout = new QVBoxLayout();
     fineTuneLayout->setSpacing(2);
@@ -2891,6 +2936,14 @@ YourClassName::YourClassName(QWidget *parent)
         onFrequencyEntered();
     });
     connect(fftComboBox, SIGNAL(currentIndexChanged(int)), this, SLOT(onfftLengthEntered()));
+    connect(fftBinWidthModeCheckbox,
+            &QCheckBox::toggled,
+            this,
+            &YourClassName::onFftBinWidthModeChanged);
+    connect(fftBinWidthSpin,
+            QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            this,
+            &YourClassName::onFftBinWidthChanged);
     connect(listeningFrequencyControl, &FrequencyControl::valueCommitted, this, [this](double) {
         onListeningFrequencyEntered();
     });
@@ -5528,9 +5581,18 @@ void YourClassName::refreshSettingsFromUi() {
         }
     }
     if (fftComboBox) {
-        const int selectedFftLength = fftComboBox->currentText().toInt();
-        if (selectedFftLength > 0) {
-            pendingSettings.fftLength = selectedFftLength;
+        fftBinWidthModeEnabled = fftBinWidthModeCheckbox && fftBinWidthModeCheckbox->isChecked();
+        if (fftBinWidthSpin) {
+            fftTargetBinWidthHz = fftBinWidthSpin->value();
+        }
+        if (fftBinWidthModeEnabled) {
+            pendingSettings.fftLength = fftLengthForBinWidth(pendingSettings.sampleRate,
+                                                              fftTargetBinWidthHz);
+        } else {
+            const int selectedFftLength = fftComboBox->currentText().toInt();
+            if (selectedFftLength > 0) {
+                pendingSettings.fftLength = selectedFftLength;
+            }
         }
     }
     if (lnaGainSlider) {
@@ -6520,7 +6582,13 @@ void YourClassName::updateSpectrumTimerInterval() {
     }
 
     int intervalMs = 33;
-    if (pendingSettings.fftLength >= 16777216) {
+    if (pendingSettings.fftLength >= 100000000) {
+        intervalMs = 5000;
+    } else if (pendingSettings.fftLength >= 67108864) {
+        intervalMs = 2800;
+    } else if (pendingSettings.fftLength >= 33554432) {
+        intervalMs = 1400;
+    } else if (pendingSettings.fftLength >= 16777216) {
         intervalMs = 700;
     } else if (pendingSettings.fftLength >= 8388608) {
         intervalMs = 400;
@@ -6565,11 +6633,7 @@ void YourClassName::revertHardwareControlsToSettings() {
         }
         sampleBox->blockSignals(false);
     }
-    if (fftComboBox) {
-        fftComboBox->blockSignals(true);
-        fftComboBox->setCurrentText(QString::number(pendingSettings.fftLength));
-        fftComboBox->blockSignals(false);
-    }
+    syncFftResolutionControls();
     if (audioDeviceComboBox) {
         audioDeviceComboBox->blockSignals(true);
         const int index = audioDeviceComboBox->findData(pendingSettings.audioDeviceId);

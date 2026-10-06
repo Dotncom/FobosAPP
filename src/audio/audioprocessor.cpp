@@ -1415,6 +1415,15 @@ void AudioProcessor::SDRThread() {
     int activeDmrBasebandSampleRate =
         normalizedDmrBasebandSampleRate(activeSettings.dmrBasebandSampleRate);
     int activeDmrChannelSampleRate = activeSettings.dmrChannelSampleRate;
+    auto healthWindowStart = std::chrono::steady_clock::now();
+    std::uint64_t previousIqSequence = 0;
+    std::uint64_t healthSequenceGaps = 0;
+    std::uint64_t healthBlocks = 0;
+    std::uint64_t healthIqSamples = 0;
+    std::uint64_t healthAudioSamples = 0;
+    double healthDemodMs = 0.0;
+    double healthMaxDemodMs = 0.0;
+    std::uint64_t previousDroppedBlocks = IqBuffer::stats().droppedQueuedBlocks;
 
     while (running) {
         const RadioSettings settings = currentSettingsSnapshot();
@@ -1453,6 +1462,10 @@ void AudioProcessor::SDRThread() {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
             continue;
         }
+        if (previousIqSequence != 0 && iqBlockSequence > previousIqSequence + 1) {
+            healthSequenceGaps += iqBlockSequence - previousIqSequence - 1;
+        }
+        previousIqSequence = iqBlockSequence;
 
         const auto demodStart = std::chrono::steady_clock::now();
         int dmrBasebandSampleRate = 0;
@@ -1463,6 +1476,59 @@ void AudioProcessor::SDRThread() {
                                 settings);
         const auto demodEnd = std::chrono::steady_clock::now();
         const double demodMs = std::chrono::duration<double, std::milli>(demodEnd - demodStart).count();
+        ++healthBlocks;
+        healthIqSamples += static_cast<std::uint64_t>(iqBlock.size() / 2U);
+        healthAudioSamples += static_cast<std::uint64_t>(audioSamples.size());
+        healthDemodMs += demodMs;
+        healthMaxDemodMs = (std::max)(healthMaxDemodMs, demodMs);
+
+        const auto healthNow = std::chrono::steady_clock::now();
+        const double healthElapsedMs =
+            std::chrono::duration<double, std::milli>(healthNow - healthWindowStart).count();
+        if (healthElapsedMs >= 1000.0) {
+            const IqBuffer::Stats iqStats = IqBuffer::stats();
+            const std::uint64_t droppedBlocks =
+                iqStats.droppedQueuedBlocks >= previousDroppedBlocks
+                    ? iqStats.droppedQueuedBlocks - previousDroppedBlocks
+                    : iqStats.droppedQueuedBlocks;
+            const double elapsedSeconds = healthElapsedMs / 1000.0;
+            const double producedRatio =
+                settings.modulationType == MOD_DMR
+                    ? 1.0
+                    : static_cast<double>(healthAudioSamples) /
+                          ((std::max)(0.001, elapsedSeconds) * AUDIO_OUTPUT_RATE);
+            const double queuedMs = settings.sampleRate > 0.0
+                                        ? static_cast<double>(iqStats.queuedFloatCount) * 500.0 /
+                                              settings.sampleRate
+                                        : 0.0;
+            const bool unhealthy = droppedBlocks > 0 || healthSequenceGaps > 0 || producedRatio < 0.90;
+            if (unhealthy || fobosVerboseLoggingEnabled()) {
+                qWarning() << "[Audio health]"
+                           << "realtimeRatio" << producedRatio
+                           << "configuredRate" << settings.sampleRate
+                           << "estimatedRate" << iqStats.sampleRateEstimate
+                           << "blocks" << static_cast<qulonglong>(healthBlocks)
+                           << "iqMs" << (settings.sampleRate > 0.0
+                                             ? static_cast<double>(healthIqSamples) * 1000.0 /
+                                                   settings.sampleRate
+                                             : 0.0)
+                           << "pcmMs" << static_cast<double>(healthAudioSamples) * 1000.0 /
+                                             AUDIO_OUTPUT_RATE
+                           << "demodMs" << healthDemodMs
+                           << "maxDemodMs" << healthMaxDemodMs
+                           << "queuedMs" << queuedMs
+                           << "sequenceGaps" << static_cast<qulonglong>(healthSequenceGaps)
+                           << "droppedBlocks" << static_cast<qulonglong>(droppedBlocks);
+            }
+            healthWindowStart = healthNow;
+            healthSequenceGaps = 0;
+            healthBlocks = 0;
+            healthIqSamples = 0;
+            healthAudioSamples = 0;
+            healthDemodMs = 0.0;
+            healthMaxDemodMs = 0.0;
+            previousDroppedBlocks = iqStats.droppedQueuedBlocks;
+        }
         if (!dmrBasebandSamples.empty() && dmrBasebandSampleRate > 0) {
             const QByteArray dmrBasebandFrame(
                 reinterpret_cast<const char *>(dmrBasebandSamples.data()),

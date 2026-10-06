@@ -1373,13 +1373,27 @@ void DataProcessor::handleData(float *buf, uint32_t buf_length, int agileScanInd
                 configuredRate > 0.0
                     ? ((measuredRate - configuredRate) / configuredRate) * 100.0
                     : 0.0;
-            qDebug() << "[DataProcessor] async sample-rate check"
-                     << "configured" << configuredRate
-                     << "measured" << measuredRate
-                     << "errorPercent" << errorPercent
-                     << "elapsedMs" << elapsedMs
-                     << "callbackCounter" << asyncCallbackCounter
-                     << "blockSamples" << buf_length;
+            const bool severeMismatch = std::abs(errorPercent) >= 10.0;
+            const bool periodicMismatchReport = severeMismatch &&
+                                                (asyncRateReportCount < 4 ||
+                                                 (asyncRateReportCount % 20) == 0);
+            if (periodicMismatchReport) {
+                qWarning() << "[DataProcessor] async sample-rate mismatch"
+                           << "configured" << configuredRate
+                           << "measured" << measuredRate
+                           << "errorPercent" << errorPercent
+                           << "elapsedMs" << elapsedMs
+                           << "callbackCounter" << asyncCallbackCounter
+                           << "blockSamples" << buf_length;
+            } else if (fobosVerboseLoggingEnabled()) {
+                qDebug() << "[DataProcessor] async sample-rate check"
+                         << "configured" << configuredRate
+                         << "measured" << measuredRate
+                         << "errorPercent" << errorPercent
+                         << "elapsedMs" << elapsedMs
+                         << "callbackCounter" << asyncCallbackCounter
+                         << "blockSamples" << buf_length;
+            }
             ++asyncRateReportCount;
         }
         asyncMeasuredSamples = 0;

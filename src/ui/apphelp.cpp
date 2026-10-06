@@ -5,7 +5,7 @@ QString applicationHelpText(const QString &language) {
         return QString::fromUtf8(R"HELP(FobosAPP: короткий практичний довідник
 
 Призначення
-FobosAPP - SDR-програма для Fobos SDR, Fobos Agile, RTL-SDR, rtl_tcp і експериментального SoapySDR backend. Вона поєднує прийом IQ, спектр, водоспад, аудіодемодуляцію, сканування, записи, пресети, GNSS/QTH-мапу, мережевий режим і дослідні цифрові декодери.
+FobosAPP - SDR-програма для Fobos SDR, Fobos Agile, RTL-SDR, rtl_tcp, експериментального нативного bladeRF RX і SoapySDR backend. Вона поєднує прийом IQ, спектр, водоспад, аудіодемодуляцію, сканування, записи, пресети, GNSS/QTH-мапу, мережевий режим і дослідні цифрові декодери.
 
 Основна логіка частот
 - Central Frequency - центральна частота приймача, тобто центр видимої IQ-смуги.
@@ -27,6 +27,7 @@ FobosAPP - SDR-програма для Fobos SDR, Fobos Agile, RTL-SDR, rtl_tcp 
 - Fobos Standard - основний режим для стандартної прошивки.
 - Fobos Agile - підтримує швидкий firmware scan і live-переналаштування.
 - RTL-SDR native спершу використовує rtlsdr\\rtlsdr.dll і сумісний rtlsdr\\libusb-1.0.dll; DLL у корені є тільки запасним варіантом.
+- bladeRF native використовує bladerf\\bladeRF.dll у Windows-пакеті або системну libbladeRF. Це експериментальний RX-only шлях без SoapySDR.
 - rtl_tcp підключається до 127.0.0.1:1234.
 - SoapySDR backend доданий як теоретична сумісність, якщо на системі є SoapySDR.dll і модулі приймача.
 - Для Fobos типовий sample rate - 50 MHz. Для RTL типовий безпечний sample rate - 2.048 MHz.
@@ -34,7 +35,8 @@ FobosAPP - SDR-програма для Fobos SDR, Fobos Agile, RTL-SDR, rtl_tcp 
 Спектр і водоспад
 - Spectrum/waterfall update у загальних налаштуваннях задає інтервал оновлення. Auto обирає безпечний режим.
 - Waterfall speed додає кількість рядків на один FFT-кадр: це робить водоспад візуально швидшим без додаткового FFT-навантаження.
-- FFT length впливає на деталізацію і навантаження. Великі FFT корисні для вузьких сигналів, але можуть вимагати повільнішого оновлення.
+- FFT length впливає на деталізацію і навантаження. Доступні також 33554432 і 67108864. Режим Гц/точку обчислює точну парну довжину FFT зі sample rate; після його вимкнення програма обирає найближче стандартне значення. Великі FFT можуть вимагати кількох гігабайтів пам'яті та повільнішого оновлення.
+- FFT backend у загальних налаштуваннях обирає CPU FFTW або експериментальний Vulkan VkFFT. Auto один раз порівнює CPU/GPU для довжин від 1048576 до 8388608 і лишає швидший варіант; для ще більших FFT одразу використовує багатопотоковий FFTW, щоб не блокувати інтерфейс довгим тестом. Явний GPU режим доступний для всіх підтримуваних довжин, а помилка GPU автоматично повертає FFTW.
 - Band markers показують діапазони: загальні радіодіапазони, аматорські діапазони або компактний шар.
 - Spur suppression/Spur calibration допомагає позначати і приглушувати стабільні внутрішні спури.
 - У Вимірі спектра A/B-маркери задають межі наукового розрахунку. Shift + ліва кнопка на звичайному спектрі ставить активний маркер; кнопки Peak, Попер. і Наст. переходять між локальними піками.
@@ -95,13 +97,19 @@ FobosAPP - SDR-програма для Fobos SDR, Fobos Agile, RTL-SDR, rtl_tcp 
 
 GNSS, GPS і QTH
 - GPS/QTH блок зберігає своє місцеположення, показує Maidenhead/QTH locator і відкриває карту.
-- QTH Map підтримує offline/grid view, online tile providers і QTH-сітку.
+- QTH Map підтримує автономну сітку, локальні XYZ-тайли z/x/y.png, онлайн OpenStreetMap, MapTiler, Mapbox, NASA GIBS і власний XYZ URL. Онлайн-тайли можна кешувати на диску або тримати тільки в пам'яті.
 - Колесо миші масштабує карту навколо курсора, перетягування мишею рухає карту.
 - Правий клік по карті може ставити користувацький маркер; правий клік по маркеру видаляє його.
 - Маркери можна редагувати у Presets -> QTH markers.
+- Оверлей карти перемикає QTH-сітку та локально масштабовані супутники; карта неба показує азимут, кут підйому, C/N0 і використання супутника у fix.
+- Зовнішній GNSS-модуль підключається через вибраний COM/tty порт. Для більшості NEO-M8N типовий baud rate 9600; валідні NMEA GGA/RMC або UBX NAV-PVT автоматично оновлюють QTH.
+- Політика Auto / UBX пріоритет / Тільки NMEA / Тільки UBX визначає, який потік може оновлювати позицію. Авто UBX запитує NAV-PVT, NAV-SAT і NAV-DOP після відкриття сумісного u-blox модуля.
+- Вікно Супутники показує живий статус і карту неба, а окрема таблиця NMEA GSV/GSA та UBX NAV-SAT сортується за колонками. Чекбокси й команди правої кнопки дозволяють включати або ігнорувати окремі системи та супутники у відображенні й аналізі; готові координати самого модуля від цього не перераховуються.
+- UBX сист. опитує/застосовує CFG-GNSS для GPS/GLO/GAL/BDS/QZSS/SBAS, а Save cfg просить модуль зберегти конфігурацію у підтримувану енергонезалежну пам'ять.
+- Raw записує бінарний UBX/NMEA потік, NMEA log/replay записує або повторно подає текстові речення через той самий парсер. Ці файли можуть містити реальні координати й навмисно не входять до релізу.
 - Tune GNSS L1 і GNSS scan виставляють частоти для GPS/Galileo/BeiDou/GLONASS L1.
-- GPS C/A accumulate і GPS deep - дослідні корелятори для GPS L1 C/A. Для реального lock потрібен достатній сигнал, стабільна частота і хороша GNSS-антена.
-- Save GNSS IQ записує поточний IQ-снепшот у WAV і додає контекст у лог.
+- Accum виконує один накопичувальний GPS L1 C/A пошук, Auto безперервно аналізує rolling IQ, Replay запускає той самий acquisition на Channel-IQ WAV, а Self-test перевіряє синтетичний acquisition/позиційний тракт. Теплова карта показує PRN, Doppler, code phase і історію піків. Для реального lock потрібні достатній сигнал, стабільна частота і хороша GNSS-антена.
+- IQ monitor вимірює рівень, DC offset, clipping та I/Q balance до acquisition; Save GNSS IQ зберігає поточний stereo IQ snapshot і контекст налаштування.
 
 Цифрові режими
 - Digital Audio містить DMR-дослідний декодер. Він може визначати частину метаданих і працювати з зовнішнім voice backend, але DMR-голос поки експериментальний.
@@ -122,6 +130,8 @@ GNSS, GPS і QTH
 Мережа
 - Network відкриває налаштування server/client режиму.
 - Server може передавати керування, спектр, аудіо або IQ залежно від режиму.
+- Після підключення клієнт отримує авторитетний список приймачів сервера і додає їх у свій список як [Server] .... До отримання цього списку клієнт не надсилає серверу локальний індекс приймача; Refresh лише повторно запитує кешований список і не перепідключає USB-пристрій.
+- Обраний серверний приймач відкривається і контролюється на сервері. Спостерігач не може змінювати параметри, доки не отримає пріоритет керування.
 - Full-IQ/Channel-IQ режими важкі для мережі і CPU, тому їх краще тестувати поступово.
 - Audio relay і Audio HTTP stream дозволяють передавати аудіо в інші програми або на інші пристрої.
 
@@ -167,7 +177,8 @@ Receivers
 Spectrum and waterfall
 - Spectrum/waterfall update in Settings controls redraw interval. Auto keeps a safe FFT-dependent default.
 - Waterfall speed adds more rows per FFT frame. It makes the waterfall visually faster without increasing FFT load.
-- FFT length controls frequency detail and CPU load. Larger FFT sizes help with narrow signals but may need slower updates.
+- FFT length controls frequency detail and CPU load. 33554432 and 67108864 are also available. Hz/point mode computes an exact even FFT length from the sample rate; disabling it selects the nearest standard value. Very large FFTs can require several gigabytes of memory and slower updates.
+- FFT backend in Settings selects CPU FFTW or experimental Vulkan VkFFT. Auto benchmarks CPU/GPU once for lengths from 1048576 through 8388608 and keeps the faster path; above that range it uses multithreaded FFTW directly to avoid a long UI-stalling benchmark. Explicit GPU remains available for every supported length, and any GPU error automatically falls back to FFTW.
 - Band markers show general radio bands, amateur bands, or a compact combined layer.
 - Spur suppression and calibration can mark and reduce stable internal spurs.
 - In Spectrum measurement, A/B markers define the scientific calculation range. Shift + left-click on the normal spectrum sets the active marker; Peak, Prev and Next move between local peaks.
@@ -228,13 +239,19 @@ Presets
 
 GNSS, GPS and QTH
 - GPS/QTH stores your position, shows Maidenhead/QTH locator and opens the map.
-- QTH Map supports offline/grid view, online tile providers and a QTH grid overlay.
+- QTH Map supports the offline grid, local z/x/y.png XYZ tiles, online OpenStreetMap, MapTiler, Mapbox, NASA GIBS and a custom XYZ URL. Online tiles may use disk cache or memory-only mode.
 - Mouse wheel zooms the map around the cursor; dragging pans the map.
 - Right-click on the map can place a user marker; right-click on a marker removes it.
 - Markers can be edited in Presets -> QTH markers.
+- Map overlay selects the QTH grid and locally scaled live satellites; the sky view shows azimuth, elevation, C/N0 and whether each satellite participates in the module fix.
+- An external GNSS module connects through the selected COM/tty port. Most NEO-M8N boards default to 9600 baud; valid NMEA GGA/RMC or UBX NAV-PVT fixes update QTH automatically.
+- Auto / UBX preferred / NMEA only / UBX only controls which stream may update position. Auto-enable UBX requests NAV-PVT, NAV-SAT and NAV-DOP after opening a compatible u-blox module.
+- The Satellites window shows live status and sky view; the separate NMEA GSV/GSA and UBX NAV-SAT table can be sorted by column. Checkboxes and right-click bulk actions include or ignore systems and satellites in app display/analysis; they do not recompute the position already solved by the module.
+- UBX sys polls/applies CFG-GNSS for GPS/GLO/GAL/BDS/QZSS/SBAS, while Save cfg asks the module to persist its configuration to supported non-volatile memory.
+- Raw records the binary UBX/NMEA stream; NMEA log/replay records or feeds text sentences through the same parser. These files may contain real coordinates and are intentionally excluded from release packages.
 - Tune GNSS L1 and GNSS scan set receiver frequencies for GPS/Galileo/BeiDou/GLONASS L1.
-- GPS C/A accumulate and GPS deep are experimental GPS L1 C/A correlators. A real lock needs enough signal, stable tuning and a proper GNSS antenna.
-- Save GNSS IQ writes the current IQ snapshot to WAV and logs its tuning context.
+- Accum runs one accumulated GPS L1 C/A search, Auto continuously analyzes rolling IQ, Replay runs the same acquisition on a Channel-IQ WAV, and Self-test validates the synthetic acquisition/position path. The heatmap displays PRN, Doppler, code phase and peak history. A real lock needs enough signal, stable tuning and a proper GNSS antenna.
+- IQ monitor measures level, DC offset, clipping and I/Q balance before acquisition; Save GNSS IQ stores the current stereo IQ snapshot and tuning context.
 
 Digital modes
 - Digital Audio contains the experimental DMR decoder. It can detect some metadata and work with an external voice backend, but DMR voice is still experimental.
@@ -255,6 +272,8 @@ Recording and playback
 Network
 - Network opens server/client settings.
 - Server mode can share control, spectrum, audio or IQ depending on processing mode.
+- After connection, the client receives the authoritative server receiver list and adds entries as [Server] .... Until that list arrives, the client does not send its local receiver index to the server; Refresh only requests the cached list again and does not reopen the USB device.
+- The selected remote receiver is opened and owned by the server. An observer cannot change parameters until it receives control priority.
 - Full-IQ and Channel-IQ modes are heavy for network and CPU, so test them gradually.
 - Audio relay and Audio HTTP stream can send demodulated audio to other programs or devices.
 

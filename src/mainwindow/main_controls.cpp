@@ -836,6 +836,11 @@ void YourClassName::onSampleRateChanged(int index) {
     }
 
     pendingSettings.sampleRate = selectedSampleRate;
+    if (fftBinWidthModeEnabled) {
+        applyFftBinWidthTarget(false);
+    } else {
+        syncFftResolutionControls();
+    }
     applyAgileScanAutoStep(true);
     normalizeStandardScanCentersUi(false);
     normalizeTuning(pendingSettings);
@@ -858,62 +863,13 @@ void YourClassName::onSampleRateChanged(int index) {
     }
 
     if (!isIdle()) {
-        const bool liveAgileRfSampleRate =
-            activeFobosApiKind == FobosApiKind::Agile &&
-            pendingSettings.inputMode == INPUT_RF &&
-            !agileScanEnabled &&
-            hasActiveFobosDevice() &&
-            processor &&
-            processor->isRunning();
-        if (liveAgileRfSampleRate) {
-            double actualRate = selectedSampleRate;
-            qDebug() << "[FobosLifecycle] applying Agile RF sample-rate live"
-                     << "previous" << previousSampleRate
-                     << "requested" << selectedSampleRate;
-            clearLiveSpectrumSnapshot(false);
-            const int result = setActiveSampleRateSafely(selectedSampleRate, &actualRate);
-            qDebug() << "[FobosLifecycle] Agile RF live sample-rate result"
-                     << "result" << result
-                     << "actual" << actualRate;
-            if (result != FOBOS_ERR_OK) {
-                qDebug() << "[FobosLifecycle] Agile RF live sample-rate failed; restoring previous UI state"
-                         << "error" << result;
-                pendingSettings.sampleRate = previousSampleRate;
-                normalizeTuning(pendingSettings);
-                publishSettingsToGlobals();
-                settingRange();
-                return;
-            }
-
-            globalSampleRate = actualRate;
-            pendingSettings.sampleRate = actualRate;
-            applyAgileScanAutoStep(true);
-            appliedSampleRate = actualRate;
-            if (hardwareSettingsApplied) {
-                appliedHardwareSettings.sampleRate = actualRate;
-            }
-            sampleRateReopenRequired = false;
-            if (processor) {
-                processor->setSampleRateHint(actualRate);
-            }
-            const double autoBandwidthRatio = agileRfAutoBandwidthRatio(actualRate);
-            qDebug() << "[FobosLifecycle] refresh Agile auto bandwidth after live sample-rate change"
-                     << autoBandwidthRatio;
-            const int bandwidthResult = setFobosAgileAutoBandwidthSafely(agileDevice, autoBandwidthRatio);
-            qDebug() << "[FobosLifecycle] Agile auto bandwidth after live sample-rate change"
-                     << "result" << bandwidthResult;
-            updateIqFrameProducerSettings();
-            updateSpectrumTimerInterval();
-            settingRange();
-            clearLiveSpectrumSnapshot(false);
-            liveRetuneSettleDurationMs = agileRfLiveSettleMs(actualRate, true);
-            liveRetuneSettleTimer.start();
-            spectrumTuningDebugFramesRemaining = fobosVerboseLoggingEnabled() ? 8 : 0;
-            qDebug() << "[FobosLifecycle] Agile RF sample-rate live settle armed"
-                     << "settleMs" << liveRetuneSettleDurationMs;
-            savePersistentSettings();
-            return;
-        }
+        // Changing the sample rate reconfigures the USB stream. Agile can tune
+        // frequency while read_async is active, but set_samplerate may stall
+        // the callback for several seconds. Stop and recreate only the stream.
+        qDebug() << "[FobosLifecycle] restarting reader for sample-rate change"
+                 << "previous" << previousSampleRate
+                 << "requested" << selectedSampleRate
+                 << "apiKind" << fobosApiKindName(activeFobosApiKind);
         restartStreamForHardwareChange();
         return;
     }

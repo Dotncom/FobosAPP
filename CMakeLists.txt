@@ -1,11 +1,15 @@
 cmake_minimum_required(VERSION 3.10)
-project(FobosAPP VERSION 4.8.0)
+project(FobosAPP VERSION 4.8.1)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if(POLICY CMP0072)
     cmake_policy(SET CMP0072 NEW)
+endif()
+
+if(POLICY CMP0074)
+    cmake_policy(SET CMP0074 NEW)
 endif()
 
 if(WIN32 AND NOT DEFINED Qt5_DIR AND EXISTS "C:/Qt/5.15.2/msvc2019_64/lib/cmake/Qt5")
@@ -84,6 +88,27 @@ if(FOBOS_ENABLE_MBELIB_NEO AND EXISTS "${CMAKE_SOURCE_DIR}/third_party/mbelib-ne
     set(FOBOS_HAS_MBELIB_NEO ON)
 else()
     message(STATUS "mbelib-neo not found or disabled; DMR voice synthesis will be unavailable.")
+endif()
+
+option(FOBOS_ENABLE_VKFFT "Enable experimental Vulkan VkFFT acceleration when the SDK is available" ON)
+option(FOBOS_BUILD_GPU_FFT_SELFTEST "Build the VkFFT numerical comparison utility" OFF)
+set(FOBOS_HAS_VKFFT OFF)
+if(FOBOS_ENABLE_VKFFT AND EXISTS "${CMAKE_SOURCE_DIR}/third_party/VkFFT/vkFFT/vkFFT.h")
+    find_package(Vulkan QUIET COMPONENTS glslang SPIRV-Tools)
+    find_library(VKFFT_SPIRV_TOOLS_OPT_LIBRARY
+        NAMES SPIRV-Tools-opt
+        HINTS "${Vulkan_INCLUDE_DIR}/../Lib" "${Vulkan_INCLUDE_DIR}/../lib"
+    )
+    if(Vulkan_FOUND AND Vulkan_glslang_FOUND AND Vulkan_SPIRV-Tools_FOUND
+       AND TARGET Vulkan::glslang AND TARGET Vulkan::SPIRV-Tools
+       AND VKFFT_SPIRV_TOOLS_OPT_LIBRARY)
+        set(FOBOS_HAS_VKFFT ON)
+        message(STATUS "VkFFT Vulkan backend enabled.")
+    else()
+        message(STATUS "Vulkan SDK with glslang not found; GPU FFT will fall back to FFTW.")
+    endif()
+else()
+    message(STATUS "VkFFT source not found or disabled; GPU FFT will fall back to FFTW.")
 endif()
 
 set(SOURCES
@@ -219,6 +244,8 @@ set(SOURCES
     src/digital/videowidget.h
     src/core/fft.cpp
     src/core/fft.h
+    src/core/gpufftbackend.cpp
+    src/core/gpufftbackend.h
     src/utils/spectrumfftworker.cpp
     src/utils/spectrumfftworker.h
     src/utils/spectrumdisplayreducer.cpp
@@ -285,6 +312,59 @@ target_link_libraries(FobosAPP PRIVATE
     Qt5::Network
     Qt5::SerialPort
 )
+
+if(FOBOS_HAS_VKFFT)
+    target_include_directories(FobosAPP PRIVATE
+        "${CMAKE_SOURCE_DIR}/third_party/VkFFT/vkFFT"
+        "${Vulkan_INCLUDE_DIR}/glslang/Include"
+    )
+    target_compile_definitions(FobosAPP PRIVATE
+        FOBOSAPP_HAS_VKFFT=1
+        VKFFT_BACKEND=0
+        VK_API_VERSION=11
+    )
+    set_source_files_properties(src/core/gpufftbackend.cpp PROPERTIES
+        COMPILE_DEFINITIONS "_CRT_SECURE_NO_WARNINGS"
+    )
+    target_link_libraries(FobosAPP PRIVATE
+        Vulkan::Vulkan
+        Vulkan::glslang
+        Vulkan::SPIRV-Tools
+        ${VKFFT_SPIRV_TOOLS_OPT_LIBRARY}
+    )
+    if(MSVC)
+        target_link_options(FobosAPP PRIVATE "/DELAYLOAD:vulkan-1.dll")
+        target_link_libraries(FobosAPP PRIVATE delayimp)
+    endif()
+endif()
+
+if(FOBOS_HAS_VKFFT AND FOBOS_BUILD_GPU_FFT_SELFTEST)
+    add_executable(FobosGpuFftSelfTest
+        tools/vkfft_selftest.cpp
+        src/core/gpufftbackend.cpp
+        src/core/gpufftbackend.h
+    )
+    target_include_directories(FobosGpuFftSelfTest PRIVATE
+        "${CMAKE_SOURCE_DIR}/src/core"
+        "${CMAKE_SOURCE_DIR}/third_party/VkFFT/vkFFT"
+        "${Vulkan_INCLUDE_DIR}/glslang/Include"
+        "${FFTW_INCLUDE_DIR}"
+    )
+    target_compile_definitions(FobosGpuFftSelfTest PRIVATE
+        FOBOSAPP_HAS_VKFFT=1
+        VKFFT_BACKEND=0
+        VK_API_VERSION=11
+        _CRT_SECURE_NO_WARNINGS
+    )
+    target_link_libraries(FobosGpuFftSelfTest PRIVATE
+        Qt5::Core
+        ${FFTW_FLOAT_LIBRARY}
+        Vulkan::Vulkan
+        Vulkan::glslang
+        Vulkan::SPIRV-Tools
+        ${VKFFT_SPIRV_TOOLS_OPT_LIBRARY}
+    )
+endif()
 
 if(WIN32)
     target_compile_definitions(FobosAPP PRIVATE FOBOSAPP_HAS_FFTW_THREADS=1)

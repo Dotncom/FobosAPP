@@ -154,6 +154,14 @@ void YourClassName::loadPersistentSettings() {
     pendingSettings.bandwidth = (std::max)(1.0, settings.value("receiver/bandwidth", pendingSettings.bandwidth).toDouble());
     pendingSettings.modulationType = settings.value("receiver/modulationType", pendingSettings.modulationType).toInt();
     pendingSettings.fftLength = (std::max)(1024, settings.value("receiver/fftLength", pendingSettings.fftLength).toInt());
+    fftBinWidthModeEnabled = settings.value("receiver/fftBinWidthModeEnabled", fftBinWidthModeEnabled).toBool();
+    fftTargetBinWidthHz = (std::clamp)(settings.value("receiver/fftTargetBinWidthHz", fftTargetBinWidthHz).toDouble(),
+                                       0.1,
+                                       1000000.0);
+    if (fftBinWidthModeEnabled) {
+        pendingSettings.fftLength = fftLengthForBinWidth(pendingSettings.sampleRate,
+                                                          fftTargetBinWidthHz);
+    }
     pendingSettings.fftWindowType = normalizedFftWindowType(
         settings.value("receiver/fftWindowType", pendingSettings.fftWindowType).toInt());
     pendingSettings.lnaGain = (std::clamp)(settings.value("receiver/lnaGain", pendingSettings.lnaGain).toInt(), 1, 3);
@@ -706,6 +714,8 @@ void YourClassName::loadPersistentSettings() {
     if (spectrumUpdateIntervalMs > 0 && spectrumUpdateIntervalMs < SPECTRUM_UPDATE_MIN_MS) {
         spectrumUpdateIntervalMs = SPECTRUM_UPDATE_MIN_MS;
     }
+    fftBackendPreference = normalizedFftBackendPreference(
+        settings.value("ui/fftBackendPreference", fftBackendPreference).toInt());
     frequencyCalibrationOffsetHz =
         (std::clamp)(settings.value("calibration/frequencyOffsetHz",
                                     frequencyCalibrationOffsetHz).toDouble(),
@@ -1267,6 +1277,8 @@ void YourClassName::savePersistentSettings() {
     settings.setValue("receiver/bandwidth", settingsToSave.bandwidth);
     settings.setValue("receiver/modulationType", settingsToSave.modulationType);
     settings.setValue("receiver/fftLength", settingsToSave.fftLength);
+    settings.setValue("receiver/fftBinWidthModeEnabled", fftBinWidthModeEnabled);
+    settings.setValue("receiver/fftTargetBinWidthHz", fftTargetBinWidthHz);
     settings.setValue("receiver/fftWindowType", normalizedFftWindowType(settingsToSave.fftWindowType));
     settings.setValue("receiver/lnaGain", settingsToSave.lnaGain);
     settings.setValue("receiver/vgaGain", settingsToSave.vgaGain);
@@ -1540,6 +1552,8 @@ void YourClassName::savePersistentSettings() {
     settings.setValue("ui/language", uiLanguage);
     settings.setValue("ui/fineTuneControlMode", fineTuneControlMode);
     settings.setValue("ui/spectrumUpdateIntervalMs", spectrumUpdateIntervalMs);
+    settings.setValue("ui/fftBackendPreference",
+                      normalizedFftBackendPreference(fftBackendPreference));
     settings.setValue("calibration/frequencyOffsetHz", frequencyCalibrationOffsetHz);
     settings.setValue("calibration/amplitudeOffsetDb", amplitudeCalibrationOffsetDb);
     settings.setValue("calibration/tableEnabled", calibrationTableEnabled);

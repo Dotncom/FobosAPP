@@ -16,6 +16,9 @@ struct Stats {
     std::size_t queuedFloatCount = 0;
     double sampleRateEstimate = 0.0;
     std::uint64_t totalFloatCount = 0;
+    std::uint64_t droppedQueuedBlocks = 0;
+    std::uint64_t droppedQueuedFloats = 0;
+    std::uint64_t skippedSnapshotBlocks = 0;
 };
 
 struct BlockMetadata {

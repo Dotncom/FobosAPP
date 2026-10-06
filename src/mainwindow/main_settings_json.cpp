@@ -38,6 +38,8 @@ QJsonObject YourClassName::settingsToJson() const {
     settings["bandwidth"] = pendingSettings.bandwidth;
     settings["modulationType"] = pendingSettings.modulationType;
     settings["fftLength"] = pendingSettings.fftLength;
+    settings["fftBinWidthModeEnabled"] = fftBinWidthModeEnabled;
+    settings["fftTargetBinWidthHz"] = fftTargetBinWidthHz;
     settings["fftWindowType"] = normalizedFftWindowType(pendingSettings.fftWindowType);
     settings["lnaGain"] = pendingSettings.lnaGain;
     settings["vgaGain"] = pendingSettings.vgaGain;
@@ -162,6 +164,7 @@ QJsonObject YourClassName::settingsToJson() const {
     }
     settings["qthMarkers"] = qthMarkers;
     settings["spectrumUpdateIntervalMs"] = spectrumUpdateIntervalMs;
+    settings["fftBackendPreference"] = normalizedFftBackendPreference(fftBackendPreference);
     settings["frequencyCalibrationOffsetHz"] = frequencyCalibrationOffsetHz;
     settings["amplitudeCalibrationOffsetDb"] = amplitudeCalibrationOffsetDb;
     settings["calibrationTableEnabled"] = calibrationTableEnabled;
@@ -234,6 +237,14 @@ void YourClassName::applySettingsFromJson(const QJsonObject &settingsJson, bool 
     pendingSettings.bandwidth = readDouble("bandwidth", pendingSettings.bandwidth);
     pendingSettings.modulationType = readInt("modulationType", pendingSettings.modulationType);
     pendingSettings.fftLength = readInt("fftLength", pendingSettings.fftLength);
+    fftBinWidthModeEnabled = readBool("fftBinWidthModeEnabled", fftBinWidthModeEnabled);
+    fftTargetBinWidthHz = (std::clamp)(readDouble("fftTargetBinWidthHz", fftTargetBinWidthHz),
+                                       0.1,
+                                       1000000.0);
+    if (fftBinWidthModeEnabled) {
+        pendingSettings.fftLength = fftLengthForBinWidth(pendingSettings.sampleRate,
+                                                          fftTargetBinWidthHz);
+    }
     pendingSettings.fftWindowType = normalizedFftWindowType(
         readInt("fftWindowType", pendingSettings.fftWindowType));
     pendingSettings.lnaGain = readInt("lnaGain", pendingSettings.lnaGain);
@@ -490,6 +501,8 @@ void YourClassName::applySettingsFromJson(const QJsonObject &settingsJson, bool 
     if (spectrumUpdateIntervalMs > 0 && spectrumUpdateIntervalMs < SPECTRUM_UPDATE_MIN_MS) {
         spectrumUpdateIntervalMs = SPECTRUM_UPDATE_MIN_MS;
     }
+    fftBackendPreference = normalizedFftBackendPreference(
+        readInt("fftBackendPreference", fftBackendPreference));
     frequencyCalibrationOffsetHz =
         (std::clamp)(readDouble("frequencyCalibrationOffsetHz", frequencyCalibrationOffsetHz),
                      -10000000.0,

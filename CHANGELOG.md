@@ -1,5 +1,39 @@
 # Changelog
 
+## 4.8.1 - 2026-10-06
+
+### Added
+
+- Added an optional Vulkan VkFFT spectrum backend with automatic CPU/GPU
+  selection for 1M-8M transforms and safe FFTW fallback.
+- Added an exact Hz-per-point mode that derives a custom even FFT length from
+  the current sample rate while keeping the fixed FFT and resolution controls
+  synchronized.
+- Added receiver-stream health diagnostics for IQ publication, callback rate,
+  discontinuities and audio starvation under detailed logging.
+
+### Changed
+
+- Improved large-FFT planning and post-processing with bounded automatic GPU
+  benchmarks and direct multithreaded FFTW use above 8M points.
+- Reworked reusable IQ/audio buffering and live sample-rate changes to reduce
+  unnecessary copies and avoid applying a rate change under an active reader.
+- Balanced the receiver controls into two flexible columns for narrow windows.
+- Expanded the English and Ukrainian in-app guide for bladeRF, VkFFT,
+  external NMEA/UBX GNSS, SDR acquisition, QTH maps and remote receiver lists.
+
+### Fixed
+
+- Kept fixed FFT length and Hz-per-point displays mutually consistent after
+  live mode and sample-rate changes.
+- Prevented a network client from sending its local receiver index before the
+  server's authoritative receiver list is known.
+
+### Notes
+
+- Android is unchanged and is not published with this desktop and Raspberry
+  source patch.
+
 ## 4.8.0 - 2026-10-02
 
 ### Added

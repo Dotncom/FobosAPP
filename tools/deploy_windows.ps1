@@ -104,6 +104,7 @@ $ReleaseDocFiles = @(
     "docs\dmr_external_backend.md",
     "docs\gnss_preflight_4.1.md",
     "docs\iq_pipeline_audit.md",
+    "docs\release_notes_4.8.1.md",
     "docs\roadmap_4.0_cleanup.md"
 )
 foreach ($DocFile in $ReleaseDocFiles) {

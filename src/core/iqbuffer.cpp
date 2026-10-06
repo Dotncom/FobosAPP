@@ -3,6 +3,7 @@
 
 #include <deque>
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <mutex>
 
@@ -15,35 +16,47 @@ constexpr std::size_t MAX_QUEUED_FLOATS = 16 * 1024 * 1024;
 constexpr std::size_t MIN_LIVE_QUEUED_FLOATS = 128 * 1024;
 constexpr double MAX_LIVE_QUEUED_SECONDS = 1.25;
 constexpr std::size_t MAX_SNAPSHOT_FLOATS = 16 * 1024 * 1024;
+constexpr std::size_t SNAPSHOT_COPY_CHUNK_FLOATS = 256 * 1024;
+constexpr std::size_t MAX_RECYCLED_BLOCKS = 8;
 
 std::mutex g_iqMutex;
+std::mutex g_audioQueueMutex;
 std::vector<float> g_iqSnapshot(MAX_SNAPSHOT_FLOATS);
 std::size_t g_iqSnapshotStart = 0;
 std::size_t g_iqSnapshotSize = 0;
 std::deque<std::vector<float>> g_iqBlocks;
 std::deque<std::uint64_t> g_iqBlockSequences;
+std::deque<std::vector<float>> g_recycledIqBlocks;
 std::size_t g_iqQueuedFloatCount = 0;
-std::uint64_t g_iqSequence = 0;
-std::uint64_t g_iqEpoch = 1;
+std::uint64_t g_droppedQueuedBlocks = 0;
+std::uint64_t g_droppedQueuedFloats = 0;
+std::atomic<std::uint64_t> g_audioBlockSequence{0};
+std::atomic<std::uint64_t> g_skippedSnapshotBlocks{0};
+std::atomic<std::uint64_t> g_iqSequence{0};
+std::atomic<std::uint64_t> g_iqEpoch{1};
 std::uint64_t g_totalSnapshotFloatCount = 0;
-double g_sampleRateEstimate = 0.0;
+std::uint64_t g_snapshotResetGeneration = 1;
+std::atomic<double> g_sampleRateEstimate{0.0};
 IqBuffer::BlockMetadata g_latestMetadata;
-std::uint64_t g_traceEpoch = 0;
-int g_tracePublishRemaining = 0;
-int g_traceRejectRemaining = 0;
-int g_traceSnapshotRemaining = 0;
-int g_tracePopRemaining = 0;
+std::atomic<std::uint64_t> g_traceEpoch{0};
+std::atomic<int> g_tracePublishRemaining{0};
+std::atomic<int> g_traceRejectRemaining{0};
+std::atomic<int> g_traceSnapshotRemaining{0};
+std::atomic<int> g_tracePopRemaining{0};
 
 bool traceMatchesCurrentEpoch() {
     return fobosVerboseLoggingEnabled() &&
-           g_traceEpoch != 0 &&
-           g_iqEpoch == g_traceEpoch;
+           g_traceEpoch.load(std::memory_order_relaxed) != 0 &&
+           g_iqEpoch.load(std::memory_order_relaxed) ==
+               g_traceEpoch.load(std::memory_order_relaxed);
 }
 
 bool traceMatchesPublishEpoch(std::uint64_t expectedEpoch) {
     return fobosVerboseLoggingEnabled() &&
-           g_traceEpoch != 0 &&
-           (g_iqEpoch == g_traceEpoch || expectedEpoch == g_traceEpoch);
+           g_traceEpoch.load(std::memory_order_relaxed) != 0 &&
+           (g_iqEpoch.load(std::memory_order_relaxed) ==
+                g_traceEpoch.load(std::memory_order_relaxed) ||
+            expectedEpoch == g_traceEpoch.load(std::memory_order_relaxed));
 }
 
 void logTraceState(const char *event) {
@@ -58,7 +71,15 @@ void logTraceState(const char *event) {
              << "snapshotSize" << g_iqSnapshotSize
              << "queuedBlocks" << g_iqBlocks.size()
              << "queuedFloats" << g_iqQueuedFloatCount
-             << "sampleRateEstimate" << g_sampleRateEstimate;
+             << "sampleRateEstimate" << g_sampleRateEstimate.load(std::memory_order_relaxed);
+}
+
+void recycleBlock(std::vector<float> &&block) {
+    block.clear();
+    if (block.capacity() == 0 || g_recycledIqBlocks.size() >= MAX_RECYCLED_BLOCKS) {
+        return;
+    }
+    g_recycledIqBlocks.push_back(std::move(block));
 }
 
 void appendToSnapshot(const float *samples, std::size_t floatCount) {
@@ -89,96 +110,144 @@ bool copySnapshotTail(std::vector<float> &out,
                       std::uint64_t *sequence,
                       IqBuffer::BlockMetadata *metadata,
                       const char *source) {
-    const bool shouldTrace = traceMatchesCurrentEpoch() &&
-                             g_traceSnapshotRemaining > 0;
-    if (g_iqSnapshotSize == 0 || maxFloatCount == 0) {
-        out.clear();
+    std::size_t allocatedCount = 0;
+    {
+        std::lock_guard<std::mutex> lock(g_iqMutex);
+        allocatedCount = (std::min)(g_iqSnapshotSize, maxFloatCount);
+        allocatedCount -= allocatedCount % 2U;
+        if (allocatedCount == 0) {
+            out.clear();
+            if (sequence) {
+                *sequence = g_iqSequence;
+            }
+            if (metadata) {
+                *metadata = g_latestMetadata;
+            }
+            const bool shouldTrace = traceMatchesCurrentEpoch() &&
+                                     g_traceSnapshotRemaining > 0;
+            if (shouldTrace) {
+                --g_traceSnapshotRemaining;
+                qDebug() << "[IqBufferTrace]" << source
+                         << "empty"
+                         << "epoch" << static_cast<qulonglong>(g_iqEpoch)
+                         << "sequence" << static_cast<qulonglong>(g_iqSequence)
+                         << "maxFloatCount" << maxFloatCount
+                         << "snapshotStart" << g_iqSnapshotStart
+                         << "snapshotSize" << g_iqSnapshotSize;
+            }
+            return false;
+        }
+    }
+
+    // Allocate outside the shared IQ mutex. Large FFT snapshots can be tens of
+    // megabytes; holding the mutex here starves the live audio consumer.
+    out.resize(allocatedCount);
+
+    std::size_t copyCount = 0;
+    std::uint64_t captureStart = 0;
+    std::uint64_t captureEnd = 0;
+    std::uint64_t captureResetGeneration = 0;
+    std::size_t copied = 0;
+    {
+        std::lock_guard<std::mutex> lock(g_iqMutex);
+        copyCount = (std::min)({g_iqSnapshotSize, maxFloatCount, allocatedCount});
+        copyCount -= copyCount % 2U;
+        if (copyCount == 0) {
+            out.clear();
+            return false;
+        }
+        if (copyCount < out.size()) {
+            out.resize(copyCount);
+        }
+        captureEnd = g_totalSnapshotFloatCount;
+        captureStart = captureEnd - copyCount;
+        captureResetGeneration = g_snapshotResetGeneration;
+        const std::uint64_t retainedStart =
+            g_totalSnapshotFloatCount - static_cast<std::uint64_t>(g_iqSnapshotSize);
+        const std::size_t snapshotOffset = static_cast<std::size_t>(captureStart - retainedStart);
+        const std::size_t readStart =
+            (g_iqSnapshotStart + snapshotOffset) % MAX_SNAPSHOT_FLOATS;
+        const std::size_t firstChunkCount =
+            (std::min)(SNAPSHOT_COPY_CHUNK_FLOATS, copyCount);
+        const std::size_t firstCopy =
+            (std::min)(firstChunkCount, MAX_SNAPSHOT_FLOATS - readStart);
+        std::copy(g_iqSnapshot.begin() + static_cast<std::ptrdiff_t>(readStart),
+                  g_iqSnapshot.begin() + static_cast<std::ptrdiff_t>(readStart + firstCopy),
+                  out.begin());
+        if (firstCopy < firstChunkCount) {
+            std::copy(g_iqSnapshot.begin(),
+                      g_iqSnapshot.begin() + static_cast<std::ptrdiff_t>(firstChunkCount - firstCopy),
+                      out.begin() + static_cast<std::ptrdiff_t>(firstCopy));
+        }
+        copied = firstChunkCount;
         if (sequence) {
             *sequence = g_iqSequence;
         }
         if (metadata) {
             *metadata = g_latestMetadata;
         }
+        const bool shouldTrace = traceMatchesCurrentEpoch() &&
+                                 g_traceSnapshotRemaining > 0;
         if (shouldTrace) {
             --g_traceSnapshotRemaining;
             qDebug() << "[IqBufferTrace]" << source
-                     << "empty"
+                     << "chunked"
                      << "epoch" << static_cast<qulonglong>(g_iqEpoch)
                      << "sequence" << static_cast<qulonglong>(g_iqSequence)
                      << "maxFloatCount" << maxFloatCount
                      << "snapshotStart" << g_iqSnapshotStart
                      << "snapshotSize" << g_iqSnapshotSize
-                     << "queuedBlocks" << g_iqBlocks.size()
-                     << "queuedFloats" << g_iqQueuedFloatCount;
+                     << "copyCount" << copyCount
+                     << "chunkFloats" << SNAPSHOT_COPY_CHUNK_FLOATS;
         }
-        return false;
     }
 
-    std::size_t copyCount = (std::min)(g_iqSnapshotSize, maxFloatCount);
-    copyCount -= copyCount % 2U;
-    if (copyCount == 0) {
-        out.clear();
-        if (sequence) {
-            *sequence = g_iqSequence;
+    while (copied < copyCount) {
+        const std::size_t chunkCount =
+            (std::min)(SNAPSHOT_COPY_CHUNK_FLOATS, copyCount - copied);
+        std::lock_guard<std::mutex> lock(g_iqMutex);
+        if (g_snapshotResetGeneration != captureResetGeneration ||
+            g_totalSnapshotFloatCount < captureEnd) {
+            out.clear();
+            return false;
         }
-        if (metadata) {
-            *metadata = g_latestMetadata;
-        }
-        if (shouldTrace) {
-            --g_traceSnapshotRemaining;
-            qDebug() << "[IqBufferTrace]" << source
-                     << "zero-copy"
-                     << "epoch" << static_cast<qulonglong>(g_iqEpoch)
-                     << "sequence" << static_cast<qulonglong>(g_iqSequence)
-                     << "maxFloatCount" << maxFloatCount
-                     << "snapshotStart" << g_iqSnapshotStart
-                     << "snapshotSize" << g_iqSnapshotSize;
-        }
-        return false;
-    }
 
-    const std::size_t tailOffset = g_iqSnapshotSize - copyCount;
-    const std::size_t readStart = (g_iqSnapshotStart + tailOffset) % MAX_SNAPSHOT_FLOATS;
-    out.resize(copyCount);
-    const std::size_t firstCopy = (std::min)(copyCount, MAX_SNAPSHOT_FLOATS - readStart);
-    if (shouldTrace) {
-        --g_traceSnapshotRemaining;
-        qDebug() << "[IqBufferTrace]" << source
-                 << "epoch" << static_cast<qulonglong>(g_iqEpoch)
-                 << "sequence" << static_cast<qulonglong>(g_iqSequence)
-                 << "maxFloatCount" << maxFloatCount
-                 << "snapshotStart" << g_iqSnapshotStart
-                 << "snapshotSize" << g_iqSnapshotSize
-                 << "tailOffset" << tailOffset
-                 << "readStart" << readStart
-                 << "copyCount" << copyCount
-                 << "firstCopy" << firstCopy
-                 << "queuedBlocks" << g_iqBlocks.size()
-                 << "queuedFloats" << g_iqQueuedFloatCount;
-    }
-    std::copy(g_iqSnapshot.begin() + static_cast<std::ptrdiff_t>(readStart),
-              g_iqSnapshot.begin() + static_cast<std::ptrdiff_t>(readStart + firstCopy),
-              out.begin());
-    if (firstCopy < copyCount) {
-        std::copy(g_iqSnapshot.begin(),
-                  g_iqSnapshot.begin() + static_cast<std::ptrdiff_t>(copyCount - firstCopy),
-                  out.begin() + static_cast<std::ptrdiff_t>(firstCopy));
-    }
-    if (sequence) {
-        *sequence = g_iqSequence;
-    }
-    if (metadata) {
-        *metadata = g_latestMetadata;
+        const std::uint64_t retainedStart =
+            g_totalSnapshotFloatCount - static_cast<std::uint64_t>(g_iqSnapshotSize);
+        const std::uint64_t chunkAbsoluteStart = captureStart + copied;
+        const std::uint64_t chunkAbsoluteEnd = chunkAbsoluteStart + chunkCount;
+        if (chunkAbsoluteStart < retainedStart ||
+            chunkAbsoluteEnd > g_totalSnapshotFloatCount) {
+            out.clear();
+            return false;
+        }
+
+        const std::size_t snapshotOffset = static_cast<std::size_t>(
+            chunkAbsoluteStart - retainedStart);
+        const std::size_t readStart =
+            (g_iqSnapshotStart + snapshotOffset) % MAX_SNAPSHOT_FLOATS;
+        const std::size_t firstCopy =
+            (std::min)(chunkCount, MAX_SNAPSHOT_FLOATS - readStart);
+        std::copy(g_iqSnapshot.begin() + static_cast<std::ptrdiff_t>(readStart),
+                  g_iqSnapshot.begin() + static_cast<std::ptrdiff_t>(readStart + firstCopy),
+                  out.begin() + static_cast<std::ptrdiff_t>(copied));
+        if (firstCopy < chunkCount) {
+            std::copy(g_iqSnapshot.begin(),
+                      g_iqSnapshot.begin() + static_cast<std::ptrdiff_t>(chunkCount - firstCopy),
+                      out.begin() + static_cast<std::ptrdiff_t>(copied + firstCopy));
+        }
+        copied += chunkCount;
     }
     return true;
 }
 
 std::size_t maxQueuedFloatsForLiveAudio() {
-    if (g_sampleRateEstimate <= 0.0 || !std::isfinite(g_sampleRateEstimate)) {
+    const double sampleRateEstimate = g_sampleRateEstimate.load(std::memory_order_relaxed);
+    if (sampleRateEstimate <= 0.0 || !std::isfinite(sampleRateEstimate)) {
         return MAX_QUEUED_FLOATS;
     }
 
-    const double targetFloats = g_sampleRateEstimate * 2.0 * MAX_LIVE_QUEUED_SECONDS;
+    const double targetFloats = sampleRateEstimate * 2.0 * MAX_LIVE_QUEUED_SECONDS;
     if (targetFloats <= 0.0) {
         return MAX_QUEUED_FLOATS;
     }
@@ -201,72 +270,82 @@ bool publish(const float *samples,
     if (!samples || floatCount == 0) {
         return false;
     }
-
-    std::vector<float> block;
-    if (queueBlock) {
-        block.assign(samples, samples + floatCount);
-    }
-
-    std::lock_guard<std::mutex> lock(g_iqMutex);
-    if (expectedEpoch != 0 && expectedEpoch != g_iqEpoch) {
-        if (traceMatchesPublishEpoch(expectedEpoch) && g_traceRejectRemaining > 0) {
-            --g_traceRejectRemaining;
-            qDebug() << "[IqBufferTrace] publish rejected"
-                     << "expectedEpoch" << static_cast<qulonglong>(expectedEpoch)
-                     << "currentEpoch" << static_cast<qulonglong>(g_iqEpoch)
-                     << "floatCount" << floatCount
-                     << "queueBlock" << queueBlock
-                     << "updateSnapshot" << updateSnapshot
-                     << "sequence" << static_cast<qulonglong>(g_iqSequence)
-                     << "snapshotStart" << g_iqSnapshotStart
-                     << "snapshotSize" << g_iqSnapshotSize
-                     << "queuedBlocks" << g_iqBlocks.size()
-                     << "queuedFloats" << g_iqQueuedFloatCount;
-        }
+    if (expectedEpoch != 0 &&
+        expectedEpoch != g_iqEpoch.load(std::memory_order_acquire)) {
         return false;
     }
 
-    if (updateSnapshot) {
-        appendToSnapshot(samples, floatCount);
-        g_totalSnapshotFloatCount += static_cast<std::uint64_t>(floatCount);
-        ++g_iqSequence;
-        g_latestMetadata = metadata ? *metadata : BlockMetadata();
-        g_latestMetadata.sequence = g_iqSequence;
-        g_latestMetadata.epoch = g_iqEpoch;
-        g_latestMetadata.totalFloatCount = g_totalSnapshotFloatCount;
-        g_latestMetadata.floatCount = floatCount;
+    std::vector<float> block;
+    if (queueBlock) {
+        {
+            std::lock_guard<std::mutex> queueLock(g_audioQueueMutex);
+            if (!g_recycledIqBlocks.empty()) {
+                block = std::move(g_recycledIqBlocks.front());
+                g_recycledIqBlocks.pop_front();
+            }
+        }
+        block.assign(samples, samples + floatCount);
     }
 
-    if (!queueBlock) {
-        g_iqBlocks.clear();
+    const std::uint64_t blockSequence =
+        queueBlock
+            ? g_audioBlockSequence.fetch_add(1, std::memory_order_relaxed) + 1
+            : g_audioBlockSequence.load(std::memory_order_relaxed);
+    if (queueBlock) {
+        std::lock_guard<std::mutex> queueLock(g_audioQueueMutex);
+        if (expectedEpoch != 0 &&
+            expectedEpoch != g_iqEpoch.load(std::memory_order_acquire)) {
+            recycleBlock(std::move(block));
+            return false;
+        }
+        g_iqQueuedFloatCount += block.size();
+        g_iqBlocks.push_back(std::move(block));
+        g_iqBlockSequences.push_back(blockSequence);
+        const std::size_t maxQueuedFloats = maxQueuedFloatsForLiveAudio();
+        while (g_iqBlocks.size() > MAX_QUEUED_BLOCKS ||
+               g_iqQueuedFloatCount > maxQueuedFloats) {
+            const std::size_t droppedFloats = g_iqBlocks.front().size();
+            g_iqQueuedFloatCount -= droppedFloats;
+            ++g_droppedQueuedBlocks;
+            g_droppedQueuedFloats += droppedFloats;
+            recycleBlock(std::move(g_iqBlocks.front()));
+            g_iqBlocks.pop_front();
+            g_iqBlockSequences.pop_front();
+        }
+    } else {
+        std::lock_guard<std::mutex> queueLock(g_audioQueueMutex);
+        while (!g_iqBlocks.empty()) {
+            recycleBlock(std::move(g_iqBlocks.front()));
+            g_iqBlocks.pop_front();
+        }
         g_iqBlockSequences.clear();
         g_iqQueuedFloatCount = 0;
-        if (traceMatchesPublishEpoch(expectedEpoch) && g_tracePublishRemaining > 0) {
-            --g_tracePublishRemaining;
-            qDebug() << "[IqBufferTrace] publish accepted"
-                     << "epoch" << static_cast<qulonglong>(g_iqEpoch)
-                     << "expectedEpoch" << static_cast<qulonglong>(expectedEpoch)
-                     << "sequence" << static_cast<qulonglong>(g_iqSequence)
-                     << "floatCount" << floatCount
-                     << "queueBlock" << queueBlock
-                     << "updateSnapshot" << updateSnapshot
-                     << "snapshotStart" << g_iqSnapshotStart
-                     << "snapshotSize" << g_iqSnapshotSize
-                     << "queuedBlocks" << g_iqBlocks.size()
-                     << "queuedFloats" << g_iqQueuedFloatCount;
-        }
-        return true;
     }
 
-    g_iqQueuedFloatCount += block.size();
-    g_iqBlocks.push_back(std::move(block));
-    g_iqBlockSequences.push_back(g_iqSequence);
-    const std::size_t maxQueuedFloats = maxQueuedFloatsForLiveAudio();
-    while (g_iqBlocks.size() > MAX_QUEUED_BLOCKS || g_iqQueuedFloatCount > maxQueuedFloats) {
-        g_iqQueuedFloatCount -= g_iqBlocks.front().size();
-        g_iqBlocks.pop_front();
-        g_iqBlockSequences.pop_front();
+    // The USB callback must never wait for an FFT snapshot reader. A busy
+    // snapshot simply means this visual frame is skipped; the continuous audio
+    // queue above has already received the complete IQ block.
+    if (updateSnapshot) {
+        std::unique_lock<std::mutex> snapshotLock(g_iqMutex, std::try_to_lock);
+        if (snapshotLock.owns_lock()) {
+            if (expectedEpoch != 0 &&
+                expectedEpoch != g_iqEpoch.load(std::memory_order_acquire)) {
+                return false;
+            }
+            appendToSnapshot(samples, floatCount);
+            g_totalSnapshotFloatCount += static_cast<std::uint64_t>(floatCount);
+            const std::uint64_t snapshotSequence =
+                g_iqSequence.fetch_add(1, std::memory_order_relaxed) + 1;
+            g_latestMetadata = metadata ? *metadata : BlockMetadata();
+            g_latestMetadata.sequence = snapshotSequence;
+            g_latestMetadata.epoch = g_iqEpoch.load(std::memory_order_relaxed);
+            g_latestMetadata.totalFloatCount = g_totalSnapshotFloatCount;
+            g_latestMetadata.floatCount = floatCount;
+        } else {
+            g_skippedSnapshotBlocks.fetch_add(1, std::memory_order_relaxed);
+        }
     }
+
     if (traceMatchesPublishEpoch(expectedEpoch) && g_tracePublishRemaining > 0) {
         --g_tracePublishRemaining;
         qDebug() << "[IqBufferTrace] publish accepted"
@@ -276,30 +355,25 @@ bool publish(const float *samples,
                  << "floatCount" << floatCount
                  << "queueBlock" << queueBlock
                  << "updateSnapshot" << updateSnapshot
-                 << "snapshotStart" << g_iqSnapshotStart
-                 << "snapshotSize" << g_iqSnapshotSize
-                 << "queuedBlocks" << g_iqBlocks.size()
-                 << "queuedFloats" << g_iqQueuedFloatCount
-                 << "maxQueuedFloats" << maxQueuedFloats;
+                 << "snapshotSkipped" << static_cast<qulonglong>(
+                        g_skippedSnapshotBlocks.load(std::memory_order_relaxed));
     }
     return true;
 }
 
 bool snapshot(std::vector<float> &out, std::uint64_t *sequence, BlockMetadata *metadata) {
-    std::lock_guard<std::mutex> lock(g_iqMutex);
-    return copySnapshotTail(out, g_iqSnapshotSize, sequence, metadata, "snapshot");
+    return copySnapshotTail(out, MAX_SNAPSHOT_FLOATS, sequence, metadata, "snapshot");
 }
 
 bool snapshotRecent(std::vector<float> &out,
                     std::size_t maxFloatCount,
                     std::uint64_t *sequence,
                     BlockMetadata *metadata) {
-    std::lock_guard<std::mutex> lock(g_iqMutex);
     return copySnapshotTail(out, maxFloatCount, sequence, metadata, "snapshotRecent");
 }
 
 bool popBlock(std::vector<float> &out, std::uint64_t *sequence) {
-    std::lock_guard<std::mutex> lock(g_iqMutex);
+    std::lock_guard<std::mutex> lock(g_audioQueueMutex);
     const bool shouldTrace = traceMatchesCurrentEpoch() && g_tracePopRemaining > 0;
     if (g_iqBlocks.empty()) {
         out.clear();
@@ -311,8 +385,6 @@ bool popBlock(std::vector<float> &out, std::uint64_t *sequence) {
             qDebug() << "[IqBufferTrace] popBlock empty"
                      << "epoch" << static_cast<qulonglong>(g_iqEpoch)
                      << "sequence" << static_cast<qulonglong>(g_iqSequence)
-                     << "snapshotStart" << g_iqSnapshotStart
-                     << "snapshotSize" << g_iqSnapshotSize
                      << "queuedBlocks" << g_iqBlocks.size()
                      << "queuedFloats" << g_iqQueuedFloatCount;
         }
@@ -320,9 +392,13 @@ bool popBlock(std::vector<float> &out, std::uint64_t *sequence) {
     }
 
     const std::uint64_t blockSequence =
-        g_iqBlockSequences.empty() ? g_iqSequence : g_iqBlockSequences.front();
-    out = std::move(g_iqBlocks.front());
-    g_iqQueuedFloatCount -= out.size();
+        g_iqBlockSequences.empty()
+            ? g_iqSequence.load(std::memory_order_relaxed)
+            : g_iqBlockSequences.front();
+    const std::size_t blockFloats = g_iqBlocks.front().size();
+    g_iqQueuedFloatCount -= blockFloats;
+    out.swap(g_iqBlocks.front());
+    recycleBlock(std::move(g_iqBlocks.front()));
     g_iqBlocks.pop_front();
 
     if (sequence) {
@@ -337,8 +413,6 @@ bool popBlock(std::vector<float> &out, std::uint64_t *sequence) {
                  << "epoch" << static_cast<qulonglong>(g_iqEpoch)
                  << "blockSequence" << static_cast<qulonglong>(blockSequence)
                  << "blockFloats" << out.size()
-                 << "snapshotStart" << g_iqSnapshotStart
-                 << "snapshotSize" << g_iqSnapshotSize
                  << "remainingBlocks" << g_iqBlocks.size()
                  << "remainingFloats" << g_iqQueuedFloatCount;
     }
@@ -346,7 +420,8 @@ bool popBlock(std::vector<float> &out, std::uint64_t *sequence) {
 }
 
 void clear(std::uint64_t epoch) {
-    std::lock_guard<std::mutex> lock(g_iqMutex);
+    std::lock_guard<std::mutex> snapshotLock(g_iqMutex);
+    std::lock_guard<std::mutex> queueLock(g_audioQueueMutex);
     const std::uint64_t previousEpoch = g_iqEpoch;
     const std::uint64_t previousSequence = g_iqSequence;
     const std::size_t previousSnapshotStart = g_iqSnapshotStart;
@@ -358,11 +433,19 @@ void clear(std::uint64_t epoch) {
     }
     g_iqSnapshotStart = 0;
     g_iqSnapshotSize = 0;
-    g_iqBlocks.clear();
+    while (!g_iqBlocks.empty()) {
+        recycleBlock(std::move(g_iqBlocks.front()));
+        g_iqBlocks.pop_front();
+    }
     g_iqBlockSequences.clear();
     g_iqQueuedFloatCount = 0;
+    g_droppedQueuedBlocks = 0;
+    g_droppedQueuedFloats = 0;
+    g_audioBlockSequence.store(0, std::memory_order_relaxed);
+    g_skippedSnapshotBlocks.store(0, std::memory_order_relaxed);
     g_latestMetadata = BlockMetadata();
     g_totalSnapshotFloatCount = 0;
+    ++g_snapshotResetGeneration;
     ++g_iqSequence;
     if (epoch != 0 && traceMatchesCurrentEpoch()) {
         qDebug() << "[IqBufferTrace] clear"
@@ -384,17 +467,18 @@ std::size_t size() {
 }
 
 std::size_t queuedBlocks() {
-    std::lock_guard<std::mutex> lock(g_iqMutex);
+    std::lock_guard<std::mutex> lock(g_audioQueueMutex);
     return g_iqBlocks.size();
 }
 
 std::size_t queuedFloatCount() {
-    std::lock_guard<std::mutex> lock(g_iqMutex);
+    std::lock_guard<std::mutex> lock(g_audioQueueMutex);
     return g_iqQueuedFloatCount;
 }
 
 Stats stats() {
-    std::lock_guard<std::mutex> lock(g_iqMutex);
+    std::lock_guard<std::mutex> snapshotLock(g_iqMutex);
+    std::lock_guard<std::mutex> queueLock(g_audioQueueMutex);
     Stats result;
     result.epoch = g_iqEpoch;
     result.sequence = g_iqSequence;
@@ -402,8 +486,12 @@ Stats stats() {
     result.snapshotSize = g_iqSnapshotSize;
     result.queuedBlocks = g_iqBlocks.size();
     result.queuedFloatCount = g_iqQueuedFloatCount;
-    result.sampleRateEstimate = g_sampleRateEstimate;
+    result.sampleRateEstimate = g_sampleRateEstimate.load(std::memory_order_relaxed);
     result.totalFloatCount = g_totalSnapshotFloatCount;
+    result.droppedQueuedBlocks = g_droppedQueuedBlocks;
+    result.droppedQueuedFloats = g_droppedQueuedFloats;
+    result.skippedSnapshotBlocks =
+        g_skippedSnapshotBlocks.load(std::memory_order_relaxed);
     return result;
 }
 
@@ -412,7 +500,8 @@ void armRetuneTrace(std::uint64_t epoch,
                     int snapshotLogs,
                     int popLogs,
                     int rejectLogs) {
-    std::lock_guard<std::mutex> lock(g_iqMutex);
+    std::lock_guard<std::mutex> snapshotLock(g_iqMutex);
+    std::lock_guard<std::mutex> queueLock(g_audioQueueMutex);
     if (epoch == 0 || !fobosVerboseLoggingEnabled()) {
         g_traceEpoch = 0;
         g_tracePublishRemaining = 0;
@@ -431,13 +520,11 @@ void armRetuneTrace(std::uint64_t epoch,
 }
 
 void setSampleRateEstimate(double sampleRate) {
-    std::lock_guard<std::mutex> lock(g_iqMutex);
-    g_sampleRateEstimate = sampleRate;
+    g_sampleRateEstimate.store(sampleRate, std::memory_order_relaxed);
 }
 
 double sampleRateEstimate() {
-    std::lock_guard<std::mutex> lock(g_iqMutex);
-    return g_sampleRateEstimate;
+    return g_sampleRateEstimate.load(std::memory_order_relaxed);
 }
 
 } // namespace IqBuffer

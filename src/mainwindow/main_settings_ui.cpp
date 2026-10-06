@@ -125,11 +125,7 @@ void YourClassName::updateUiFromPendingSettings() {
         }
     }
     frequencyControlUiStateRestorePending = false;
-    if (fftComboBox) {
-        fftComboBox->blockSignals(true);
-        fftComboBox->setCurrentText(QString::number(pendingSettings.fftLength));
-        fftComboBox->blockSignals(false);
-    }
+    syncFftResolutionControls();
     if (modulationButtonGroup) {
         QAbstractButton *button = modulationButtonGroup->button(pendingSettings.modulationType);
         if (button) {

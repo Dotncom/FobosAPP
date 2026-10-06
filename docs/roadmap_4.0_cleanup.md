@@ -18,6 +18,7 @@ Ready or usable enough to release as the current stable baseline:
    restored.
 7. Optional/beta receiver paths: bladeRF RX and SoapySDR. These are not
    release-critical until tested on real hardware.
+8. OpenGL 3D waterfall, replay visualization, and the optimized CPU FFTW path.
 
 Experimental and not release-grade:
 
@@ -63,9 +64,12 @@ Before every public upload:
 
 Current release recommendation:
 
-1. Publish the Alternative-interface checkpoint as `4.7.2`.
-2. Describe it as a 3D visualization and UI patch over `4.7.1`.
-3. Do not publish Android unless rebuilt and smoke-tested.
+1. `4.8.1` is the current release baseline.
+2. Vulkan VkFFT is an experimental 4.8.1 feature. Continue validating
+   Auto/CPU/GPU modes on discrete NVIDIA/AMD hardware and Linux/Raspberry
+   before making it the next release default.
+3. Do not publish Android unless rebuilt and smoke-tested on its development
+   machine.
 
 ## Privacy Rules
 
@@ -108,7 +112,9 @@ The order below is the useful path after the current release checkpoint.
    - keep the current low-copy waterfall path as baseline;
    - keep rows-per-frame and update interval as user controls;
    - optimize measurement overlay cost only if it visibly slows the waterfall;
-   - GPU waterfall remains a later opt-in prototype, not a release blocker.
+   - keep OpenGL 3D rendering independent from FFT computation;
+   - benchmark experimental Vulkan VkFFT against the optimized FFTW plan on
+     each FFT length and retain CPU fallback on slower or unsupported systems.
 
 ## Scientific Analyzer
 

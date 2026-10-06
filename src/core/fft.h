@@ -12,9 +12,36 @@
 #include <QThread>
 #include <QWaitCondition>
 #include <algorithm>
+#include <memory>
 #include <QtConcurrent/QtConcurrent>
 #include "iqbuffer.h"
 #include "radiosettings.h"
+
+class GpuFftBackend;
+
+enum FftBackendPreference {
+    FFT_BACKEND_AUTO = 0,
+    FFT_BACKEND_CPU_FFTW = 1,
+    FFT_BACKEND_GPU_VKFFT = 2
+};
+
+inline int normalizedFftBackendPreference(int preference) {
+    return (std::clamp)(preference,
+                        static_cast<int>(FFT_BACKEND_AUTO),
+                        static_cast<int>(FFT_BACKEND_GPU_VKFFT));
+}
+
+inline const char *fftBackendPreferenceName(int preference) {
+    switch (normalizedFftBackendPreference(preference)) {
+    case FFT_BACKEND_CPU_FFTW:
+        return "CPU FFTW";
+    case FFT_BACKEND_GPU_VKFFT:
+        return "GPU VkFFT";
+    case FFT_BACKEND_AUTO:
+    default:
+        return "Auto";
+    }
+}
 
 extern int DEFAULT_BUF_LEN;
 
@@ -41,6 +68,7 @@ public:
                          IqBuffer::BlockMetadata *outMetadata = nullptr);
     void storeFFTResults();
     void resetHfNoiseCancelState();
+    void setBackendPreference(int preference);
     std::mutex fftMutex;
 	void performFFTInThread();
 private:
@@ -48,6 +76,7 @@ private:
     void ensureWindow(int length, int windowType);
     float windowCoefficient(int index) const;
     double windowAmplitudeSumForSamples(int sampleCount) const;
+    void executeTransform(int length);
     void releasePlan();
     fftwf_complex *fftIn;
     fftwf_complex *fftOut;
@@ -69,6 +98,12 @@ private:
     std::vector<float> hfNoiseCancelMainPower;
     std::vector<float> hfNoiseCancelRefPower;
     std::vector<float> iqSnapshotScratch;
+    std::unique_ptr<GpuFftBackend> gpuBackend;
+    int backendPreference = FFT_BACKEND_AUTO;
+    int loggedGpuSuccessLength = 0;
+    int loggedGpuFailureLength = 0;
+    int autoBackendDecisionLength = 0;
+    int autoBackendDecision = -1;
 };
 
 
