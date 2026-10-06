@@ -4,10 +4,12 @@
 #include "diagnosticlogging.h"
 #include "iqbuffer.h"
 #include "receiverdeviceutils.h"
+#include "researchanalysisdialog.h"
 #include "scanvisualutils.h"
 #include "spectrumfftworker.h"
 #include "spectrumdisplayreducer.h"
 #include "tuningutils.h"
+#include "zerospandialog.h"
 
 #include <QDebug>
 #include <QDateTime>
@@ -32,10 +34,10 @@ extern float contrast;
 extern bool colorf;
 
 namespace {
-constexpr int MinFftLength = 2048;
+constexpr int MinFftLength = 512;
 constexpr int MaxCustomFftLength = 134217728;
-constexpr std::array<int, 16> StandardFftLengths = {
-    2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144,
+constexpr std::array<int, 18> StandardFftLengths = {
+    512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144,
     524288, 1048576, 2097152, 4194304, 8388608, 16777216,
     33554432, 67108864
 };
@@ -54,6 +56,9 @@ void recordSpectrumDisplayProfile(int fftLength,
                                   qint64 reduceNs,
                                   qint64 widgetNs,
                                   qint64 totalNs) {
+    if (!fobosVerboseLoggingEnabled()) {
+        return;
+    }
     static SpectrumDisplayProfile profile;
     if (profile.fftLength != fftLength) {
         profile = SpectrumDisplayProfile{};
@@ -256,6 +261,30 @@ void YourClassName::populateSampleRates() {
     }
 
     QSignalBlocker sampleBoxBlocker(sampleBox);
+    if (isHackRfNativeSelected()) {
+        sampleBox->clear();
+        const QVector<double> hackRfRates = {
+            2000000.0,
+            4000000.0,
+            8000000.0,
+            10000000.0,
+            12500000.0,
+            16000000.0,
+            20000000.0
+        };
+        for (const double rate : hackRfRates) {
+            sampleBox->addItem(formatSampleRate(rate), rate);
+        }
+        if (sampleBox->findData(pendingSettings.sampleRate) < 0) {
+            pendingSettings.sampleRate = 10000000.0;
+        }
+        const int index = sampleBox->findData(pendingSettings.sampleRate);
+        if (index >= 0) {
+            sampleBox->setCurrentIndex(index);
+        }
+        qDebug() << "[HackRF] using native sample-rate list";
+        return;
+    }
     if (isSoapySdrSelected()) {
         sampleBox->clear();
         const QVector<double> soapyRates = {
@@ -648,6 +677,17 @@ void YourClassName::updateSpectrum() {
         return;
     }
 
+    const bool asynchronousFftMode =
+        !agileScanRunning &&
+        !standardScanRunning &&
+        !networkSpectrumFrameMetadataValid;
+    if (asynchronousFftMode &&
+        spectrumFftWorker &&
+        spectrumFftWorker->workOutstanding() &&
+        !spectrumFftWorker->resultReady()) {
+        return;
+    }
+
     const bool channelIqRecordingOnly =
         isChannelIqRecordingActive() &&
         !(networkMode == NetworkMode::Server && isClientIqProcessingMode());
@@ -715,6 +755,7 @@ void YourClassName::updateSpectrum() {
     std::vector<float> &spectrumFrequencies = spectrumFrequencyScratch;
     std::vector<float> &spectrumMagnitudes = spectrumMagnitudeScratch;
     std::vector<float> &referenceMagnitudes = spectrumReferenceScratch;
+    std::vector<SpectrumFftHistoryRow> waterfallHistoryRows;
     bool haveSpectrum = false;
     RadioSettings spectrumSettings = spectrumProcessingSettings();
 
@@ -799,14 +840,22 @@ void YourClassName::updateSpectrum() {
     if (spectrumWorkerAllowed) {
         if (!spectrumFftWorker) {
             spectrumFftWorker = std::make_unique<SpectrumFftWorker>();
-            spectrumFftWorker->request(spectrumSettings, fftBackendPreference);
+            spectrumFftWorker->request(spectrumSettings,
+                                       fftBackendPreference,
+                                       updateTimer ? updateTimer->interval() : 0,
+                                       spectrumFftOverlapPercent,
+                                       spectrumSettings.fftLength < 8388608);
             finishTrace("fft_worker_start", spectrumFrequencies, spectrumMagnitudes);
             return;
         }
 
         SpectrumFftFrame frame;
         if (!spectrumFftWorker->takeLatest(frame)) {
-            spectrumFftWorker->request(spectrumSettings, fftBackendPreference);
+            spectrumFftWorker->request(spectrumSettings,
+                                       fftBackendPreference,
+                                       updateTimer ? updateTimer->interval() : 0,
+                                       spectrumFftOverlapPercent,
+                                       spectrumSettings.fftLength < 8388608);
             finishTrace("fft_worker_pending", spectrumFrequencies, spectrumMagnitudes);
             return;
         }
@@ -822,13 +871,21 @@ void YourClassName::updateSpectrum() {
 
         if (!frame.error.isEmpty()) {
             qCritical() << "[Spectrum] worker exception" << frame.error;
-            spectrumFftWorker->request(spectrumSettings, fftBackendPreference);
+            spectrumFftWorker->request(spectrumSettings,
+                                       fftBackendPreference,
+                                       updateTimer ? updateTimer->interval() : 0,
+                                       spectrumFftOverlapPercent,
+                                       spectrumSettings.fftLength < 8388608);
             finishTrace("fft_worker_exception", spectrumFrequencies, spectrumMagnitudes);
             return;
         }
 
         if (!frame.valid || !spectrumFftSettingsMatch(frame.settings, spectrumSettings)) {
-            spectrumFftWorker->request(spectrumSettings, fftBackendPreference);
+            spectrumFftWorker->request(spectrumSettings,
+                                       fftBackendPreference,
+                                       updateTimer ? updateTimer->interval() : 0,
+                                       spectrumFftOverlapPercent,
+                                       spectrumSettings.fftLength < 8388608);
             finishTrace(frame.valid ? "fft_worker_stale" : "fft_worker_no_data",
                         spectrumFrequencies,
                         spectrumMagnitudes);
@@ -838,9 +895,14 @@ void YourClassName::updateSpectrum() {
         spectrumFrequencies = std::move(frame.frequencies);
         spectrumMagnitudes = std::move(frame.magnitudes);
         referenceMagnitudes = std::move(frame.referenceMagnitudes);
+        waterfallHistoryRows = std::move(frame.historyRows);
         fftBlockMetadata = frame.metadata;
         haveSpectrum = true;
-        spectrumFftWorker->request(spectrumSettings, fftBackendPreference);
+        spectrumFftWorker->request(spectrumSettings,
+                                   fftBackendPreference,
+                                   updateTimer ? updateTimer->interval() : 0,
+                                   spectrumFftOverlapPercent,
+                                   spectrumSettings.fftLength < 8388608);
     } else {
         try {
             fftResult->setBackendPreference(fftBackendPreference);
@@ -871,6 +933,33 @@ void YourClassName::updateSpectrum() {
         finishTrace("no_data", spectrumFrequencies, spectrumMagnitudes);
         return;
     }
+
+    // The waterfall can consume several unique FFT rows between two screen
+    // repaints. Updating every auxiliary widget for each row serializes the
+    // producer with the GUI and makes sub-10 ms waterfall intervals pointless.
+    constexpr qint64 AUXILIARY_UI_INTERVAL_MS = 8;
+    bool refreshAuxiliaryUi = spectrumUpdateIntervalMs <= SPECTRUM_UPDATE_AUTO_MS ||
+                              spectrumUpdateIntervalMs >= AUXILIARY_UI_INTERVAL_MS;
+    if (!spectrumAuxiliaryUiTimer.isValid()) {
+        spectrumAuxiliaryUiTimer.start();
+        refreshAuxiliaryUi = true;
+    } else if (spectrumAuxiliaryUiTimer.elapsed() >= AUXILIARY_UI_INTERVAL_MS) {
+        spectrumAuxiliaryUiTimer.restart();
+        refreshAuxiliaryUi = true;
+    }
+    const bool continuousScienceAnalysis =
+        spectrumScienceMaxHoldEnabled ||
+        spectrumScienceMinHoldEnabled ||
+        spectrumScienceAverageEnabled ||
+        spectrumPercentile50Enabled ||
+        spectrumPercentile90Enabled ||
+        spectrumPercentile99Enabled ||
+        spectrumDetectorMode != SPECTRUM_DETECTOR_SAMPLE ||
+        spectrumVbwHz > 0.0 ||
+        spectrumAverageFrameCount > 0 ||
+        (researchAnalysisDialog && researchAnalysisDialog->isVisible()) ||
+        (zeroSpanDialog && zeroSpanDialog->isVisible());
+    const bool refreshAnalysis = refreshAuxiliaryUi || continuousScienceAnalysis;
 
     // Gate successive FFT snapshots by the exact amount of newly published IQ.
     // This makes 0/25/50/75% overlap deterministic without copying or queuing
@@ -1132,9 +1221,15 @@ void YourClassName::updateSpectrum() {
     const std::vector<float> &fpvHunterMagnitudes = *fpvHunterMagnitudesPtr;
     const std::vector<float> &digitalVideoHunterFrequencies = *digitalVideoHunterFrequenciesPtr;
     const std::vector<float> &digitalVideoHunterMagnitudes = *digitalVideoHunterMagnitudesPtr;
-    updateDmrHunter(dmrHunterFrequencies, dmrHunterMagnitudes);
-    updateFpvHunter(fpvHunterFrequencies, fpvHunterMagnitudes);
-    updateDigitalVideoHunter(digitalVideoHunterFrequencies, digitalVideoHunterMagnitudes);
+    if (refreshAuxiliaryUi || dmrHunterSettings.enabled) {
+        updateDmrHunter(dmrHunterFrequencies, dmrHunterMagnitudes);
+    }
+    if (refreshAuxiliaryUi || fpvHunterSettings.enabled) {
+        updateFpvHunter(fpvHunterFrequencies, fpvHunterMagnitudes);
+    }
+    if (refreshAuxiliaryUi || digitalVideoHunterSettings.enabled) {
+        updateDigitalVideoHunter(digitalVideoHunterFrequencies, digitalVideoHunterMagnitudes);
+    }
 
     const std::vector<float> *visualMagnitudesPtr = &displayMagnitudes;
     std::vector<float> baselineRawOverlay;
@@ -1323,41 +1418,45 @@ void YourClassName::updateSpectrum() {
                 ? actualFrequenciesFromScanSegments(preparedDisplayFrame.frequencies,
                                                     displayScanSegments)
                 : std::vector<float>();
-        updateSpectrumScience(scienceFrequencies.size() == preparedDisplayFrame.frequencies.size()
-                                  ? scienceFrequencies
-                                  : preparedDisplayFrame.frequencies,
-                              preparedDisplayFrame.levels);
-        if (displayScanSegments.isEmpty()) {
-            feedZeroSpanFrame(displayFrequencies, visualMagnitudes, true);
-        } else {
-            feedZeroSpanFrame(scienceFrequencies.size() == preparedDisplayFrame.frequencies.size()
-                                  ? scienceFrequencies
-                                  : preparedDisplayFrame.frequencies,
-                              preparedDisplayFrame.levels,
-                              false);
+        if (refreshAnalysis) {
+            updateSpectrumScience(scienceFrequencies.size() == preparedDisplayFrame.frequencies.size()
+                                      ? scienceFrequencies
+                                      : preparedDisplayFrame.frequencies,
+                                  preparedDisplayFrame.levels);
+            if (displayScanSegments.isEmpty()) {
+                feedZeroSpanFrame(displayFrequencies, visualMagnitudes, true);
+            } else {
+                feedZeroSpanFrame(scienceFrequencies.size() == preparedDisplayFrame.frequencies.size()
+                                      ? scienceFrequencies
+                                      : preparedDisplayFrame.frequencies,
+                                  preparedDisplayFrame.levels,
+                                  false);
+            }
         }
         const qint64 afterReduceNs = profileDisplayFrame
                                          ? displayProfileTimer.nsecsElapsed()
                                          : 0;
 
-        graphWidget->setLevelRange(displayLevelMin, displayLevelMax);
-        graphWidget->setSpectrumMetadata(displayCenterFrequency,
-                                         pendingSettings.listeningFrequency,
-                                         spectrumSettings.sampleRate,
-                                         spectrumSettings.fftLength,
-                                         spectrumSettings.fftWindowType);
-        graphWidget->setScanSegments(displayScanSegments);
-        graphWidget->setScanSegmentMarkersVisible(displayScanSegmentMarkers);
-        graphWidget->setData(preparedDisplayFrame.frequencies,
-                             preparedDisplayFrame.levels,
-                             displayMinFrequency,
-                             displayMaxFrequency,
-                             static_cast<int>(preparedDisplayFrame.levels.size()),
-                             colorf,
-                             true);
-        graphWidget->setOverlayData(preparedDisplayFrame.overlayLevels,
-                                    !preparedDisplayFrame.overlayLevels.empty(),
-                                    true);
+        if (refreshAuxiliaryUi) {
+            graphWidget->setLevelRange(displayLevelMin, displayLevelMax);
+            graphWidget->setSpectrumMetadata(displayCenterFrequency,
+                                             pendingSettings.listeningFrequency,
+                                             spectrumSettings.sampleRate,
+                                             spectrumSettings.fftLength,
+                                             spectrumSettings.fftWindowType);
+            graphWidget->setScanSegments(displayScanSegments);
+            graphWidget->setScanSegmentMarkersVisible(displayScanSegmentMarkers);
+            graphWidget->setData(preparedDisplayFrame.frequencies,
+                                 preparedDisplayFrame.levels,
+                                 displayMinFrequency,
+                                 displayMaxFrequency,
+                                 static_cast<int>(preparedDisplayFrame.levels.size()),
+                                 colorf,
+                                 true);
+            graphWidget->setOverlayData(preparedDisplayFrame.overlayLevels,
+                                        !preparedDisplayFrame.overlayLevels.empty(),
+                                        true);
+        }
         if (traceFrame) {
             qDebug() << "[Spectrum] before waterfall" << "elapsedMs" << traceTimer.elapsed();
         }
@@ -1367,6 +1466,66 @@ void YourClassName::updateSpectrum() {
                                                  spectrumSettings.sampleRate,
                                                  spectrumSettings.fftLength,
                                                  spectrumSettings.fftWindowType);
+            // FFT production is independent from the OpenGL repaint cadence.
+            // Feed every completed intermediate row into the widget's existing
+            // bounded texture queue, then use the newest row for the graph and
+            // the normal analysis path above.
+            SpectrumDisplayFrame historyDisplayFrame;
+            std::vector<float> historyBaselineVisual;
+            for (SpectrumFftHistoryRow &historyRow : waterfallHistoryRows) {
+                if (historyRow.magnitudes.size() != spectrumFrequencies.size() ||
+                    (historyRow.metadata.epoch != 0 &&
+                     fftBlockMetadata.epoch != 0 &&
+                     historyRow.metadata.epoch != fftBlockMetadata.epoch)) {
+                    continue;
+                }
+
+                if (calibrationTableEnabled) {
+                    receiverCalibrationTable.applyAmplitudeCorrection(
+                        spectrumFrequencies,
+                        historyRow.magnitudes,
+                        &historyRow.referenceMagnitudes,
+                        amplitudeCalibrationOffsetDb);
+                } else if (std::isfinite(amplitudeCalibrationOffsetDb) &&
+                           std::abs(amplitudeCalibrationOffsetDb) > 0.000001) {
+                    const float offsetDb = static_cast<float>(amplitudeCalibrationOffsetDb);
+                    for (float &magnitude : historyRow.magnitudes) {
+                        if (std::isfinite(magnitude)) magnitude += offsetDb;
+                    }
+                }
+
+                const std::vector<float> *historyVisual = &historyRow.magnitudes;
+                if (isDirectInputMode(spectrumSettings.inputMode) &&
+                    buildHfInterferenceBaselineVisual(spectrumFrequencies,
+                                                      historyRow.magnitudes,
+                                                      historyBaselineVisual)) {
+                    historyVisual = &historyBaselineVisual;
+                }
+                prepareSpectrumDisplayFrame(spectrumFrequencies,
+                                            *historyVisual,
+                                            nullptr,
+                                            displayFftLength,
+                                            displayMinFrequency,
+                                            displayMaxFrequency,
+                                            displayTargetBins,
+                                            displayLevelMin,
+                                            historyDisplayFrame);
+                if (historyDisplayFrame.levels.empty()) {
+                    continue;
+                }
+                waterfallWidget->setData(historyDisplayFrame.frequencies,
+                                         historyDisplayFrame.levels,
+                                         displayMinFrequency,
+                                         displayMaxFrequency,
+                                         static_cast<int>(historyDisplayFrame.levels.size()),
+                                         secondGraph,
+                                         colorf,
+                                         contrast,
+                                         sensitivity,
+                                         displayLevelMin,
+                                         displayLevelMax,
+                                         true);
+            }
             waterfallWidget->setData(preparedDisplayFrame.frequencies,
                                      preparedDisplayFrame.levels,
                                      displayMinFrequency,

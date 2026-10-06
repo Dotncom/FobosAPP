@@ -99,12 +99,19 @@ foreach ($DocFile in $DocFiles) {
     }
 }
 
+$DeployDocsPath = Join-Path $DeployPath "docs"
+if (Test-Path -LiteralPath $DeployDocsPath) {
+    Get-ChildItem -LiteralPath $DeployDocsPath -Filter "release_notes_*.md" -File |
+        Remove-Item -Force
+}
+
 $ReleaseDocFiles = @(
     "docs\bladerf_native_beta.md",
+    "docs\hackrf_native_beta.md",
     "docs\dmr_external_backend.md",
     "docs\gnss_preflight_4.1.md",
     "docs\iq_pipeline_audit.md",
-    "docs\release_notes_4.8.1.md",
+    "docs\release_notes_4.8.2.md",
     "docs\roadmap_4.0_cleanup.md"
 )
 foreach ($DocFile in $ReleaseDocFiles) {

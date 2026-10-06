@@ -19,6 +19,8 @@
 
 class GpuFftBackend;
 
+std::mutex &fftwPlannerGlobalMutex();
+
 enum FftBackendPreference {
     FFT_BACKEND_AUTO = 0,
     FFT_BACKEND_CPU_FFTW = 1,
@@ -65,7 +67,8 @@ public:
                          std::vector<float> &outFrequencies,
                          std::vector<float> &outMagnitudes,
                          std::vector<float> *outReferenceMagnitudes = nullptr,
-                         IqBuffer::BlockMetadata *outMetadata = nullptr);
+                         IqBuffer::BlockMetadata *outMetadata = nullptr,
+                         std::uint64_t snapshotEndFloatCount = 0);
     void storeFFTResults();
     void resetHfNoiseCancelState();
     void setBackendPreference(int preference);

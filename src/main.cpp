@@ -22,6 +22,7 @@
 #include "scanvisualutils.h"
 #include "gnssserialutils.h"
 #include "tuningutils.h"
+#include "zoomspectrumdialog.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -504,8 +505,7 @@ YourClassName::YourClassName(QWidget *parent)
     QHBoxLayout *scaleLayout = new QHBoxLayout();
     QVBoxLayout *contrastLayout = new QVBoxLayout();
     QVBoxLayout *sensLayout = new QVBoxLayout();
-    QVBoxLayout *scaleControlLayout = new QVBoxLayout();
-    QVBoxLayout *additionalScaleControlLayout = new QVBoxLayout();
+    QGridLayout *scaleControlGrid = new QGridLayout();
     QVBoxLayout *levelMinLayout = new QVBoxLayout();
     QVBoxLayout *levelMaxLayout = new QVBoxLayout();
     QVBoxLayout *layout = new QVBoxLayout();
@@ -519,6 +519,8 @@ YourClassName::YourClassName(QWidget *parent)
         connect(checkBoxes[i], &QCheckBox::stateChanged, this, &YourClassName::onCheckboxStateChanged);
     }
     fftComboBox = new QComboBox(this);
+    fftComboBox->addItem("512");
+    fftComboBox->addItem("1024");
     fftComboBox->addItem("2048");
     fftComboBox->addItem("4096");
     fftComboBox->addItem("8192");
@@ -694,14 +696,14 @@ YourClassName::YourClassName(QWidget *parent)
     scaleSlider->setValue(scalePercentToSliderValue(currentScale));
     scaleLabel = new QLabel(scaleLabelText(currentScale), this);
     additionalScaleDivisorSlider = new QSlider(Qt::Horizontal, this);
-    additionalScaleDivisorSlider->setRange(1, 20);
+    additionalScaleDivisorSlider->setRange(1, ADDITIONAL_SCALE_DIVISOR_MAX);
     additionalScaleDivisorSlider->setSingleStep(1);
     additionalScaleDivisorSlider->setPageStep(5);
     additionalScaleDivisorSlider->setInvertedAppearance(true);
     additionalScaleDivisorSlider->setValue(additionalScaleDivisor);
     additionalScaleDivisorSlider->setToolTip(uiText(
         QStringLiteral("additional_scale_divisor_tooltip"),
-        QStringLiteral("Divide the main display scale by 1 to 20 for deeper spectrum and waterfall zoom.")));
+        QStringLiteral("Divide the main display scale by 1 to 100 for deeper spectrum and waterfall zoom.")));
     additionalScaleDivisorLabel = new QLabel(
         QStringLiteral("%1: 1:%2")
             .arg(uiText(QStringLiteral("additional_scale"), QStringLiteral("Extra zoom")))
@@ -1196,7 +1198,7 @@ YourClassName::YourClassName(QWidget *parent)
     prepareBottomScaleControl(levelMinLabel, levelMinSlider, 150);
     prepareBottomScaleControl(levelMaxLabel, levelMaxSlider, 150);
     if (scaleLabel) {
-        scaleLabel->setAlignment(Qt::AlignCenter);
+        scaleLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         scaleLabel->setWordWrap(false);
     }
     if (scaleSlider) {
@@ -1205,13 +1207,13 @@ YourClassName::YourClassName(QWidget *parent)
         scaleSlider->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     }
     if (additionalScaleDivisorLabel) {
-        additionalScaleDivisorLabel->setAlignment(Qt::AlignCenter);
+        additionalScaleDivisorLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         additionalScaleDivisorLabel->setWordWrap(false);
     }
     if (additionalScaleDivisorSlider) {
-        additionalScaleDivisorSlider->setMinimumWidth(72);
-        additionalScaleDivisorSlider->setMaximumWidth(112);
-        additionalScaleDivisorSlider->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+        additionalScaleDivisorSlider->setMinimumWidth(160);
+        additionalScaleDivisorSlider->setMaximumWidth(QWIDGETSIZE_MAX);
+        additionalScaleDivisorSlider->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     }
 
     fineTuneLabel = new QLabel(this);
@@ -1241,10 +1243,12 @@ YourClassName::YourClassName(QWidget *parent)
     sensLayout->addWidget(sensitivitySlider);
     contrastLayout->addWidget(contrastLabel);
     contrastLayout->addWidget(contrastSlider);
-    scaleControlLayout->addWidget(scaleLabel);
-    scaleControlLayout->addWidget(scaleSlider);
-    additionalScaleControlLayout->addWidget(additionalScaleDivisorLabel);
-    additionalScaleControlLayout->addWidget(additionalScaleDivisorSlider);
+    scaleControlGrid->addWidget(scaleLabel, 0, 0);
+    scaleControlGrid->addWidget(scaleSlider, 0, 1);
+    scaleControlGrid->addWidget(additionalScaleDivisorLabel, 1, 0);
+    scaleControlGrid->addWidget(additionalScaleDivisorSlider, 1, 1);
+    scaleControlGrid->setColumnStretch(0, 0);
+    scaleControlGrid->setColumnStretch(1, 1);
     levelMinLayout->addWidget(levelMinLabel);
     levelMinLayout->addWidget(levelMinSlider);
     levelMaxLayout->addWidget(levelMaxLabel);
@@ -1264,6 +1268,11 @@ YourClassName::YourClassName(QWidget *parent)
 
     presetManagerButton = new QPushButton("Presets...", this);
     markTranslatable(presetManagerButton, QStringLiteral("presets"), QStringLiteral("Presets..."));
+    zoomSpectrumButton = new QPushButton(QStringLiteral("Zoom spectrum"), this);
+    markTranslatable(zoomSpectrumButton,
+                     QStringLiteral("zoom_spectrum"),
+                     QStringLiteral("Zoom spectrum"));
+    zoomSpectrumButton->setToolTip(QString::fromUtf8(u8"Відкрити швидкий вузькосмуговий аналіз для діапазону, виділеного мишею на спектрі"));
     
     QLabel *clockSourceLabel = new QLabel("Clock:", this);
     markTranslatable(clockSourceLabel, QStringLiteral("clock"), QStringLiteral("Clock:"));
@@ -2516,8 +2525,7 @@ YourClassName::YourClassName(QWidget *parent)
     scaleLayout->addLayout(controlsToggleLayout, 0);
     scaleLayout->addLayout(contrastLayout, 1);
     scaleLayout->addLayout(sensLayout, 1);
-    scaleLayout->addLayout(scaleControlLayout, 3);
-    scaleLayout->addLayout(additionalScaleControlLayout, 1);
+    scaleLayout->addLayout(scaleControlGrid, 4);
     scaleLayout->addLayout(levelMinLayout, 2);
     scaleLayout->addLayout(levelMaxLayout, 2);
     scaleLayout->addLayout(graphToolLayout, 0);
@@ -2711,7 +2719,12 @@ YourClassName::YourClassName(QWidget *parent)
     fineTuneHeaderLayout->addWidget(fineTuneScaleModeButton, 0, Qt::AlignRight | Qt::AlignVCenter);
     fineTuneLayout->addLayout(fineTuneHeaderLayout);
     fineTuneLayout->addWidget(fineTuneStack);
-    fineTuneLayout->addWidget(presetManagerButton);
+    QHBoxLayout *presetZoomLayout = new QHBoxLayout();
+    presetZoomLayout->setContentsMargins(0, 0, 0, 0);
+    presetZoomLayout->setSpacing(4);
+    presetZoomLayout->addWidget(presetManagerButton, 1);
+    presetZoomLayout->addWidget(zoomSpectrumButton, 0);
+    fineTuneLayout->addLayout(presetZoomLayout);
 
     QVBoxLayout *receiverControlLayout = new QVBoxLayout();
     receiverControlLayout->setContentsMargins(0, 0, 0, 0);
@@ -2893,6 +2906,7 @@ YourClassName::YourClassName(QWidget *parent)
     scaleWidget->setRange(minFrequency, maxFrequency);
 
     updateTimer = new QTimer(this);
+    updateTimer->setTimerType(Qt::PreciseTimer);
     updateSpectrumTimerInterval();
     stopPollTimer = new QTimer(this);
     stopPollTimer->setInterval(100);
@@ -3352,6 +3366,10 @@ YourClassName::YourClassName(QWidget *parent)
         if (isRtlBackendSelected()) {
             if (!isKnownRtlSampleRate(pendingSettings.sampleRate)) {
                 pendingSettings.sampleRate = RTL_TCP_SAFE_SAMPLE_RATE;
+            }
+        } else if (isHackRfNativeSelected()) {
+            if (!isKnownHackRfSampleRate(pendingSettings.sampleRate)) {
+                pendingSettings.sampleRate = 10000000.0;
             }
         } else if (isSoapySdrSelected()) {
             const QVector<double> soapyCommonRates = {
@@ -4725,6 +4743,7 @@ YourClassName::YourClassName(QWidget *parent)
     connect(spurCalibrateButton, &QPushButton::clicked, this, &YourClassName::startSpurCalibration);
     connect(spurClearButton, &QPushButton::clicked, this, &YourClassName::clearSpurMask);
     connect(presetManagerButton, &QPushButton::clicked, this, &YourClassName::openPresetManager);
+    connect(zoomSpectrumButton, &QPushButton::clicked, this, &YourClassName::openZoomSpectrum);
     connect(appSettingsButton, &QPushButton::clicked, this, &YourClassName::openApplicationSettings);
     connect(bandwidthControl, &FrequencyControl::valueCommitted, this, [this](double) {
         onBandwidthChanged();
@@ -6460,7 +6479,17 @@ void YourClassName::updateUiForRunState() {
     if (modeBox) modeBox->setEnabled(true);
     if (sampleBox) sampleBox->setEnabled(true);
     if (clkBox) clkBox->setEnabled(idle);
-    if (fftComboBox) fftComboBox->setEnabled(idle || runState == RadioRunState::Running);
+    if (fftComboBox) {
+        fftComboBox->setEnabled((idle || runState == RadioRunState::Running) &&
+                                !fftBinWidthModeEnabled);
+    }
+    if (fftBinWidthModeCheckbox) {
+        fftBinWidthModeCheckbox->setEnabled(idle || runState == RadioRunState::Running);
+    }
+    if (fftBinWidthSpin) {
+        fftBinWidthSpin->setEnabled((idle || runState == RadioRunState::Running) &&
+                                    fftBinWidthModeEnabled);
+    }
     if (audioDeviceComboBox) audioDeviceComboBox->setEnabled(idle);
     const bool liveAudioControlsEnabled =
         idle || runState == RadioRunState::Running;
@@ -7276,8 +7305,10 @@ void YourClassName::startFobosProcessing() {
     const bool rtlSdrNativeSelected = isRtlSdrNativeSelected();
     const bool soapySdrSelected = isSoapySdrSelected();
     const bool bladeRfNativeSelected = isBladeRfNativeSelected();
+    const bool hackRfNativeSelected = isHackRfNativeSelected();
     const bool rtlBackendSelected = rtlTcpSelected || rtlSdrNativeSelected;
-    const bool externalBackendSelected = rtlBackendSelected || soapySdrSelected || bladeRfNativeSelected;
+    const bool externalBackendSelected = rtlBackendSelected || soapySdrSelected ||
+                                         bladeRfNativeSelected || hackRfNativeSelected;
     if (rtlBackendSelected) {
         normalizeRtlSdrSettings();
     }
@@ -7355,6 +7386,7 @@ void YourClassName::startFobosProcessing() {
                  << "tcp" << rtlTcpSelected
                  << "soapy" << soapySdrSelected
                  << "bladerf" << bladeRfNativeSelected
+                 << "hackrf" << hackRfNativeSelected
                  << "host" << RTL_TCP_DEFAULT_HOST
                  << "port" << RTL_TCP_DEFAULT_PORT
                  << "frequency" << pendingSettings.centerFrequency
@@ -7483,10 +7515,11 @@ void YourClassName::startFobosProcessing() {
                                                    (serverChannelIqStreaming || channelIqRecording || eventChannelIq));
     }
     qDebug() << "[FobosLifecycle] starting DataProcessor"
-             << "backend" << (bladeRfNativeSelected ? "bladerf-native" :
+             << "backend" << (hackRfNativeSelected ? "hackrf-native" :
+                              (bladeRfNativeSelected ? "bladerf-native" :
                                (soapySdrSelected ? "soapy-sdr" :
                                (rtlSdrNativeSelected ? "rtl-sdr-native" :
-                                (rtlTcpSelected ? "rtl_tcp" : fobosApiKindName(activeFobosApiKind)))))
+                                (rtlTcpSelected ? "rtl_tcp" : fobosApiKindName(activeFobosApiKind))))))
              << "device" << activeFobosDevice()
              << "sampleRate" << pendingSettings.sampleRate
              << "syncEnabled" << pendingSettings.syncEnabled
@@ -7513,6 +7546,10 @@ void YourClassName::startFobosProcessing() {
         processor->startProcessing(makeBladeRfNativeStreamDescriptor(queueAudioBlocks,
                                                                      publishIqSnapshot,
                                                                      serverIqStreaming || channelIqRecording || eventIq));
+    } else if (hackRfNativeSelected) {
+        processor->startProcessing(makeHackRfNativeStreamDescriptor(queueAudioBlocks,
+                                                                    publishIqSnapshot,
+                                                                    serverIqStreaming || channelIqRecording || eventIq));
     } else {
         processor->startProcessing(makeFobosStreamDescriptor(activeFobosDevice(),
                                                              activeFobosApiKind,
@@ -7590,7 +7627,38 @@ void YourClassName::recreateDataProcessor() {
     }
     processor = new DataProcessor(this);
     connectDataProcessorSignals();
+    if (zoomSpectrumDialog && zoomSpectrumDialog->isVisible()) {
+        zoomSpectrumDialog->setSource(processor->zoomSpectrumProcessor(),
+                                      zoomSpectrumDialog->selectedLowHz(),
+                                      zoomSpectrumDialog->selectedHighHz());
+    }
     qDebug() << "[FobosLifecycle] recreateDataProcessor exit" << "processor" << processor;
+}
+
+void YourClassName::openZoomSpectrum() {
+    double selectedLowHz = 0.0;
+    double selectedHighHz = 0.0;
+    if (!graphWidget || !graphWidget->bandwidthSelection(selectedLowHz, selectedHighHz)) {
+        QMessageBox::information(this,
+                                 QStringLiteral("Zoom spectrum"),
+                                 QString::fromUtf8(u8"Спочатку затисніть ліву кнопку миші та виділіть потрібну смугу на основному спектрі."));
+        return;
+    }
+    if (!processor) {
+        QMessageBox::warning(this,
+                             QStringLiteral("Zoom spectrum"),
+                             QString::fromUtf8(u8"IQ-процесор ще не створений."));
+        return;
+    }
+    if (!zoomSpectrumDialog) {
+        zoomSpectrumDialog = new ZoomSpectrumDialog(this);
+    }
+    zoomSpectrumDialog->show();
+    zoomSpectrumDialog->raise();
+    zoomSpectrumDialog->activateWindow();
+    zoomSpectrumDialog->setSource(processor->zoomSpectrumProcessor(),
+                                  selectedLowHz,
+                                  selectedHighHz);
 }
 
 void YourClassName::finishFobosStop(bool forcedRecovery) {

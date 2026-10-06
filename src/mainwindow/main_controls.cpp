@@ -407,12 +407,12 @@ void YourClassName::onScaleChanged(int value) {
 }
 
 double YourClassName::effectiveScalePercent() const {
-    const int divisor = (std::clamp)(additionalScaleDivisor, 1, 20);
+    const int divisor = (std::clamp)(additionalScaleDivisor, 1, ADDITIONAL_SCALE_DIVISOR_MAX);
     return currentScale / static_cast<double>(divisor);
 }
 
 void YourClassName::onAdditionalScaleDivisorChanged(int value) {
-    additionalScaleDivisor = (std::clamp)(value, 1, 20);
+    additionalScaleDivisor = (std::clamp)(value, 1, ADDITIONAL_SCALE_DIVISOR_MAX);
     if (additionalScaleDivisorLabel) {
         additionalScaleDivisorLabel->setText(
             QStringLiteral("%1: 1:%2")

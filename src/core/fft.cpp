@@ -149,6 +149,10 @@ std::complex<float> clampComplexMagnitude(std::complex<float> value, float maxMa
 }
 }
 
+std::mutex &fftwPlannerGlobalMutex() {
+    return fftwPlannerMutex;
+}
+
 FFTResult::FFTResult(bool optimizeLargePlans, QObject *parent)
     : QObject(parent),
       fftIn(nullptr),
@@ -189,6 +193,7 @@ void FFTResult::releasePlan() {
         gpuBackend->releasePlan();
     }
     if (plan) {
+        std::lock_guard<std::mutex> plannerLock(fftwPlannerGlobalMutex());
         fftwf_destroy_plan(plan);
         plan = nullptr;
     }
@@ -248,12 +253,14 @@ void FFTResult::executeTransform(int length) {
                 const qint64 cpuNs = cpuTimer.nsecsElapsed();
 
                 autoBackendDecision = measuredGpu && gpuNs < cpuNs - cpuNs / 10 ? 1 : 0;
-                qInfo() << "[FFT] Auto backend benchmark"
-                        << "length" << length
-                        << "device" << gpuBackend->deviceName()
-                        << "cpuMs" << (cpuNs / 1000000.0)
-                        << "gpuMs" << (gpuNs / 1000000.0)
-                        << "selected" << (autoBackendDecision == 1 ? "VkFFT" : "FFTW");
+                if (fobosVerboseLoggingEnabled()) {
+                    qInfo() << "[FFT] Auto backend benchmark"
+                            << "length" << length
+                            << "device" << gpuBackend->deviceName()
+                            << "cpuMs" << (cpuNs / 1000000.0)
+                            << "gpuMs" << (gpuNs / 1000000.0)
+                            << "selected" << (autoBackendDecision == 1 ? "VkFFT" : "FFTW");
+                }
                 if (autoBackendDecision == 0) {
                     gpuBackend->releasePlan();
                 }
@@ -263,9 +270,11 @@ void FFTResult::executeTransform(int length) {
             if (loggedGpuSuccessLength != length) {
                 loggedGpuSuccessLength = length;
                 loggedGpuFailureLength = 0;
-                qInfo() << "[FFT] VkFFT active"
-                        << "length" << length
-                        << "device" << gpuBackend->deviceName();
+                if (fobosVerboseLoggingEnabled()) {
+                    qInfo() << "[FFT] VkFFT active"
+                            << "length" << length
+                            << "device" << gpuBackend->deviceName();
+                }
             }
             return;
         }
@@ -306,7 +315,7 @@ bool FFTResult::ensurePlan(int length) {
     }
 
     {
-        std::lock_guard<std::mutex> plannerLock(fftwPlannerMutex);
+        std::lock_guard<std::mutex> plannerLock(fftwPlannerGlobalMutex());
         importFftwWisdom();
         const bool useThreadedPlan =
             optimizeLargePlans && length >= FFT_THREADED_PLAN_MIN_LENGTH;
@@ -433,7 +442,8 @@ bool FFTResult::storeFFTResults(const RadioSettings &settings,
                                 std::vector<float> &outFrequencies,
                                 std::vector<float> &outMagnitudes,
                                 std::vector<float> *outReferenceMagnitudes,
-                                IqBuffer::BlockMetadata *outMetadata) {
+                                IqBuffer::BlockMetadata *outMetadata,
+                                std::uint64_t snapshotEndFloatCount) {
     const int currentFftLength = settings.fftLength;
     const double sampleRate = settings.sampleRate;
     double centerFrequency = settings.centerFrequency;
@@ -466,7 +476,17 @@ bool FFTResult::storeFFTResults(const RadioSettings &settings,
     const std::size_t requestedSnapshotFloats =
         static_cast<std::size_t>((std::max)(1, currentFftLength)) * 2U;
     IqBuffer::BlockMetadata snapshotMetadata;
-    if (!IqBuffer::snapshotRecent(iqSnapshotScratch, requestedSnapshotFloats, nullptr, &snapshotMetadata)) {
+    const bool snapshotReady = snapshotEndFloatCount > 0
+                                   ? IqBuffer::snapshotRecentEndingAt(iqSnapshotScratch,
+                                                                      requestedSnapshotFloats,
+                                                                      snapshotEndFloatCount,
+                                                                      nullptr,
+                                                                      &snapshotMetadata)
+                                   : IqBuffer::snapshotRecent(iqSnapshotScratch,
+                                                              requestedSnapshotFloats,
+                                                              nullptr,
+                                                              &snapshotMetadata);
+    if (!snapshotReady) {
         return false;
     }
     const qint64 snapshotNs = profileFrame ? profileTimer.nsecsElapsed() : 0;

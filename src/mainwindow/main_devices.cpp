@@ -2,6 +2,7 @@
 #include "appconstants.h"
 #include "appruntimeutils.h"
 #include "bladerfbackend.h"
+#include "hackrfbackend.h"
 #include "receiverbackendregistry.h"
 #include "receiverdeviceutils.h"
 
@@ -63,6 +64,17 @@ void YourClassName::buildLocalReceiverDeviceChoices(QStringList &labels, QVector
         for (const BladeRfDeviceInfo &bladeInfo : bladeRfDevices) {
             labels << bladeInfo.label;
             values << bladeRfNativeComboValue(bladeInfo.nativeIndex);
+        }
+    }
+
+    const QVector<HackRfDeviceInfo> hackRfDevices = enumerateHackRfDevices();
+    if (hackRfDevices.isEmpty()) {
+        labels << QStringLiteral("HackRF native auto (hackrf.dll)");
+        values << hackRfNativeComboValue(0);
+    } else {
+        for (const HackRfDeviceInfo &hackRfInfo : hackRfDevices) {
+            labels << hackRfInfo.label;
+            values << hackRfNativeComboValue(hackRfInfo.nativeIndex);
         }
     }
 
@@ -175,6 +187,8 @@ QJsonArray YourClassName::receiverDeviceListToJson() const {
     values << RTL_TCP_DEVICE_INDEX;
     labels << QStringLiteral("bladeRF native auto (server)");
     values << bladeRfNativeComboValue(0);
+    labels << QStringLiteral("HackRF native auto (server)");
+    values << hackRfNativeComboValue(0);
     labels << QStringLiteral("SoapySDR auto (server)");
     values << SOAPY_SDR_DEVICE_INDEX;
 
@@ -514,12 +528,37 @@ int YourClassName::selectedBladeRfNativeIndex() const {
     return isBladeRfNativeComboValue(selected) ? bladeRfNativeIndexFromComboValue(selected) : 0;
 }
 
+bool YourClassName::isHackRfNativeSelected() const {
+    int selected = pendingSettings.deviceIndex;
+    if (comboBox) {
+        bool ok = false;
+        const int value = comboBox->currentData().toInt(&ok);
+        if (ok) {
+            selected = receiverDeviceIndexFromComboValue(value);
+        }
+    }
+    return isHackRfNativeComboValue(selected);
+}
+
+int YourClassName::selectedHackRfNativeIndex() const {
+    int selected = pendingSettings.deviceIndex;
+    if (comboBox) {
+        bool ok = false;
+        const int value = comboBox->currentData().toInt(&ok);
+        if (ok) {
+            selected = receiverDeviceIndexFromComboValue(value);
+        }
+    }
+    return isHackRfNativeComboValue(selected) ? hackRfNativeIndexFromComboValue(selected) : 0;
+}
+
 bool YourClassName::isRtlBackendSelected() const {
     return isRtlTcpSelected() || isRtlSdrNativeSelected();
 }
 
 bool YourClassName::isExternalReceiverBackendSelected() const {
-    return isRtlBackendSelected() || isSoapySdrSelected() || isBladeRfNativeSelected();
+    return isRtlBackendSelected() || isSoapySdrSelected() || isBladeRfNativeSelected() ||
+           isHackRfNativeSelected();
 }
 
 bool YourClassName::normalizeRtlSdrSettings() {
@@ -624,6 +663,26 @@ ReceiverStreamDescriptor YourClassName::makeBladeRfNativeStreamDescriptor(bool q
     stream.centerFrequencyHz = pendingSettings.centerFrequency;
     stream.frequencyCalibrationOffsetHz = effectiveFrequencyCalibrationOffsetHz(pendingSettings.centerFrequency);
     stream.bladeRfNativeDeviceIndex = selectedBladeRfNativeIndex();
+    stream.syncReader = false;
+    stream.queueAudioBlocks = queueAudioBlocks;
+    stream.publishIqSnapshot = publishIqSnapshot;
+    stream.emitIqFrames = emitIqFrames;
+    stream.agileScanEnabled = false;
+    return stream;
+}
+
+ReceiverStreamDescriptor YourClassName::makeHackRfNativeStreamDescriptor(bool queueAudioBlocks,
+                                                                         bool publishIqSnapshot,
+                                                                         bool emitIqFrames) const {
+    ReceiverStreamDescriptor stream;
+    stream.kind = ReceiverBackendStreamKind::HackRfNative;
+    stream.backendId = QStringLiteral("hackrf-native");
+    stream.backendName = QStringLiteral("HackRF native");
+    stream.nativeDevice = nullptr;
+    stream.sampleRateHz = pendingSettings.sampleRate;
+    stream.centerFrequencyHz = pendingSettings.centerFrequency;
+    stream.frequencyCalibrationOffsetHz = effectiveFrequencyCalibrationOffsetHz(pendingSettings.centerFrequency);
+    stream.hackRfNativeDeviceIndex = selectedHackRfNativeIndex();
     stream.syncReader = false;
     stream.queueAudioBlocks = queueAudioBlocks;
     stream.publishIqSnapshot = publishIqSnapshot;

@@ -1,5 +1,46 @@
 # Changelog
 
+## 4.8.2 - 2026-10-07
+
+### Added
+
+- Added a live narrow-band Zoom FFT window driven from the full receiver IQ
+  stream, with independent frequency resolution, overlapped updates, spectrum,
+  frequency scale, waterfall controls, and persistent settings.
+- Added 512- and 1024-point FFT choices plus wider main and extra spectrum
+  scaling controls for narrow-band and low-sample-rate receivers.
+- Added an experimental native HackRF RX backend ready for hardware testing.
+
+### Changed
+
+- Decoupled FFT production from GUI repaint cadence and queued multiple unique
+  waterfall rows between screen updates, allowing sub-frame update intervals
+  on high-refresh displays without duplicating frames.
+- Preserved 3D waterfall history across ordinary widget resizes and throttled
+  auxiliary spectrum tools independently from the hot waterfall path.
+- Expanded the English and Ukrainian in-app guide with a dedicated
+  Narrow-band Zoom FFT section and clarified acquisition/update timing.
+- Reduced normal diagnostic output: FFT benchmarks, spectrum profiling, map
+  tile failures, and DMR queue/drop details now require detailed logging.
+
+### Fixed
+
+- Kept fixed FFT length and Hz-per-point controls synchronized in both
+  directions and recovered visual updates after live FFT/sample-rate changes.
+- Serialized FFTW plan creation/destruction shared by the main and Zoom FFT
+  workers to prevent intermittent planner crashes.
+- Stored Zoom FFT settings in the per-user FobosAPP settings file and fixed
+  UTF-8 text in its Windows dialog and validation messages.
+- Reduced the chance of preset/calibration races while live processing is
+  active.
+
+### Notes
+
+- HackRF support is experimental and has not yet been verified with physical
+  hardware.
+- Android is unchanged and is intentionally not published with this desktop
+  and Raspberry source release.
+
 ## 4.8.1 - 2026-10-06
 
 ### Added

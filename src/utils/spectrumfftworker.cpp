@@ -2,7 +2,10 @@
 
 #include "fft.h"
 
+#include <algorithm>
+#include <cmath>
 #include <exception>
+#include <limits>
 #include <new>
 #include <utility>
 
@@ -16,6 +19,8 @@ SpectrumFftWorker::~SpectrumFftWorker() {
         stopping = true;
         hasRequest = false;
         hasResult = false;
+        requestOutstanding.store(false, std::memory_order_release);
+        resultAvailable.store(false, std::memory_order_release);
         ++generation;
     }
     wakeCondition.notify_one();
@@ -24,11 +29,22 @@ SpectrumFftWorker::~SpectrumFftWorker() {
     }
 }
 
-void SpectrumFftWorker::request(const RadioSettings &settings, int fftBackendPreference) {
+void SpectrumFftWorker::request(const RadioSettings &settings,
+                                int fftBackendPreference,
+                                int updateIntervalMs,
+                                int overlapPercent,
+                                bool batchWaterfallRows) {
+    bool expected = false;
+    if (!requestOutstanding.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+        return;
+    }
     {
         std::lock_guard<std::mutex> lock(mutex);
         pendingSettings = settings;
         pendingFftBackendPreference = normalizedFftBackendPreference(fftBackendPreference);
+        pendingUpdateIntervalMs = (std::max)(0, updateIntervalMs);
+        pendingOverlapPercent = (std::clamp)(overlapPercent, 0, 95);
+        pendingBatchWaterfallRows = batchWaterfallRows;
         pendingGeneration = generation;
         hasRequest = true;
         ++nextRequestId;
@@ -43,6 +59,7 @@ bool SpectrumFftWorker::takeLatest(SpectrumFftFrame &frame) {
     }
     frame = std::move(latestResult);
     hasResult = false;
+    resultAvailable.store(false, std::memory_order_release);
     return true;
 }
 
@@ -51,6 +68,8 @@ void SpectrumFftWorker::resetHfNoiseCancelState() {
         std::lock_guard<std::mutex> lock(mutex);
         hasRequest = false;
         hasResult = false;
+        requestOutstanding.store(false, std::memory_order_release);
+        resultAvailable.store(false, std::memory_order_release);
         resetRequested = true;
         ++generation;
     }
@@ -65,6 +84,9 @@ void SpectrumFftWorker::run() {
         quint64 requestId = 0;
         quint64 requestGeneration = 0;
         int backendPreference = FFT_BACKEND_AUTO;
+        int updateIntervalMs = 0;
+        int overlapPercent = 0;
+        bool batchWaterfallRows = false;
         bool doReset = false;
 
         {
@@ -80,6 +102,12 @@ void SpectrumFftWorker::run() {
             resetRequested = false;
             if (doReset) {
                 fft.resetHfNoiseCancelState();
+                lastProducedEndFloatCount = 0;
+                lastProducedEpoch = 0;
+                lastProducedFftLength = 0;
+                lastProducedSampleRate = 0.0;
+                lastProducedUpdateIntervalMs = 0;
+                lastProducedOverlapPercent = 0;
             }
 
             if (!hasRequest) {
@@ -88,6 +116,9 @@ void SpectrumFftWorker::run() {
 
             settings = pendingSettings;
             backendPreference = pendingFftBackendPreference;
+            updateIntervalMs = pendingUpdateIntervalMs;
+            overlapPercent = pendingOverlapPercent;
+            batchWaterfallRows = pendingBatchWaterfallRows;
             requestId = nextRequestId;
             requestGeneration = pendingGeneration;
             hasRequest = false;
@@ -100,11 +131,108 @@ void SpectrumFftWorker::run() {
 
         try {
             fft.setBackendPreference(backendPreference);
-            frame.valid = fft.storeFFTResults(settings,
-                                              frame.frequencies,
-                                              frame.magnitudes,
-                                              &frame.referenceMagnitudes,
-                                              &frame.metadata);
+            if (!batchWaterfallRows) {
+                frame.valid = fft.storeFFTResults(settings,
+                                                  frame.frequencies,
+                                                  frame.magnitudes,
+                                                  &frame.referenceMagnitudes,
+                                                  &frame.metadata);
+                lastProducedEndFloatCount = frame.metadata.totalFloatCount;
+                lastProducedEpoch = frame.metadata.epoch;
+                lastProducedFftLength = settings.fftLength;
+                lastProducedSampleRate = settings.sampleRate;
+                lastProducedUpdateIntervalMs = updateIntervalMs;
+                lastProducedOverlapPercent = overlapPercent;
+            } else {
+            const IqBuffer::Stats iqStats = IqBuffer::stats();
+            const std::uint64_t fftFloats = static_cast<std::uint64_t>(
+                (std::max)(1, settings.fftLength)) * 2ULL;
+            const std::uint64_t intervalFloats = updateIntervalMs > 0 &&
+                                                         settings.sampleRate > 0.0
+                                                     ? static_cast<std::uint64_t>(std::llround(
+                                                           settings.sampleRate * 2.0 *
+                                                           static_cast<double>(updateIntervalMs) /
+                                                           1000.0))
+                                                     : 0ULL;
+            const std::uint64_t overlapHopFloats = (std::max)(
+                2ULL,
+                fftFloats * static_cast<std::uint64_t>(100 - overlapPercent) / 100ULL);
+            const std::uint64_t hopFloats = (std::max)(overlapHopFloats, intervalFloats);
+            const bool sameTimeline = batchWaterfallRows &&
+                                      iqStats.epoch == lastProducedEpoch &&
+                                      settings.fftLength == lastProducedFftLength &&
+                                      std::abs(settings.sampleRate - lastProducedSampleRate) < 0.5 &&
+                                      updateIntervalMs == lastProducedUpdateIntervalMs &&
+                                      overlapPercent == lastProducedOverlapPercent;
+
+            std::vector<std::uint64_t> frameEnds;
+            constexpr std::size_t MaxRowsPerBatch = 32;
+            if (sameTimeline &&
+                iqStats.totalFloatCount > lastProducedEndFloatCount &&
+                hopFloats > 0) {
+                std::uint64_t nextEnd = lastProducedEndFloatCount + hopFloats;
+                const std::uint64_t retainedStart =
+                    iqStats.totalFloatCount - static_cast<std::uint64_t>(iqStats.snapshotSize);
+                const std::uint64_t earliestCompleteEnd = retainedStart + fftFloats;
+                if (nextEnd < earliestCompleteEnd) {
+                    nextEnd = earliestCompleteEnd;
+                }
+                if (nextEnd <= iqStats.totalFloatCount) {
+                    const std::uint64_t availableRows =
+                        (iqStats.totalFloatCount - nextEnd) / hopFloats + 1ULL;
+                    if (availableRows > MaxRowsPerBatch) {
+                        nextEnd += (availableRows - MaxRowsPerBatch) * hopFloats;
+                    }
+                    for (std::uint64_t end = nextEnd;
+                         end <= iqStats.totalFloatCount && frameEnds.size() < MaxRowsPerBatch;
+                         end += hopFloats) {
+                        frameEnds.push_back(end);
+                        if (std::numeric_limits<std::uint64_t>::max() - end < hopFloats) {
+                            break;
+                        }
+                    }
+                }
+            }
+            if (frameEnds.empty() &&
+                (!sameTimeline || lastProducedEndFloatCount == 0) &&
+                iqStats.totalFloatCount >= fftFloats) {
+                frameEnds.push_back(iqStats.totalFloatCount);
+            }
+
+            std::vector<float> rowFrequencies;
+            for (const std::uint64_t frameEnd : frameEnds) {
+                std::vector<float> rowMagnitudes;
+                std::vector<float> rowReferenceMagnitudes;
+                IqBuffer::BlockMetadata rowMetadata;
+                if (!fft.storeFFTResults(settings,
+                                         rowFrequencies,
+                                         rowMagnitudes,
+                                         &rowReferenceMagnitudes,
+                                         &rowMetadata,
+                                         frameEnd)) {
+                    continue;
+                }
+                if (!frame.magnitudes.empty()) {
+                    SpectrumFftHistoryRow historyRow;
+                    historyRow.magnitudes = std::move(frame.magnitudes);
+                    historyRow.referenceMagnitudes = std::move(frame.referenceMagnitudes);
+                    historyRow.metadata = frame.metadata;
+                    frame.historyRows.push_back(std::move(historyRow));
+                }
+                frame.frequencies = rowFrequencies;
+                frame.magnitudes = std::move(rowMagnitudes);
+                frame.referenceMagnitudes = std::move(rowReferenceMagnitudes);
+                frame.metadata = rowMetadata;
+                frame.valid = true;
+                lastProducedEndFloatCount = frameEnd;
+            }
+
+            lastProducedEpoch = iqStats.epoch;
+            lastProducedFftLength = settings.fftLength;
+            lastProducedSampleRate = settings.sampleRate;
+            lastProducedUpdateIntervalMs = updateIntervalMs;
+            lastProducedOverlapPercent = overlapPercent;
+            }
         } catch (const std::bad_alloc &error) {
             frame.badAlloc = true;
             frame.error = QString::fromLatin1(error.what());
@@ -117,10 +245,13 @@ void SpectrumFftWorker::run() {
         {
             std::lock_guard<std::mutex> lock(mutex);
             if (requestGeneration != generation || stopping) {
+                requestOutstanding.store(false, std::memory_order_release);
                 continue;
             }
             latestResult = std::move(frame);
             hasResult = true;
+            resultAvailable.store(true, std::memory_order_release);
+            requestOutstanding.store(false, std::memory_order_release);
         }
     }
 }

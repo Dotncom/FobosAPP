@@ -658,7 +658,7 @@ void YourClassName::loadPersistentSettings() {
     additionalScaleDivisor = (std::clamp)(
         settings.value("display/additionalScaleDivisor", additionalScaleDivisor).toInt(),
         1,
-        20);
+        ADDITIONAL_SCALE_DIVISOR_MAX);
     contrast = static_cast<float>((std::clamp)(settings.value("display/contrast", static_cast<double>(contrast)).toDouble(), 1.0, 20.0));
     sensitivity = static_cast<float>((std::clamp)(settings.value("display/sensitivity", static_cast<double>(sensitivity)).toDouble(), 1.0, 30.0));
     displayLevelMin = static_cast<float>((std::clamp)(settings.value("display/levelMin", static_cast<double>(displayLevelMin)).toDouble(), -160.0, 20.0));

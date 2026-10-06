@@ -187,14 +187,18 @@ void YourClassName::updateUiFromPendingSettings() {
     }
     if (additionalScaleDivisorSlider) {
         additionalScaleDivisorSlider->blockSignals(true);
-        additionalScaleDivisorSlider->setValue((std::clamp)(additionalScaleDivisor, 1, 20));
+        additionalScaleDivisorSlider->setValue((std::clamp)(additionalScaleDivisor,
+                                                             1,
+                                                             ADDITIONAL_SCALE_DIVISOR_MAX));
         additionalScaleDivisorSlider->blockSignals(false);
     }
     if (additionalScaleDivisorLabel) {
         additionalScaleDivisorLabel->setText(
             QStringLiteral("%1: 1:%2")
                 .arg(uiText(QStringLiteral("additional_scale"), QStringLiteral("Extra zoom")))
-                .arg((std::clamp)(additionalScaleDivisor, 1, 20)));
+                .arg((std::clamp)(additionalScaleDivisor,
+                                  1,
+                                  ADDITIONAL_SCALE_DIVISOR_MAX)));
     }
     if (contrastSlider) {
         contrastSlider->blockSignals(true);

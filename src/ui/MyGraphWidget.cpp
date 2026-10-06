@@ -33,6 +33,19 @@ MyGraphWidget::MyGraphWidget(QWidget *parent)
 MyGraphWidget::~MyGraphWidget() {
 }
 
+bool MyGraphWidget::bandwidthSelection(double &lowHz, double &highHz) const {
+    if (!bandwidthMeasurementVisible ||
+        std::abs(bandwidthMeasureEndPos.x() - bandwidthMeasureStartPos.x()) < 4) {
+        return false;
+    }
+    lowHz = frequencyAtX(bandwidthMeasureStartPos.x());
+    highHz = frequencyAtX(bandwidthMeasureEndPos.x());
+    if (highHz < lowHz) {
+        std::swap(lowHz, highHz);
+    }
+    return std::isfinite(lowHz) && std::isfinite(highHz) && highHz > lowHz;
+}
+
 void MyGraphWidget::initializeGL() {
     initializeOpenGLFunctions();
 
@@ -681,6 +694,12 @@ void MyGraphWidget::mouseReleaseEvent(QMouseEvent *event) {
         bandwidthMeasurementActive = false;
         if (std::abs(bandwidthMeasureEndPos.x() - bandwidthMeasureStartPos.x()) < 4) {
             bandwidthMeasurementVisible = false;
+        } else {
+            double lowHz = 0.0;
+            double highHz = 0.0;
+            if (bandwidthSelection(lowHz, highHz)) {
+                emit bandwidthSelectionChanged(lowHz, highHz);
+            }
         }
         update();
         event->accept();

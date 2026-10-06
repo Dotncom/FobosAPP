@@ -92,6 +92,7 @@
 
 class ZeroSpanDialog;
 class ResearchAnalysisDialog;
+class ZoomSpectrumDialog;
 
 extern fobos_dev_t *device;
 extern float* dataq;
@@ -250,6 +251,8 @@ private:
     bool isSoapySdrSelected() const;
     bool isBladeRfNativeSelected() const;
     int selectedBladeRfNativeIndex() const;
+    bool isHackRfNativeSelected() const;
+    int selectedHackRfNativeIndex() const;
     bool isRtlBackendSelected() const;
     bool isExternalReceiverBackendSelected() const;
     bool normalizeRtlSdrSettings();
@@ -265,6 +268,9 @@ private:
     ReceiverStreamDescriptor makeBladeRfNativeStreamDescriptor(bool queueAudioBlocks,
                                                                bool publishIqSnapshot,
                                                                bool emitIqFrames) const;
+    ReceiverStreamDescriptor makeHackRfNativeStreamDescriptor(bool queueAudioBlocks,
+                                                              bool publishIqSnapshot,
+                                                              bool emitIqFrames) const;
     bool restartStreamForHardwareChange();
     void abandonFobosSessionWithoutClose(const char *reason);
     bool openFobosSession();
@@ -368,6 +374,7 @@ private:
     QVector<QPair<QString, double>> presetMapToVector(const QMap<QString, double> &presets,
                                                       const QStringList &order) const;
     void openPresetManager();
+    void openZoomSpectrum();
     void openApplicationSettings();
     void openApplicationHelp();
     void exportSettingsBackup();
@@ -642,6 +649,7 @@ private:
     QPushButton *fobosButton = nullptr;
     QPushButton *networkButton = nullptr;
     QPushButton *presetManagerButton = nullptr;
+    QPushButton *zoomSpectrumButton = nullptr;
     QPushButton *appSettingsButton = nullptr;
     QPushButton *controlsToggleButton = nullptr;
     QPushButton *digitalToggleButton = nullptr;
@@ -876,6 +884,7 @@ private:
     QLabel *gnssSatelliteStatusLabel = nullptr;
     QCheckBox *gnssSatelliteTableCheckbox = nullptr;
     QDialog *gnssSatelliteTableDialog = nullptr;
+    ZoomSpectrumDialog *zoomSpectrumDialog = nullptr;
     QTableWidget *gnssSatelliteTable = nullptr;
     QLabel *dsdNeoStatusLabel = nullptr;
 
@@ -1014,6 +1023,7 @@ private:
     QMap<QString, QString> listeningScanPresets;
     QStringList listeningScanPresetOrder;
     int spectrumUpdateIntervalMs = 0;
+    QElapsedTimer spectrumAuxiliaryUiTimer;
     int fftBackendPreference = FFT_BACKEND_AUTO;
     bool fftBinWidthModeEnabled = false;
     double fftTargetBinWidthHz = 2.0;
@@ -1022,6 +1032,7 @@ private:
     double amplitudeCalibrationOffsetDb = 0.0;
     bool calibrationTableEnabled = false;
     ReceiverCalibrationTable receiverCalibrationTable;
+    bool presetManagerOpen = false;
     int waterfallRowsPerFrame = 1;
     int waterfallDisplayMode = static_cast<int>(MyWaterfallWidget::DisplayMode::Waterfall2D);
     bool alternativeInterfaceMode = false;

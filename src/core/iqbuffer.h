@@ -45,6 +45,11 @@ bool snapshotRecent(std::vector<float> &out,
                     std::size_t maxFloatCount,
                     std::uint64_t *sequence = nullptr,
                     BlockMetadata *metadata = nullptr);
+bool snapshotRecentEndingAt(std::vector<float> &out,
+                            std::size_t maxFloatCount,
+                            std::uint64_t endFloatCount,
+                            std::uint64_t *sequence = nullptr,
+                            BlockMetadata *metadata = nullptr);
 bool popBlock(std::vector<float> &out, std::uint64_t *sequence = nullptr);
 void clear(std::uint64_t epoch = 0);
 std::size_t size();

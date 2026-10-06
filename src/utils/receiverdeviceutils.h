@@ -13,6 +13,11 @@ int bladeRfNativeComboValue(int nativeIndex);
 bool isBladeRfNativeComboValue(int value);
 int bladeRfNativeIndexFromComboValue(int value);
 
+int hackRfNativeComboValue(int nativeIndex);
+bool isHackRfNativeComboValue(int value);
+int hackRfNativeIndexFromComboValue(int value);
+bool isKnownHackRfSampleRate(double value);
+
 int remoteReceiverComboValue(int serverDeviceIndex);
 bool isRemoteReceiverComboValue(int value);
 int remoteReceiverDeviceIndexFromComboValue(int value);

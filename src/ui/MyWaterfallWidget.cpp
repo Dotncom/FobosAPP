@@ -623,7 +623,6 @@ void MyWaterfallWidget::resizeGL(int w, int h) {
         }
         positionInfoOverlays();
         updateAlternativeDbLabels();
-        qDebug() << "resizeGL done";
 }
 
 void MyWaterfallWidget::resetWaterfallTexture(int w, int h) {
@@ -631,14 +630,14 @@ void MyWaterfallWidget::resetWaterfallTexture(int w, int h) {
     textureHeight = std::max(1, h);
     waterfallWriteRow = 0;
 
-    std::vector<unsigned char> blank(static_cast<size_t>(textureWidth) * textureHeight * 3, 0);
+    waterfallTexturePixels.assign(static_cast<size_t>(textureWidth) * textureHeight * 3, 0);
     glBindTexture(GL_TEXTURE_2D, waterfallTexture);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, textureWidth, textureHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, blank.data());
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, textureWidth, textureHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, waterfallTexturePixels.data());
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
@@ -657,15 +656,8 @@ void MyWaterfallWidget::resizeWaterfallTexturePreserve(int w, int h) {
     const int oldWidth = textureWidth;
     const int oldHeight = textureHeight;
     const int oldWriteRow = waterfallWriteRow;
-    std::vector<unsigned char> oldPixels(static_cast<size_t>(oldWidth) * oldHeight * 3, 0);
-
-    glBindTexture(GL_TEXTURE_2D, waterfallTexture);
-    glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    while (glGetError() != GL_NO_ERROR) {
-    }
-    glGetTexImage(GL_TEXTURE_2D, 0, GL_RGB, GL_UNSIGNED_BYTE, oldPixels.data());
-    if (glGetError() != GL_NO_ERROR) {
-        glBindTexture(GL_TEXTURE_2D, 0);
+    const size_t oldPixelBytes = static_cast<size_t>(oldWidth) * oldHeight * 3;
+    if (waterfallTexturePixels.size() != oldPixelBytes) {
         resetWaterfallTexture(newWidth, newHeight);
         return;
     }
@@ -678,21 +670,23 @@ void MyWaterfallWidget::resizeWaterfallTexturePreserve(int w, int h) {
             const int sourceX = std::min(oldWidth - 1, static_cast<int>((static_cast<long long>(x) * oldWidth) / newWidth));
             const size_t sourceIndex = (static_cast<size_t>(sourceRow) * oldWidth + sourceX) * 3;
             const size_t destIndex = (static_cast<size_t>(y) * newWidth + x) * 3;
-            resized[destIndex + 0] = oldPixels[sourceIndex + 0];
-            resized[destIndex + 1] = oldPixels[sourceIndex + 1];
-            resized[destIndex + 2] = oldPixels[sourceIndex + 2];
+            resized[destIndex + 0] = waterfallTexturePixels[sourceIndex + 0];
+            resized[destIndex + 1] = waterfallTexturePixels[sourceIndex + 1];
+            resized[destIndex + 2] = waterfallTexturePixels[sourceIndex + 2];
         }
     }
 
     textureWidth = newWidth;
     textureHeight = newHeight;
     waterfallWriteRow = 0;
+    waterfallTexturePixels = std::move(resized);
+    glBindTexture(GL_TEXTURE_2D, waterfallTexture);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, textureWidth, textureHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, resized.data());
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, textureWidth, textureHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, waterfallTexturePixels.data());
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
@@ -742,7 +736,7 @@ void MyWaterfallWidget::setData(const std::vector<float> &sourceXData,
         if (!validFrame) {
             pixelFrequencyData.clear();
             pixelLevelData.clear();
-            pendingTextureLine = false;
+            pendingTextureLine = !pendingTextureLines.empty();
         } else {
             if (pixelMaxData.size() != static_cast<std::size_t>(lineWidth)) {
                 pixelMaxData.resize(static_cast<std::size_t>(lineWidth));
@@ -835,7 +829,9 @@ void MyWaterfallWidget::setData(const std::vector<float> &sourceXData,
                                                this->levelMax,
                                                rowsPerFrame);
             }
-            pendingTextureLine = true;
+            queueCurrentTextureLine();
+            ++waterfallFftFramesSinceRateUpdate;
+            waterfallRowsSinceRateUpdate += static_cast<quint64>((std::max)(1, rowsPerFrame));
         }
 
         if (!updateQueued) {
@@ -882,8 +878,13 @@ void MyWaterfallWidget::setFpsOverlayEnabled(bool enabled) {
     }
     fpsOverlayEnabled = enabled;
     fpsElapsedTimer.invalidate();
+    waterfallRowsElapsedTimer.invalidate();
     fpsFrameCount = 0;
     displayedFps = 0.0;
+    waterfallFftFramesSinceRateUpdate = 0;
+    displayedWaterfallFftFramesPerSecond = 0.0;
+    waterfallRowsSinceRateUpdate = 0;
+    displayedWaterfallRowsPerSecond = 0.0;
     if (fpsOverlayLabel) {
         fpsOverlayLabel->setText(QStringLiteral("FPS --"));
         fpsOverlayLabel->adjustSize();
@@ -1465,11 +1466,27 @@ void MyWaterfallWidget::clearData() {
         pixelLevelData.clear();
         fftLength = 0;
         std::fill(lineData.begin(), lineData.end(), 0);
+        pendingTextureLines.clear();
         pendingTextureLine = false;
         textureClearRequested = true;
         waterfall3DRenderer->clear();
     }
     update();
+}
+
+void MyWaterfallWidget::queueCurrentTextureLine() {
+    if (lineData.empty()) {
+        return;
+    }
+    const int effectiveHeight = (std::max)(1, textureHeight > 0 ? textureHeight : height());
+    const int effectiveRows = (std::clamp)(rowsPerFrame, 1, effectiveHeight);
+    const std::size_t maximumPendingLines = static_cast<std::size_t>(
+        (std::clamp)(effectiveHeight / effectiveRows, 1, 512));
+    while (pendingTextureLines.size() >= maximumPendingLines) {
+        pendingTextureLines.pop_front();
+    }
+    pendingTextureLines.push_back(lineData);
+    pendingTextureLine = true;
 }
 
 void MyWaterfallWidget::uploadPendingTextureLine() {
@@ -1480,45 +1497,73 @@ void MyWaterfallWidget::uploadPendingTextureLine() {
     if (texWidth != textureWidth || texHeight != textureHeight) {
         resizeWaterfallTexturePreserve(texWidth, texHeight);
     }
-    if (!pendingTextureLine || lineData.empty()) {
+    if (!pendingTextureLine || pendingTextureLines.empty()) {
+        pendingTextureLine = false;
         return;
     }
 
     glBindTexture(GL_TEXTURE_2D, waterfallTexture);
     const int rowsToWrite = (std::clamp)(rowsPerFrame, 1, (std::max)(1, textureHeight));
-    if (rowsToWrite <= 1) {
-        waterfallWriteRow = (waterfallWriteRow + textureHeight - 1) % textureHeight;
-        glTexSubImage2D(GL_TEXTURE_2D,
-                        0,
-                        0,
-                        waterfallWriteRow,
-                        textureWidth,
-                        1,
-                        GL_RGB,
-                        GL_UNSIGNED_BYTE,
-                        lineData.data());
-    } else {
-        const std::size_t rowBytes = static_cast<std::size_t>(textureWidth) * 3U;
+    const std::size_t maximumLines = static_cast<std::size_t>((std::max)(1, textureHeight / rowsToWrite));
+    while (pendingTextureLines.size() > maximumLines) {
+        pendingTextureLines.pop_front();
+    }
+
+    const std::size_t rowBytes = static_cast<std::size_t>(textureWidth) * 3U;
+    std::vector<unsigned char> resizedLine;
+    while (!pendingTextureLines.empty()) {
+        std::vector<unsigned char> queuedLine = std::move(pendingTextureLines.front());
+        pendingTextureLines.pop_front();
+        const std::vector<unsigned char> *sourceLine = &queuedLine;
+        if (queuedLine.size() != rowBytes) {
+            const int sourceWidth = static_cast<int>(queuedLine.size() / 3U);
+            resizedLine.assign(rowBytes, 0);
+            if (sourceWidth > 0) {
+                for (int x = 0; x < textureWidth; ++x) {
+                    const int sourceX = (std::min)(sourceWidth - 1,
+                        static_cast<int>((static_cast<long long>(x) * sourceWidth) / textureWidth));
+                    const std::size_t sourceOffset = static_cast<std::size_t>(sourceX) * 3U;
+                    const std::size_t destinationOffset = static_cast<std::size_t>(x) * 3U;
+                    resizedLine[destinationOffset] = queuedLine[sourceOffset];
+                    resizedLine[destinationOffset + 1] = queuedLine[sourceOffset + 1];
+                    resizedLine[destinationOffset + 2] = queuedLine[sourceOffset + 2];
+                }
+            }
+            sourceLine = &resizedLine;
+        }
+
+        if (rowsToWrite <= 1) {
+            waterfallWriteRow = (waterfallWriteRow + textureHeight - 1) % textureHeight;
+            const std::size_t destinationOffset = static_cast<std::size_t>(waterfallWriteRow) * rowBytes;
+            std::copy(sourceLine->begin(), sourceLine->end(),
+                      waterfallTexturePixels.begin() + static_cast<std::ptrdiff_t>(destinationOffset));
+            glTexSubImage2D(GL_TEXTURE_2D,
+                            0,
+                            0,
+                            waterfallWriteRow,
+                            textureWidth,
+                            1,
+                            GL_RGB,
+                            GL_UNSIGNED_BYTE,
+                            sourceLine->data());
+            continue;
+        }
+
         const std::size_t uploadBytes = rowBytes * static_cast<std::size_t>(rowsToWrite);
         if (textureUploadRows.size() != uploadBytes) {
             textureUploadRows.resize(uploadBytes);
         }
-        const std::size_t copyBytes = (std::min)(rowBytes, lineData.size());
         for (int row = 0; row < rowsToWrite; ++row) {
             auto rowBegin = textureUploadRows.begin() + static_cast<std::ptrdiff_t>(rowBytes * row);
-            std::copy(lineData.begin(),
-                      lineData.begin() + static_cast<std::ptrdiff_t>(copyBytes),
-                      rowBegin);
-            if (copyBytes < rowBytes) {
-                std::fill(rowBegin + static_cast<std::ptrdiff_t>(copyBytes),
-                          rowBegin + static_cast<std::ptrdiff_t>(rowBytes),
-                          0);
-            }
+            std::copy(sourceLine->begin(), sourceLine->end(), rowBegin);
         }
 
         const int startRow = (waterfallWriteRow + textureHeight - rowsToWrite) % textureHeight;
         waterfallWriteRow = startRow;
         const int firstRunRows = (std::min)(rowsToWrite, textureHeight - startRow);
+        std::copy_n(textureUploadRows.begin(),
+                    static_cast<std::ptrdiff_t>(rowBytes * static_cast<std::size_t>(firstRunRows)),
+                    waterfallTexturePixels.begin() + static_cast<std::ptrdiff_t>(rowBytes * static_cast<std::size_t>(startRow)));
         glTexSubImage2D(GL_TEXTURE_2D,
                         0,
                         0,
@@ -1530,6 +1575,9 @@ void MyWaterfallWidget::uploadPendingTextureLine() {
                         textureUploadRows.data());
         const int wrappedRows = rowsToWrite - firstRunRows;
         if (wrappedRows > 0) {
+            std::copy_n(textureUploadRows.begin() + static_cast<std::ptrdiff_t>(rowBytes * static_cast<std::size_t>(firstRunRows)),
+                        static_cast<std::ptrdiff_t>(rowBytes * static_cast<std::size_t>(wrappedRows)),
+                        waterfallTexturePixels.begin());
             glTexSubImage2D(GL_TEXTURE_2D,
                             0,
                             0,
@@ -1574,7 +1622,7 @@ void MyWaterfallWidget::computeLineData() {
                             sensitivityFactor,
                             &lineData[static_cast<std::size_t>(x) * 3]);
     }
-    pendingTextureLine = true;
+    queueCurrentTextureLine();
     if (!updateQueued) {
         updateQueued = true;
         shouldScheduleUpdate = true;
@@ -1603,6 +1651,7 @@ void MyWaterfallWidget::paintGL() {
         if (textureClearRequested) {
             ensureLineBuffer();
             std::fill(lineData.begin(), lineData.end(), 0);
+            pendingTextureLines.clear();
             resetWaterfallTexture(width(), height());
             pendingTextureLine = false;
             textureClearRequested = false;
@@ -1952,6 +2001,10 @@ void MyWaterfallWidget::updateFpsCounter() {
         fpsElapsedTimer.start();
         fpsFrameCount = 0;
     }
+    if (!waterfallRowsElapsedTimer.isValid()) {
+        waterfallRowsElapsedTimer.start();
+        waterfallRowsSinceRateUpdate = 0;
+    }
     ++fpsFrameCount;
     const qint64 elapsedMs = fpsElapsedTimer.elapsed();
     if (elapsedMs >= 500) {
@@ -1959,8 +2012,23 @@ void MyWaterfallWidget::updateFpsCounter() {
                        static_cast<double>(elapsedMs);
         fpsFrameCount = 0;
         fpsElapsedTimer.restart();
+        const qint64 rowElapsedMs = waterfallRowsElapsedTimer.elapsed();
+        if (rowElapsedMs > 0) {
+            displayedWaterfallFftFramesPerSecond =
+                static_cast<double>(waterfallFftFramesSinceRateUpdate) * 1000.0 /
+                static_cast<double>(rowElapsedMs);
+            displayedWaterfallRowsPerSecond =
+                static_cast<double>(waterfallRowsSinceRateUpdate) * 1000.0 /
+                static_cast<double>(rowElapsedMs);
+        }
+        waterfallFftFramesSinceRateUpdate = 0;
+        waterfallRowsSinceRateUpdate = 0;
+        waterfallRowsElapsedTimer.restart();
         if (fpsOverlayLabel) {
-            fpsOverlayLabel->setText(QStringLiteral("FPS %1").arg(displayedFps, 0, 'f', 1));
+            fpsOverlayLabel->setText(QStringLiteral("FPS %1 | FFT/s %2 | rows/s %3")
+                                         .arg(displayedFps, 0, 'f', 1)
+                                         .arg(displayedWaterfallFftFramesPerSecond, 0, 'f', 0)
+                                         .arg(displayedWaterfallRowsPerSecond, 0, 'f', 0));
             fpsOverlayLabel->adjustSize();
             positionInfoOverlays();
             fpsOverlayLabel->raise();

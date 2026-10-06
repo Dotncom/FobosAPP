@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(FobosAPP VERSION 4.8.1)
+project(FobosAPP VERSION 4.8.2)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -179,6 +179,8 @@ set(SOURCES
     src/digital/digitaldecoder.h
     src/backends/bladerfbackend.cpp
     src/backends/bladerfbackend.h
+    src/backends/hackrfbackend.cpp
+    src/backends/hackrfbackend.h
     src/ui/frequencycontrol.cpp
     src/ui/frequencycontrol.h
     src/ui/finetunewidget.cpp
@@ -213,6 +215,10 @@ set(SOURCES
     src/research/researchanalysisdialog.h
     src/research/zerospandialog.cpp
     src/research/zerospandialog.h
+    src/research/zoomspectrumprocessor.cpp
+    src/research/zoomspectrumprocessor.h
+    src/research/zoomspectrumdialog.cpp
+    src/research/zoomspectrumdialog.h
     src/audio/playbackmanager.cpp
     src/audio/playbackmanager.h
     src/presets/presethelpers.cpp
@@ -280,6 +286,10 @@ if(WIN32)
 endif()
 
 add_executable(FobosAPP ${SOURCES})
+
+if(MSVC)
+    target_compile_options(FobosAPP PRIVATE /utf-8)
+endif()
 
 target_compile_definitions(FobosAPP PRIVATE FOBOSAPP_VERSION="${PROJECT_VERSION}")
 

@@ -163,6 +163,8 @@ QJsonObject YourClassName::recordingScientificSnapshot(const QString &phase) con
         backend = QStringLiteral("soapysdr");
     } else if (isBladeRfNativeSelected()) {
         backend = QStringLiteral("bladerf-native");
+    } else if (isHackRfNativeSelected()) {
+        backend = QStringLiteral("hackrf-native");
     } else {
         receiverVariant = selectedFobosDeviceInfo().apiKind == FobosApiKind::Agile
                               ? QStringLiteral("agile")
@@ -947,7 +949,9 @@ void YourClassName::onPlaybackStarted(const QString &filePath, PlaybackManager::
         if (info.hasScalePercent) {
             const double recordedScale = (std::max)(MIN_SCALE_PERCENT / 20.0,
                                                      info.scalePercent);
-            additionalScaleDivisor = recordedScale < MIN_SCALE_PERCENT ? 20 : 1;
+            additionalScaleDivisor = recordedScale < MIN_SCALE_PERCENT
+                                         ? ADDITIONAL_SCALE_DIVISOR_MAX
+                                         : 1;
             currentScale = std::clamp(recordedScale * additionalScaleDivisor,
                                       static_cast<double>(minScale) / 10.0,
                                       static_cast<double>(maxScale) / 10.0);
@@ -958,7 +962,9 @@ void YourClassName::onPlaybackStarted(const QString &filePath, PlaybackManager::
                 (static_cast<double>(info.sampleRate) / info.radioSettings.sampleRate) * 100.0;
             const double recordedScale = (std::max)(MIN_SCALE_PERCENT / 20.0,
                                                      channelScalePercent);
-            additionalScaleDivisor = recordedScale < MIN_SCALE_PERCENT ? 20 : 1;
+            additionalScaleDivisor = recordedScale < MIN_SCALE_PERCENT
+                                         ? ADDITIONAL_SCALE_DIVISOR_MAX
+                                         : 1;
             currentScale = std::clamp(recordedScale * additionalScaleDivisor,
                                       static_cast<double>(minScale) / 10.0,
                                       static_cast<double>(maxScale) / 10.0);

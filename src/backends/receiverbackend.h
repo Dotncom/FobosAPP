@@ -33,7 +33,8 @@ enum class ReceiverBackendStreamKind {
     RtlSdrNative,
     RtlTcp,
     SoapySdr,
-    BladeRfNative
+    BladeRfNative,
+    HackRfNative
 };
 
 struct ReceiverBackendDeviceInfo {
@@ -82,6 +83,11 @@ struct ReceiverStreamDescriptor {
     int rtlSdrNativeDeviceIndex = 0;
     int soapySdrDeviceIndex = 0;
     int bladeRfNativeDeviceIndex = 0;
+    int hackRfNativeDeviceIndex = 0;
+    int hackRfLnaGainDb = 16;
+    int hackRfVgaGainDb = 20;
+    bool hackRfAmpEnabled = false;
+    bool hackRfBiasTeeEnabled = false;
     int rtlTcpTunerGainTenthsDb = -1;
     bool rtlTcpAgc = true;
     bool syncReader = false;

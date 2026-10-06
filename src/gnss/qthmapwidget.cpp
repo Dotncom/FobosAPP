@@ -1,4 +1,5 @@
 #include "qthmapwidget.h"
+#include "diagnosticlogging.h"
 
 #include <QDir>
 #include <QDebug>
@@ -787,12 +788,16 @@ void QthMapWidget::finishOnlineTileRequest(const QString &url, const QByteArray 
         } else {
             lastOnlineError = QStringLiteral("invalid image response");
             onlineTileErrors.insert(url, lastOnlineError);
-            qWarning() << "[QTH map] online tile invalid image" << url;
+            if (fobosVerboseLoggingEnabled()) {
+                qDebug() << "[QTH map] online tile invalid image" << url;
+            }
         }
     } else {
         lastOnlineError = error;
         onlineTileErrors.insert(url, lastOnlineError);
-        qWarning() << "[QTH map] online tile failed" << error << url;
+        if (fobosVerboseLoggingEnabled()) {
+            qDebug() << "[QTH map] online tile failed" << error << url;
+        }
     }
     update();
 }

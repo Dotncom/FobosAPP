@@ -4,8 +4,10 @@
 #include "diagnosticlogging.h"
 #include "bladerfbackend.h"
 #include "fobosbackend.h"
+#include "hackrfbackend.h"
 #include "rtlsdrbackend.h"
 #include "soapysdrbackend.h"
+#include "zoomspectrumprocessor.h"
 
 #include <algorithm>
 #include <limits>
@@ -62,6 +64,9 @@ constexpr int BLADERF_NATIVE_ERR_OPEN = -15101;
 constexpr int BLADERF_NATIVE_ERR_CONFIGURE = -15102;
 constexpr int BLADERF_NATIVE_ERR_STREAM = -15103;
 constexpr uint32_t BLADERF_SYNC_TIMEOUT_MS = 250;
+constexpr int HACKRF_NATIVE_ERR_OPEN = -16101;
+constexpr int HACKRF_NATIVE_ERR_CONFIGURE = -16102;
+constexpr int HACKRF_NATIVE_ERR_STREAM = -16103;
 
 bool writeRtlTcpCommand(QTcpSocket &socket, quint8 command, quint32 parameter) {
     char packet[5] = {};
@@ -227,6 +232,7 @@ DataProcessor::DataProcessor(QObject *parent)
       activeBackendId(QStringLiteral("fobos-standard")),
       activeBackendName(QStringLiteral("Fobos SDR")),
       activeStreamDescriptor(),
+      zoomProcessor(std::make_shared<ZoomSpectrumProcessor>()),
       totalCallbackCounter(0) {
 }
 
@@ -402,6 +408,12 @@ void DataProcessor::run() {
         readBlockSamples = asyncBlockSamplesForRate(sampleRate);
         activeSyncMode = false;
         runBladeRfNativeReader(readerStream, readBlockSamples);
+        return;
+    }
+    if (readerStreamKind == ReceiverBackendStreamKind::HackRfNative) {
+        readBlockSamples = asyncBlockSamplesForRate(sampleRate);
+        activeSyncMode = false;
+        runHackRfNativeReader(readerStream, readBlockSamples);
         return;
     }
     if (readerApiKind == FobosApiKind::Agile && requestedAgileScanEnabled.load()) {
@@ -1260,6 +1272,149 @@ void DataProcessor::runBladeRfNativeReader(const ReceiverStreamDescriptor &strea
     running = false;
 }
 
+void DataProcessor::runHackRfNativeReader(const ReceiverStreamDescriptor &stream, uint32_t blockSamples) {
+    Q_UNUSED(blockSamples)
+
+    QString loadedPath;
+    QString errorMessage;
+    if (!hackRfLibraryAvailable(&loadedPath, &errorMessage)) {
+        qWarning() << "[HackRF] native library unavailable" << errorMessage;
+        emit readerFailed(HACKRF_NATIVE_ERR_OPEN, !running.load());
+        running = false;
+        return;
+    }
+
+    void *hackRfDevice = nullptr;
+    int result = openHackRfDeviceSafely(&hackRfDevice, stream.hackRfNativeDeviceIndex);
+    qDebug() << "[HackRF] open"
+             << "index" << stream.hackRfNativeDeviceIndex
+             << "result" << result
+             << "device" << hackRfDevice
+             << "library" << loadedPath;
+    if (result != 0 || !hackRfDevice) {
+        qWarning() << "[HackRF] open failed" << hackRfLastErrorMessage();
+        emit readerFailed(HACKRF_NATIVE_ERR_OPEN, !running.load());
+        running = false;
+        return;
+    }
+
+    activeDevice = hackRfDevice;
+    const double requestedRate = stream.sampleRateHz > 0.0
+                                     ? stream.sampleRateHz
+                                     : requestedSampleRate.load();
+    const double sampleRate = (std::clamp)(requestedRate, 2000000.0, 20000000.0);
+    const double logicalCenterFrequency = requestedCenterFrequency.load() > 0.0
+                                              ? requestedCenterFrequency.load()
+                                              : stream.centerFrequencyHz;
+    const double hardwareCenterFrequency = logicalCenterFrequency + frequencyCalibrationOffsetHz.load();
+    const std::uint64_t centerFrequencyHz = static_cast<std::uint64_t>(
+        (std::clamp)(hardwareCenterFrequency, 1000000.0, 6000000000.0));
+    const std::uint32_t sampleRateHz = static_cast<std::uint32_t>(sampleRate);
+    const std::uint32_t bandwidthHz = recommendedHackRfBandwidth(sampleRateHz);
+
+    bool configured = true;
+    result = setHackRfSampleRateSafely(hackRfDevice, sampleRate);
+    qDebug() << "[HackRF] set sample rate" << sampleRate << "result" << result;
+    configured = configured && result == 0;
+    result = setHackRfBandwidthSafely(hackRfDevice, bandwidthHz);
+    qDebug() << "[HackRF] set baseband bandwidth" << bandwidthHz << "result" << result;
+    configured = configured && result == 0;
+    result = setHackRfCenterFrequencySafely(hackRfDevice, centerFrequencyHz);
+    qDebug() << "[HackRF] set center frequency" << centerFrequencyHz << "result" << result;
+    configured = configured && result == 0;
+    result = setHackRfAmpEnabledSafely(hackRfDevice, stream.hackRfAmpEnabled);
+    qDebug() << "[HackRF] RF amp" << stream.hackRfAmpEnabled << "result" << result;
+    configured = configured && result == 0;
+    result = setHackRfLnaGainSafely(hackRfDevice,
+                                    static_cast<std::uint32_t>((std::max)(0, stream.hackRfLnaGainDb)));
+    qDebug() << "[HackRF] LNA gain" << stream.hackRfLnaGainDb << "result" << result;
+    configured = configured && result == 0;
+    result = setHackRfVgaGainSafely(hackRfDevice,
+                                    static_cast<std::uint32_t>((std::max)(0, stream.hackRfVgaGainDb)));
+    qDebug() << "[HackRF] VGA gain" << stream.hackRfVgaGainDb << "result" << result;
+    configured = configured && result == 0;
+    result = setHackRfBiasTeeEnabledSafely(hackRfDevice, stream.hackRfBiasTeeEnabled);
+    qDebug() << "[HackRF] bias tee" << stream.hackRfBiasTeeEnabled << "result" << result;
+    configured = configured && result == 0;
+
+    if (!running.load()) {
+        closeHackRfDeviceSafely(hackRfDevice);
+        activeDevice = nullptr;
+        return;
+    }
+    if (!configured) {
+        qWarning() << "[HackRF] configure failed" << hackRfLastErrorMessage();
+        closeHackRfDeviceSafely(hackRfDevice);
+        activeDevice = nullptr;
+        emit readerFailed(HACKRF_NATIVE_ERR_CONFIGURE, !running.load());
+        running = false;
+        return;
+    }
+
+    struct RxContext {
+        DataProcessor *processor = nullptr;
+        std::vector<float> floatIq;
+    } context;
+    context.processor = this;
+
+    IqBuffer::setSampleRateEstimate(sampleRate);
+    asyncMeasuredSamples = 0;
+    asyncCallbackCounter = 0;
+    asyncRateReportCount = 0;
+    asyncRateTimer.restart();
+
+    result = startHackRfRxSafely(
+        hackRfDevice,
+        [](HackRfTransfer *transfer) -> int {
+            if (!transfer || !transfer->rxContext || !transfer->buffer || transfer->validLength < 2) {
+                return 0;
+            }
+            auto *rx = static_cast<RxContext*>(transfer->rxContext);
+            if (!rx->processor || !rx->processor->running.load()) {
+                return -1;
+            }
+            const int validBytes = transfer->validLength - (transfer->validLength % 2);
+            const std::uint32_t sampleCount = static_cast<std::uint32_t>(validBytes / 2);
+            rx->floatIq.resize(static_cast<std::size_t>(validBytes));
+            for (int index = 0; index < validBytes; ++index) {
+                const auto value = static_cast<std::int8_t>(transfer->buffer[index]);
+                rx->floatIq[static_cast<std::size_t>(index)] = static_cast<float>(value) / 128.0f;
+            }
+            rx->processor->handleData(rx->floatIq.data(), sampleCount);
+            return rx->processor->running.load() ? 0 : -1;
+        },
+        &context);
+    qDebug() << "[HackRF] async RX start"
+             << "result" << result
+             << "sampleRate" << sampleRate
+             << "center" << centerFrequencyHz
+             << "bandwidth" << bandwidthHz;
+    if (result != 0) {
+        qWarning() << "[HackRF] RX start failed" << hackRfLastErrorMessage();
+        closeHackRfDeviceSafely(hackRfDevice);
+        activeDevice = nullptr;
+        emit readerFailed(HACKRF_NATIVE_ERR_STREAM, !running.load());
+        running = false;
+        return;
+    }
+
+    while (running.load() && isHackRfStreamingSafely(hackRfDevice)) {
+        QThread::msleep(10);
+    }
+
+    const bool stoppedByRequest = !running.load();
+    if (isHackRfStreamingSafely(hackRfDevice)) {
+        stopHackRfRxSafely(hackRfDevice);
+    }
+    qDebug() << "[HackRF] async RX end" << "stoppedByRequest" << stoppedByRequest;
+    closeHackRfDeviceSafely(hackRfDevice);
+    activeDevice = nullptr;
+    if (!stoppedByRequest) {
+        emit readerFailed(HACKRF_NATIVE_ERR_STREAM, false);
+    }
+    running = false;
+}
+
 void DataProcessor::handleUnsigned8IqData(const unsigned char *buf, uint32_t byteCount, const char *readerMode) {
     if (!running.load() || !buf || byteCount < 2) {
         return;
@@ -1279,6 +1434,12 @@ void DataProcessor::handleUnsigned8IqData(const unsigned char *buf, uint32_t byt
     asyncMeasuredSamples += sampleCount;
     const bool queueAudioBlocks = requestedQueueAudioBlocks.load();
     const bool publishIqSnapshot = requestedPublishIqSnapshot.load();
+    if (zoomProcessor && zoomProcessor->enabled()) {
+        zoomProcessor->consumeIq(floatBuffer.data(),
+                                 sampleCount,
+                                 requestedSampleRate.load(),
+                                 requestedCenterFrequency.load());
+    }
     if (queueAudioBlocks || publishIqSnapshot) {
         if (!IqBuffer::publish(floatBuffer.data(),
                                floatBuffer.size(),
@@ -1345,6 +1506,15 @@ void DataProcessor::handleData(float *buf, uint32_t buf_length, int agileScanInd
         ++asyncCallbackCounter;
         asyncMeasuredSamples += buf_length;
         return;
+    }
+    if (zoomProcessor && zoomProcessor->enabled()) {
+        const double blockCenterHz = blockMetadata.valid
+                                         ? blockMetadata.centerFrequencyHz
+                                         : requestedCenterFrequency.load();
+        zoomProcessor->consumeIq(buf,
+                                 buf_length,
+                                 requestedSampleRate.load(),
+                                 blockCenterHz);
     }
     if (queueAudioBlocks || publishIqSnapshot) {
         if (!IqBuffer::publish(buf,
@@ -2250,6 +2420,24 @@ bool DataProcessor::retuneCenterFrequency(double centerFrequencyHz) {
                  << "result" << result;
         return result == 0;
     }
+    if (streamKind == ReceiverBackendStreamKind::HackRfNative) {
+        void *hackRfDevice = activeDevice.load();
+        if (!running.load() || !hackRfDevice) {
+            qDebug() << "[HackRF] live center retune requested without active handle"
+                     << "frequency" << centerFrequencyHz
+                     << "running" << running.load()
+                     << "device" << hackRfDevice;
+            return false;
+        }
+        const std::uint64_t frequencyHz = static_cast<std::uint64_t>(
+            (std::clamp)(hardwareFrequencyHz, 1000000.0, 6000000000.0));
+        const int result = setHackRfCenterFrequencySafely(hackRfDevice, frequencyHz);
+        qDebug() << "[HackRF] live center retune"
+                 << "logical" << centerFrequencyHz
+                 << "frequency" << frequencyHz
+                 << "result" << result;
+        return result == 0;
+    }
     if (streamKind != ReceiverBackendStreamKind::RtlSdrNative) {
         return false;
     }
@@ -2343,6 +2531,11 @@ void DataProcessor::requestStop() {
                     }
                     if (fobosVerboseLoggingEnabled()) {
                         qDebug() << "[DataProcessor] bladeRF stop requested; sync_rx loop will exit after timeout";
+                    }
+                } else if (activeStreamKind == ReceiverBackendStreamKind::HackRfNative) {
+                    const int result = stopHackRfRxSafely(readerDevice);
+                    if (fobosVerboseLoggingEnabled() || result != 0) {
+                        qDebug() << "[DataProcessor] HackRF async stop" << "result" << result;
                     }
                 } else {
                     bool expected = false;

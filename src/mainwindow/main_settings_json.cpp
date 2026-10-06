@@ -317,7 +317,9 @@ void YourClassName::applySettingsFromJson(const QJsonObject &settingsJson, bool 
         (std::clamp)(readInt("dmrPrivacyFrameOffset", pendingSettings.dmrPrivacyFrameOffset), 0, 17);
     currentScale = readDouble("scalePercent", currentScale);
     additionalScaleDivisor = (std::clamp)(
-        readInt("additionalScaleDivisor", additionalScaleDivisor), 1, 20);
+        readInt("additionalScaleDivisor", additionalScaleDivisor),
+        1,
+        ADDITIONAL_SCALE_DIVISOR_MAX);
     agileScanEnabled = readBool("agileScanEnabled", agileScanEnabled);
     agileScanAutoStepSampleRate =
         readBool("agileScanAutoStepSampleRate", agileScanAutoStepSampleRate);

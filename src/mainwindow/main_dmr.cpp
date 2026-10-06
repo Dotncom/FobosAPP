@@ -1,6 +1,7 @@
 #include "main.h"
 
 #include "appconstants.h"
+#include "diagnosticlogging.h"
 #include "dmrbackendpaths.h"
 #include "dmrprivacyutils.h"
 #include "dsdneobridge.h"
@@ -251,9 +252,11 @@ void YourClassName::processDigitalAudioFrame(const QByteArray &pcmData, int samp
         if (pendingDmrDecoderPcm.size() > dmrPcmMaxBufferedBytes) {
             const int bytesToDrop = pendingDmrDecoderPcm.size() - dmrPcmChunkBytes;
             pendingDmrDecoderPcm.remove(0, bytesToDrop);
-            qWarning() << "[Digital] trimming DMR PCM input buffer"
-                       << "droppedBytes" << bytesToDrop
-                       << "keptBytes" << pendingDmrDecoderPcm.size();
+            if (fobosVerboseLoggingEnabled()) {
+                qDebug() << "[Digital] trimming DMR PCM input buffer"
+                         << "droppedBytes" << bytesToDrop
+                         << "keptBytes" << pendingDmrDecoderPcm.size();
+            }
         }
         if (pendingDmrDecoderPcm.size() < dmrPcmChunkBytes) {
             return;
@@ -270,13 +273,13 @@ void YourClassName::processDigitalAudioFrame(const QByteArray &pcmData, int samp
     if (queuedBefore >= maxQueuedFrames) {
         pendingDigitalDecoderFrames.fetch_sub(1, std::memory_order_relaxed);
         const int dropped = droppedDigitalDecoderFramesSinceLog.fetch_add(1, std::memory_order_relaxed) + 1;
-        if (dropped == 1 || dropped % 50 == 0) {
-            qWarning() << "[Digital] dropping stale PCM frame"
-                       << "mode" << settings.modulationType
-                       << "queued" << queuedBefore
-                       << "limit" << maxQueuedFrames
-                       << "dropped" << dropped
-                       << "bytes" << decoderPcmData.size();
+        if (fobosVerboseLoggingEnabled() && (dropped == 1 || dropped % 50 == 0)) {
+            qDebug() << "[Digital] dropping stale PCM frame"
+                     << "mode" << settings.modulationType
+                     << "queued" << queuedBefore
+                     << "limit" << maxQueuedFrames
+                     << "dropped" << dropped
+                     << "bytes" << decoderPcmData.size();
         }
         return;
     }

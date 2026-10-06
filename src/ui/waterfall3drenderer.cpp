@@ -36,12 +36,7 @@ void Waterfall3DRenderer::appendRow(const std::vector<float> &levels,
     const int outputColumns = (std::max)(2, sourceColumns / resolutionDivisor);
     if (!historyRows.empty() &&
         static_cast<int>(historyRows.back().size()) != outputColumns) {
-        historyRows.clear();
-        selectedSliceColumn = -1;
-        frequencySliceActive = false;
-        selectedSpectrumRow = -1;
-        spectrumSliceActive = false;
-        resetGpuSurfaceData();
+        resampleHistoryColumns(outputColumns);
     }
     HistoryRow row(static_cast<std::size_t>(outputColumns));
 
@@ -116,6 +111,71 @@ void Waterfall3DRenderer::appendRow(const std::vector<float> &levels,
     if (previousRowCount != static_cast<int>(historyRows.size())) {
         gpuMeshDirty = true;
     }
+}
+
+void Waterfall3DRenderer::resampleHistoryColumns(int outputColumns) {
+    outputColumns = (std::max)(2, outputColumns);
+    if (historyRows.empty() || historyRows.front().empty()) {
+        return;
+    }
+
+    const int previousColumns = static_cast<int>(historyRows.front().size());
+    if (previousColumns == outputColumns) {
+        return;
+    }
+
+    auto resampleRow = [outputColumns](const HistoryRow &source) {
+        HistoryRow destination(static_cast<std::size_t>(outputColumns));
+        if (source.empty()) {
+            return destination;
+        }
+        if (source.size() == 1U) {
+            std::fill(destination.begin(), destination.end(), source.front());
+            return destination;
+        }
+
+        const double sourceLast = static_cast<double>(source.size() - 1U);
+        const double destinationLast = static_cast<double>((std::max)(1, outputColumns - 1));
+        for (int column = 0; column < outputColumns; ++column) {
+            const double sourcePosition = static_cast<double>(column) * sourceLast / destinationLast;
+            const int first = (std::clamp)(static_cast<int>(std::floor(sourcePosition)),
+                                           0,
+                                           static_cast<int>(source.size()) - 1);
+            const int second = (std::min)(first + 1, static_cast<int>(source.size()) - 1);
+            const float ratio = static_cast<float>(sourcePosition - static_cast<double>(first));
+            const VertexSample &a = source[static_cast<std::size_t>(first)];
+            const VertexSample &b = source[static_cast<std::size_t>(second)];
+            VertexSample &sample = destination[static_cast<std::size_t>(column)];
+            sample.height = a.height + (b.height - a.height) * ratio;
+            sample.levelDb = a.levelDb + (b.levelDb - a.levelDb) * ratio;
+            for (int channel = 0; channel < 3; ++channel) {
+                const float color = static_cast<float>(a.color[static_cast<std::size_t>(channel)]) +
+                                    (static_cast<float>(b.color[static_cast<std::size_t>(channel)]) -
+                                     static_cast<float>(a.color[static_cast<std::size_t>(channel)])) * ratio;
+                sample.color[static_cast<std::size_t>(channel)] = static_cast<std::uint8_t>(
+                    (std::clamp)(static_cast<int>(std::lround(color)), 0, 255));
+            }
+        }
+        return destination;
+    };
+
+    for (HistoryRow &row : historyRows) {
+        row = resampleRow(row);
+    }
+    for (HistoryRow &row : capturedSpectrumRows) {
+        row = resampleRow(row);
+    }
+    if (selectedSliceColumn >= 0 && previousColumns > 1) {
+        const double ratio = static_cast<double>(selectedSliceColumn) /
+                             static_cast<double>(previousColumns - 1);
+        selectedSliceColumn = (std::clamp)(
+            static_cast<int>(std::lround(ratio * static_cast<double>(outputColumns - 1))),
+            0,
+            outputColumns - 1);
+    }
+    pendingGpuRows.clear();
+    resetGpuSurfaceData();
+    gpuMeshDirty = true;
 }
 
 void Waterfall3DRenderer::clear() {

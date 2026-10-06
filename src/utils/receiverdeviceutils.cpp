@@ -52,6 +52,36 @@ int bladeRfNativeIndexFromComboValue(int value) {
     return BLADERF_NATIVE_DEVICE_INDEX_BASE - value;
 }
 
+int hackRfNativeComboValue(int nativeIndex) {
+    return HACKRF_NATIVE_DEVICE_INDEX_BASE - nativeIndex;
+}
+
+bool isHackRfNativeComboValue(int value) {
+    return value <= HACKRF_NATIVE_DEVICE_INDEX_BASE && value > HACKRF_NATIVE_DEVICE_INDEX_BASE - 10000;
+}
+
+int hackRfNativeIndexFromComboValue(int value) {
+    return HACKRF_NATIVE_DEVICE_INDEX_BASE - value;
+}
+
+bool isKnownHackRfSampleRate(double value) {
+    static const double hackRfRates[] = {
+        2000000.0,
+        4000000.0,
+        8000000.0,
+        10000000.0,
+        12500000.0,
+        16000000.0,
+        20000000.0
+    };
+    for (double rate : hackRfRates) {
+        if (std::abs(value - rate) < 0.5) {
+            return true;
+        }
+    }
+    return false;
+}
+
 int remoteReceiverComboValue(int serverDeviceIndex) {
     return NETWORK_REMOTE_RECEIVER_DEVICE_INDEX_BASE + serverDeviceIndex;
 }

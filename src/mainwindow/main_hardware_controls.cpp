@@ -91,14 +91,19 @@ void YourClassName::settingRange() {
         overallMin = globalFrequency - globalSampleRate / 2.0;
         overallMax = globalFrequency + globalSampleRate / 2.0;
     } else if (globalMode == INPUT_RF) {
-        overallMin = (std::max)(RF_MIN_LISTENING_FREQUENCY,
+        const double receiverMinimum = isHackRfNativeSelected() ? 1000000.0
+                                                                : RF_MIN_LISTENING_FREQUENCY;
+        overallMin = (std::max)(receiverMinimum,
                                 globalFrequency - globalSampleRate / 2.0);
         overallMax = (std::max)(overallMin,
                                 globalFrequency + globalSampleRate / 2.0);
     }
 
     if (listeningFrequencyControl) {
-        const double controlMin = globalMode == INPUT_RF ? RF_MIN_LISTENING_FREQUENCY : overallMin;
+        const double controlMin = globalMode == INPUT_RF
+                                      ? (isHackRfNativeSelected() ? 1000000.0
+                                                                  : RF_MIN_LISTENING_FREQUENCY)
+                                      : overallMin;
         const double controlMax = globalMode == INPUT_RF ? RF_EXPERIMENTAL_MAX_FREQUENCY : overallMax;
         QSignalBlocker blocker(listeningFrequencyControl);
         listeningFrequencyControl->setRangeHz(controlMin, controlMax);

@@ -12,6 +12,7 @@
 #include <QLabel>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QScopedValueRollback>
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QToolButton>
@@ -38,6 +39,10 @@ public:
 } // namespace
 
 void YourClassName::openPresetManager() {
+    if (presetManagerOpen) {
+        return;
+    }
+    QScopedValueRollback<bool> presetManagerGuard(presetManagerOpen, true);
     ensureDefaultFrequencyPresets();
     ensureDefaultBandMarkers();
 
@@ -206,7 +211,7 @@ void YourClassName::openPresetManager() {
         QWidget *page = new QWidget(&dialog);
         QVBoxLayout *pageLayout = new QVBoxLayout(page);
         QTableWidget *table = new QTableWidget(page);
-        table->setColumnCount(5);
+        table->setColumnCount(4);
         table->setHorizontalHeaderLabels({uiText(QStringLiteral("name"), QStringLiteral("Name")),
                                           uiText(QStringLiteral("centers_mhz_plain"), QStringLiteral("Centers MHz")),
                                           uiText(QStringLiteral("dwell_ms"), QStringLiteral("Dwell ms")),
@@ -488,7 +493,7 @@ void YourClassName::openPresetManager() {
         pageLayout->addWidget(calibrationEnabledCheckbox);
 
         QTableWidget *table = new QTableWidget(page);
-        table->setColumnCount(4);
+        table->setColumnCount(5);
         table->setHorizontalHeaderLabels({
             uiText(QStringLiteral("calibration_frequency_mhz"), QStringLiteral("Frequency MHz")),
             uiText(QStringLiteral("calibration_frequency_offset_hz"), QStringLiteral("Frequency correction Hz")),

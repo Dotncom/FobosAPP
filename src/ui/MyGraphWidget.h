@@ -53,6 +53,7 @@ public:
                                 bool showPercentile99,
                                 const QVector<SpectrumScienceMarker> &markers);
     void clearData();
+    bool bandwidthSelection(double &lowHz, double &highHz) const;
 
 signals:
     void scaleChanged(int direction);
@@ -60,6 +61,7 @@ signals:
     void autoTuneRequested(double frequency);
     void panRequested(int deltaPixels, int widthPixels);
     void scienceMarkerRequested(double frequency);
+    void bandwidthSelectionChanged(double lowHz, double highHz);
 
 protected:
     void initializeGL() override;

@@ -129,6 +129,7 @@ private:
     std::vector<std::uint8_t> gpuColorScratch;
 
     void refreshCapturedSpectrumRows();
+    void resampleHistoryColumns(int outputColumns);
     ViewParameters viewParameters(int viewportWidth, int viewportHeight) const;
     bool ensureSurfaceProgram();
     void resetGpuSurfaceData();

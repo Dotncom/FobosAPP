@@ -35,6 +35,7 @@ inline constexpr int RTL_TCP_DEVICE_INDEX = -1000;
 inline constexpr int RTLSDR_NATIVE_DEVICE_INDEX_BASE = -2000;
 inline constexpr int SOAPY_SDR_DEVICE_INDEX = -3000;
 inline constexpr int BLADERF_NATIVE_DEVICE_INDEX_BASE = -4000;
+inline constexpr int HACKRF_NATIVE_DEVICE_INDEX_BASE = -5000;
 inline constexpr int NETWORK_REMOTE_RECEIVER_DEVICE_INDEX_BASE = 100000000;
 inline constexpr int NETWORK_REMOTE_RECEIVER_DEVICE_INDEX_MIN = 90000000;
 inline constexpr int NETWORK_REMOTE_RECEIVER_DEVICE_INDEX_MAX = 110000000;
@@ -111,6 +112,7 @@ inline constexpr int SPECTRUM_UPDATE_MAX_MS = 250;
 inline constexpr int WATERFALL_ROWS_PER_FRAME_MIN = 1;
 inline constexpr int WATERFALL_ROWS_PER_FRAME_DEFAULT = 1;
 inline constexpr int WATERFALL_ROWS_PER_FRAME_MAX = 8;
+inline constexpr int ADDITIONAL_SCALE_DIVISOR_MAX = 100;
 
 inline constexpr double AGILE_RF_LOW_RATE_AUTO_BANDWIDTH_RATIO = 1.00;
 inline constexpr double AGILE_RF_MID_RATE_AUTO_BANDWIDTH_RATIO = 1.00;

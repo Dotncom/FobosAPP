@@ -604,7 +604,9 @@ void YourClassName::applyUiLanguage() {
         additionalScaleDivisorLabel->setText(
             QStringLiteral("%1: 1:%2")
                 .arg(uiText(QStringLiteral("additional_scale"), QStringLiteral("Extra zoom")))
-                .arg((std::clamp)(additionalScaleDivisor, 1, 20)));
+                .arg((std::clamp)(additionalScaleDivisor,
+                                  1,
+                                  ADDITIONAL_SCALE_DIVISOR_MAX)));
     }
     if (contrastLabel) {
         contrastLabel->setText(QStringLiteral("%1: %2").arg(uiText(QStringLiteral("contrast"), QStringLiteral("Contrast"))).arg(contrast));

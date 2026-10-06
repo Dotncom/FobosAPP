@@ -20,6 +20,7 @@ FobosAPP - SDR-програма для Fobos SDR, Fobos Agile, RTL-SDR, rtl_tcp,
 - Подвійний лівий клік по спектру або водоспаду робить те саме автоцентрування.
 - Правий клік по спектру або водоспаду відкриває меню: поставити центр сигналу, поставити край USB/LSB або перенести центральну частоту приймача.
 - Ліве перетягування по спектру показує вимірювання ширини сигналу.
+- Після виділення смуги кнопка Вузький спектр біля Пресетів відкриває окремий детальний аналізатор. Повний опис є нижче у розділі Вузькосмуговий Zoom FFT.
 - Fine tune шкала або круглий регулятор рухає частоту прослуховування малими кроками.
 - F9 працює як тангента запису: утримуйте для запису, відпустіть для зупинки.
 
@@ -47,6 +48,14 @@ FobosAPP - SDR-програма для Fobos SDR, Fobos Agile, RTL-SDR, rtl_tcp,
 - Дослідження відкриває окреме вікно з аналізом гребінок/гармонік, статистикою сигналу, осцилограмою та сузір'ям IQ, автокореляцією і порівнянням двох КХ входів.
 - У HF interference lab кнопка Аналіз відкриває ту саму вкладку завад. Записати еталон фіксує стан «до», після чого таблиця показує зміну рівня кожного піка; аналізатор розділяє до трьох гребінок, оцінює дрейф кроку й амплітуди та показує орієнтовний клас джерела. Це діагностична підказка, а не точна ідентифікація пристрою.
 - Вкладка двох КХ входів використовує сирі HF1/HF2 та показує різницю рівнів, кореляцію, затримку, фазу на частоті прослуховування і орієнтовний потенціал придушення. У RF-режимі пара чисел є квадратурними I/Q, тому порівняння двох входів там навмисно вимкнене.
+
+Вузькосмуговий Zoom FFT
+- Спочатку виділіть потрібну смугу лівим перетягуванням на основному спектрі, потім натисніть Вузький спектр у рядку біля кнопки Пресети.
+- Окреме вікно приймає живий повносмуговий IQ, цифровим змішувачем переносить лише виділену смугу до нуля, фільтрує та зменшує sample rate. Тому основний спектр і аудіо продовжують працювати незалежно.
+- Гц/точку задає частотну роздільну здатність вузького FFT. Менше значення дає більше деталей, але потребує довшого початкового накопичення: фізична межа становить приблизно 1 / (Гц/точку) секунди.
+- Оновлення задає часовий крок між перекритими FFT-кадрами, а не тривалість самого FFT. Наприклад, після першого накопичення режим 1 Гц/точку може оновлюватися значно частіше ніж раз на секунду завдяки overlap.
+- Вікно має власні рівні спектра й водоспаду, швидкість водоспаду та збереження налаштувань. Воно аналізує тільки частоти всередині поточного IQ-вікна приймача.
+- Під час сканування або переналаштування центральної частоти вибрана смуга має залишатися всередині поточного IQ-вікна; інакше дані для неї тимчасово відсутні.
 
 3D-водоспад
 - У розділі 3D waterfall можна обрати звичайний 2D-водоспад, 3D або 3D з мініатюрою 2D-водоспаду.
@@ -162,6 +171,7 @@ Mouse actions and fast tuning
 - Double left-click on the spectrum or waterfall does the same auto-centering.
 - Right-click on the spectrum or waterfall opens a tuning menu: tune signal center, set USB/LSB edge, or move receiver center here.
 - Left-drag on the spectrum shows a bandwidth measurement.
+- After selecting a band, the Zoom spectrum button next to Presets opens a dedicated detailed analyzer. See Narrow-band Zoom FFT below for the full workflow.
 - The fine-tune scale or round dial nudges the listening frequency in small steps.
 - F9 works as a push-to-record key: hold to record, release to stop.
 
@@ -189,6 +199,14 @@ Spectrum and waterfall
 - Research opens a separate window for comb/harmonic analysis, signal statistics, IQ waveform/constellation/autocorrelation, and dual-HF-input comparison.
 - Analysis in HF interference lab opens the same interference tab. Capture reference stores the “before” spectrum so the peak table can report every level change; the analyzer separates up to three comb families, tracks spacing and amplitude drift, and reports a tentative source class. The source class is a diagnostic hint, not exact device identification.
 - Dual HF inputs uses raw HF1/HF2 data and reports level difference, correlation, lag, phase at the listening frequency, and estimated cancellation potential. In RF mode the pair is quadrature I/Q, so dual-input comparison is intentionally disabled.
+
+Narrow-band Zoom FFT
+- First select a band by left-dragging on the main spectrum, then click Zoom spectrum in the row next to Presets.
+- The separate window consumes live full-span IQ, digitally shifts only the selected band to zero, filters it, and reduces its sample rate. The main spectrum and audio therefore continue independently.
+- Hz/bin selects narrow-FFT frequency resolution. A smaller value reveals more detail but needs a longer initial acquisition; the physical limit is approximately 1 / (Hz/bin) seconds.
+- Update selects the time step between overlapping FFT frames, not the duration of one FFT. After initial acquisition, 1 Hz/bin can therefore update much faster than once per second through overlap.
+- The window has independent spectrum/waterfall levels, waterfall speed, and persistent settings. It can analyze only frequencies inside the receiver's current IQ span.
+- During scanning or center retuning, the selected band must remain inside the current IQ span; otherwise its data is temporarily unavailable.
 
 3D waterfall
 - The 3D waterfall section selects the normal 2D waterfall, 3D, or 3D with a small 2D waterfall overlay.

@@ -8,6 +8,7 @@
 #include <QOpenGLShader>
 #include <QOpenGLShaderProgram>
 #include <vector>
+#include <deque>
 #include <array>
 #include <QColor>
 #include <QElapsedTimer>
@@ -108,6 +109,7 @@ private:
     void ensureLineBuffer();
     void resetWaterfallTexture(int w, int h);
     void resizeWaterfallTexturePreserve(int w, int h);
+    void queueCurrentTextureLine();
     bool ensureGpuWaterfallProgram();
     bool drawGpuPreparedWaterfall(float vStart);
     void drawMiniWaterfallOverlay(float vStart);
@@ -138,6 +140,8 @@ private:
     GLuint waterfallTexture;
     std::vector<unsigned char> lineData;
     std::vector<unsigned char> textureUploadRows;
+    std::vector<unsigned char> waterfallTexturePixels;
+    std::deque<std::vector<unsigned char>> pendingTextureLines;
     std::vector<float> pixelMaxData;
     std::vector<float> pixelFrequencyData;
     std::vector<float> pixelLevelData;
@@ -210,9 +214,14 @@ private:
     bool sciencePercentile90Visible = false;
     bool sciencePercentile99Visible = false;
     QElapsedTimer fpsElapsedTimer;
+    QElapsedTimer waterfallRowsElapsedTimer;
     QElapsedTimer sliceOverlayUpdateTimer;
     int fpsFrameCount = 0;
     double displayedFps = 0.0;
+    quint64 waterfallFftFramesSinceRateUpdate = 0;
+    double displayedWaterfallFftFramesPerSecond = 0.0;
+    quint64 waterfallRowsSinceRateUpdate = 0;
+    double displayedWaterfallRowsPerSecond = 0.0;
     QLabel *fpsOverlayLabel = nullptr;
     QLabel *sliceOverlayLabel = nullptr;
     QLabel *sliceDetailsOverlayLabel = nullptr;

@@ -107,13 +107,24 @@ void appendToSnapshot(const float *samples, std::size_t floatCount) {
 
 bool copySnapshotTail(std::vector<float> &out,
                       std::size_t maxFloatCount,
+                      std::uint64_t requestedEndFloatCount,
                       std::uint64_t *sequence,
                       IqBuffer::BlockMetadata *metadata,
                       const char *source) {
     std::size_t allocatedCount = 0;
+    std::uint64_t requestedCaptureEnd = 0;
     {
         std::lock_guard<std::mutex> lock(g_iqMutex);
-        allocatedCount = (std::min)(g_iqSnapshotSize, maxFloatCount);
+        const std::uint64_t retainedStart =
+            g_totalSnapshotFloatCount - static_cast<std::uint64_t>(g_iqSnapshotSize);
+        requestedCaptureEnd = requestedEndFloatCount == 0
+                                  ? g_totalSnapshotFloatCount
+                                  : (std::min)(requestedEndFloatCount, g_totalSnapshotFloatCount);
+        const std::uint64_t retainedBeforeEnd =
+            requestedCaptureEnd > retainedStart ? requestedCaptureEnd - retainedStart : 0;
+        allocatedCount = static_cast<std::size_t>((std::min)(
+            retainedBeforeEnd,
+            static_cast<std::uint64_t>(maxFloatCount)));
         allocatedCount -= allocatedCount % 2U;
         if (allocatedCount == 0) {
             out.clear();
@@ -159,11 +170,20 @@ bool copySnapshotTail(std::vector<float> &out,
         if (copyCount < out.size()) {
             out.resize(copyCount);
         }
-        captureEnd = g_totalSnapshotFloatCount;
+        // A live tail snapshot follows the newest ring end at the moment the
+        // copy actually begins. A historical snapshot must retain its exact
+        // requested endpoint so batched FFT rows preserve their time spacing.
+        captureEnd = requestedEndFloatCount == 0
+                         ? g_totalSnapshotFloatCount
+                         : requestedCaptureEnd;
         captureStart = captureEnd - copyCount;
         captureResetGeneration = g_snapshotResetGeneration;
         const std::uint64_t retainedStart =
             g_totalSnapshotFloatCount - static_cast<std::uint64_t>(g_iqSnapshotSize);
+        if (captureStart < retainedStart || captureEnd > g_totalSnapshotFloatCount) {
+            out.clear();
+            return false;
+        }
         const std::size_t snapshotOffset = static_cast<std::size_t>(captureStart - retainedStart);
         const std::size_t readStart =
             (g_iqSnapshotStart + snapshotOffset) % MAX_SNAPSHOT_FLOATS;
@@ -362,14 +382,34 @@ bool publish(const float *samples,
 }
 
 bool snapshot(std::vector<float> &out, std::uint64_t *sequence, BlockMetadata *metadata) {
-    return copySnapshotTail(out, MAX_SNAPSHOT_FLOATS, sequence, metadata, "snapshot");
+    return copySnapshotTail(out, MAX_SNAPSHOT_FLOATS, 0, sequence, metadata, "snapshot");
 }
 
 bool snapshotRecent(std::vector<float> &out,
                     std::size_t maxFloatCount,
                     std::uint64_t *sequence,
                     BlockMetadata *metadata) {
-    return copySnapshotTail(out, maxFloatCount, sequence, metadata, "snapshotRecent");
+    return copySnapshotTail(out, maxFloatCount, 0, sequence, metadata, "snapshotRecent");
+}
+
+bool snapshotRecentEndingAt(std::vector<float> &out,
+                            std::size_t maxFloatCount,
+                            std::uint64_t endFloatCount,
+                            std::uint64_t *sequence,
+                            BlockMetadata *metadata) {
+    if (endFloatCount == 0) {
+        return snapshotRecent(out, maxFloatCount, sequence, metadata);
+    }
+    const bool copied = copySnapshotTail(out,
+                                         maxFloatCount,
+                                         endFloatCount,
+                                         sequence,
+                                         metadata,
+                                         "snapshotRecentEndingAt");
+    if (copied && metadata) {
+        metadata->totalFloatCount = endFloatCount;
+    }
+    return copied;
 }
 
 bool popBlock(std::vector<float> &out, std::uint64_t *sequence) {

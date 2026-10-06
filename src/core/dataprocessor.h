@@ -12,6 +12,7 @@
 #include <thread>
 #include <mutex>
 #include <condition_variable>
+#include <memory>
 #include <QElapsedTimer>
 #include <QByteArray>
 #include <QJsonArray>
@@ -24,6 +25,7 @@
 #include "iqchannelizer.h"
 #include "receiverbackend.h"
 
+class ZoomSpectrumProcessor;
 
 class DataProcessor : public QThread {
     Q_OBJECT
@@ -63,6 +65,7 @@ public:
     bool applyRtlGainSettings(bool agc, int gainTenthsDb);
     void updateNetworkIqSettings(const RadioSettings &settings, bool channelizeFrames);
     void configureNetworkIqStreaming(const RadioSettings &settings, bool emitFrames, bool channelizeFrames);
+    std::shared_ptr<ZoomSpectrumProcessor> zoomSpectrumProcessor() const { return zoomProcessor; }
 signals:
     void iqFrameReady(const QByteArray &iqData, double sampleRate, int sampleCount);
     void readerFailed(int errorCode, bool stoppedByRequest);
@@ -80,6 +83,7 @@ private:
     void runRtlSdrNativeReader(const ReceiverStreamDescriptor &stream, uint32_t blockSamples);
     void runSoapySdrReader(const ReceiverStreamDescriptor &stream, uint32_t blockSamples);
     void runBladeRfNativeReader(const ReceiverStreamDescriptor &stream, uint32_t blockSamples);
+    void runHackRfNativeReader(const ReceiverStreamDescriptor &stream, uint32_t blockSamples);
     void handleUnsigned8IqData(const unsigned char *buf, uint32_t byteCount, const char *readerMode);
 
     std::atomic<bool> running;
@@ -114,6 +118,7 @@ private:
     int networkIqCicIndex = 0;
     int networkIqCicLength = 0;
     IqChannelizer networkIqChannelizer;
+    std::shared_ptr<ZoomSpectrumProcessor> zoomProcessor;
     std::vector<float> networkIqChannelizerOutput;
     int networkIqLastLoggedDmrOutputRate = 0;
     int networkIqLastLoggedDmrDecimationFactor = 0;

@@ -64,8 +64,8 @@ Before every public upload:
 
 Current release recommendation:
 
-1. `4.8.1` is the current release baseline.
-2. Vulkan VkFFT is an experimental 4.8.1 feature. Continue validating
+1. `4.8.2` is the current release baseline.
+2. Vulkan VkFFT remains experimental in 4.8.2. Continue validating
    Auto/CPU/GPU modes on discrete NVIDIA/AMD hardware and Linux/Raspberry
    before making it the next release default.
 3. Do not publish Android unless rebuilt and smoke-tested on its development
