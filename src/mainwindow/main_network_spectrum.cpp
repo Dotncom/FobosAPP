@@ -167,6 +167,8 @@ void YourClassName::sendNetworkSpectrumFrame(const std::vector<float> &frequenci
     frame["sampleRate"] = pendingSettings.sampleRate;
     frame["bandwidth"] = pendingSettings.bandwidth;
     frame["modulationType"] = pendingSettings.modulationType;
+    frame["sstvDemodulationMode"] =
+        normalizedSstvDemodulationMode(pendingSettings.sstvDemodulationMode);
     frame["inputMode"] = pendingSettings.inputMode;
     frame["fftLength"] = targetCount;
     frame["sourceFftLength"] = dataCount;

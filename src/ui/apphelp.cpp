@@ -121,11 +121,20 @@ GNSS, GPS і QTH
 - IQ monitor вимірює рівень, DC offset, clipping та I/Q balance до acquisition; Save GNSS IQ зберігає поточний stereo IQ snapshot і контекст налаштування.
 
 Цифрові режими
+- Режим CW у Digital Audio декодує азбуку Морзе з демодульованого аудіо. Tone задає очікуваний звуковий тон, Initial speed дає початкову оцінку WPM, а Adaptive speed підлаштовує тривалість крапки за прийнятим сигналом. Alphabet перемикає міжнародну латиницю, українську телеграфну таблицю або паралельний режим: у ньому кожне завершене слово виводиться як два варіанти `EN:` і `UK:`, після чого можна обрати правильну абетку.
 - Digital Audio містить DMR-дослідний декодер. Він може визначати частину метаданих і працювати з зовнішнім voice backend, але DMR-голос поки експериментальний.
 - DMR backend обирає FobosAPP+mbelib, FobosAPP+OpenDMR/OP25 або DSD-neo; DSD-neo передає DMR PCM дискримінатора через TCP і може приймати декодоване аудіо назад через UDP.
 - Lock DMR фіксує обрані параметри DMR, корисно коли на частоті є різні color code/timeslot/contact.
 - DMR hunter, FPV hunter і Digital Video hunter шукають характерні сигнали на спектрі за шириною/порогом.
-- Video блок зараз дослідний; повноцінні відеодекодери можуть бути вимкнені у збірці.
+- Video містить експериментальні декодери ATV, SSTV, APT, WEFAX і LRPT. Для SSTV виберіть `USB` на КХ, `LSB` для інвертованої бічної смуги або `NFM`, якщо SSTV-аудіо передається через мікрофон FM-радіостанції.
+- SSTV автоматично читає VIS і зараз декодує Robot 36/72, Martin M1/M2, Scottie S1/S2/DX, SC2-180 та PD50/90/120/160/180/240/290. Невідомий VIS не підміняється режимом Robot 36: декодер чекає наступний коректний заголовок.
+
+Лабораторія передавача
+- Кнопка TX відкриває окреме вікно генерації передавального IQ. Поточний backend є симулятором: він фізично не може випромінювати RF.
+- Голосові режими AM/NFM/WFM/DSB/USB/LSB беруть звук з вибраного мікрофона, якщо збірка має Qt Multimedia.
+- Текстові режими генерують CW/Morse або стандартний 79-символьний FT8 baseband. Для FT8 можна вирівнювати запуск до наступного 15-секундного UTC слоту.
+- Export IQ зберігає interleaved complex-float файл .cf32 і JSON із частотою, sample rate, модуляцією та тривалістю. `rf_output=false` явно позначає, що це лише офлайн-сигнал.
+- Реальний HackRF TX заблокований до окремої апаратної реалізації, перевірки на еквіваленті навантаження та додавання watchdog/interlock.
 
 Запис і відтворення
 - Record пише Audio WAV або Channel IQ WAV залежно від вибраного режиму.
@@ -272,11 +281,20 @@ GNSS, GPS and QTH
 - IQ monitor measures level, DC offset, clipping and I/Q balance before acquisition; Save GNSS IQ stores the current stereo IQ snapshot and tuning context.
 
 Digital modes
+- CW in Digital Audio decodes Morse from demodulated audio. Tone selects the expected audio pitch, Initial speed seeds the WPM estimate, and Adaptive speed tracks the received dot duration. Alphabet selects International/Latin, Ukrainian, or a parallel mode that prints every completed word as `EN:` and `UK:` variants before you switch to the correct alphabet.
 - Digital Audio contains the experimental DMR decoder. It can detect some metadata and work with an external voice backend, but DMR voice is still experimental.
 - DMR backend selects FobosAPP+mbelib, FobosAPP+OpenDMR/OP25 or DSD-neo; DSD-neo mirrors DMR discriminator PCM over TCP and can receive decoded audio back over UDP.
 - Lock DMR fixes selected DMR parameters, useful when several color code/timeslot/contact combinations share a frequency.
 - DMR hunter, FPV hunter and Digital Video hunter look for characteristic signals by width and threshold.
-- Video is currently experimental; full video decoders may be disabled in the build.
+- Video contains experimental ATV, SSTV, APT, WEFAX and LRPT decoders. For SSTV select `USB` on HF, `LSB` for an inverted sideband, or `NFM` when SSTV audio is fed through an FM handheld radio microphone.
+- SSTV reads VIS automatically and currently decodes Robot 36/72, Martin M1/M2, Scottie S1/S2/DX, SC2-180 and PD50/90/120/160/180/240/290. An unknown VIS is not silently treated as Robot 36; the decoder waits for the next valid header.
+
+Transmitter laboratory
+- TX opens a separate transmit-IQ laboratory. The current backend is a simulator and physically cannot emit RF.
+- AM/NFM/WFM/DSB/USB/LSB voice modes use the selected microphone when the build includes Qt Multimedia.
+- Text modes generate CW/Morse or standards-compatible 79-symbol FT8 baseband. FT8 may wait for the next 15-second UTC slot.
+- Export IQ writes interleaved complex-float .cf32 plus JSON with frequency, sample rate, modulation and duration. `rf_output=false` explicitly marks it as an offline signal.
+- Real HackRF TX stays locked until a hardware backend is implemented, tested into a dummy load, and protected by watchdog/interlock logic.
 
 Recording and playback
 - Record writes Audio WAV or Channel IQ WAV depending on selected recording mode.

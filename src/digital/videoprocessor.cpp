@@ -130,6 +130,30 @@ double videoCutoff(const RadioSettings &settings, double outputRate) {
     return (std::min)((std::max)(750000.0, settings.bandwidth * 0.45), outputRate * 0.45);
 }
 
+int sstvPixelFrequencyWindow(int spanSamples, int pixels, int sampleRate) {
+    if (spanSamples <= 0 || pixels <= 0 || sampleRate <= 0) {
+        return 40;
+    }
+    const int twoPixels = qRound(2.1 * static_cast<double>(spanSamples) / pixels);
+    const int longestUsefulWindow = qRound(0.00125 * sampleRate);
+    return (std::clamp)(twoPixels, 40, (std::max)(40, longestUsefulWindow));
+}
+
+template <std::size_t N>
+void sstvMedianFilter3(std::array<uchar, N> &values) {
+    if constexpr (N < 3) {
+        return;
+    }
+    const auto source = values;
+    for (std::size_t index = 1; index + 1 < N; ++index) {
+        const uchar a = source[index - 1];
+        const uchar b = source[index];
+        const uchar c = source[index + 1];
+        values[index] = (std::max)((std::min)(a, b),
+                                   (std::min)((std::max)(a, b), c));
+    }
+}
+
 } // namespace
 
 VideoProcessor::VideoProcessor(QObject *parent)
@@ -261,9 +285,17 @@ void VideoProcessor::configureSstv(bool newEnabled) {
         sstvTestPatternEnabled = false;
     }
     emitStatus(sstvEnabled
-                   ? QStringLiteral("SSTV Robot36: waiting for 1200 Hz sync")
+                   ? QStringLiteral("SSTV: waiting for VIS header")
                    : QStringLiteral("SSTV decoder disabled"),
                true);
+}
+
+void VideoProcessor::resetSstvDecoder() {
+    if (!sstvEnabled) {
+        return;
+    }
+    resetSstvState(true);
+    emitStatus(QStringLiteral("SSTV: demodulator changed; waiting for VIS header"), true);
 }
 
 void VideoProcessor::setSstvTestPatternEnabled(bool newEnabled) {
@@ -366,7 +398,19 @@ void VideoProcessor::resetSstvState(bool clearImage) {
     sstvFrameActive = false;
     sstvSyncLockCount = 0;
     sstvLostSyncCount = 0;
+    sstvSamplesSinceLastSync = 0;
+    sstvLineOverlapActive = false;
+    sstvLineTimingScale = 1.0;
+    sstvPreviousAdvanceSamples = 0;
+    sstvHaveLinePeriodReference = false;
+    sstvLineAdvanceOverride = -1;
+    sstvDecodedRows = 0;
+    sstvScottiePrimed = false;
+    sstvScottieGreen.fill(0);
+    sstvScottieBlue.fill(0);
     sstvLastVisCode = ROBOT36_VIS_CODE;
+    sstvVisSearchOffset = 0;
+    sstvToneOffsetHz = 0.0;
     sstvEvenLuma.fill(0);
     sstvEvenV.fill(128);
     if (clearImage || sstvRaster.isNull()) {
@@ -430,18 +474,20 @@ void VideoProcessor::processSstvPcmFrame(const QByteArray &pcmData, int sampleRa
     for (int i = 0; i < sampleCount; ++i) {
         sstvAudioBuffer.push_back(readInt16Le(raw + i * static_cast<int>(sizeof(qint16))) / 32768.0f);
     }
+    if (sstvFrameActive) {
+        sstvSamplesSinceLastSync += sampleCount;
+    }
 
     const std::size_t maxBufferSamples =
         static_cast<std::size_t>((std::max)(1, sstvSampleRate) * SSTV_MAX_BUFFER_SECONDS);
     if (sstvAudioBuffer.size() > maxBufferSamples) {
-        const std::size_t keepSamples =
-            static_cast<std::size_t>(std::lround(ROBOT36_LINE_SECONDS * sstvSampleRate * 2.0));
-        const std::size_t eraseCount = sstvAudioBuffer.size() > keepSamples
-                                           ? sstvAudioBuffer.size() - keepSamples
-                                           : 0;
+        const std::size_t eraseCount = sstvAudioBuffer.size() - maxBufferSamples;
         if (eraseCount > 0) {
             sstvAudioBuffer.erase(sstvAudioBuffer.begin(),
                                   sstvAudioBuffer.begin() + static_cast<std::ptrdiff_t>(eraseCount));
+            sstvVisSearchOffset = (std::max)(
+                0,
+                sstvVisSearchOffset - static_cast<int>(eraseCount));
         }
     }
 
@@ -715,8 +761,9 @@ void VideoProcessor::processFloatIqSnapshot(const std::vector<float> &iqSamples,
 }
 
 void VideoProcessor::processSstvBuffer() {
-    const int lineSamples = static_cast<int>(std::lround(activeSstvLineSeconds() * sstvSampleRate));
-    if (lineSamples <= 0) {
+    const int nominalLineSamples = static_cast<int>(
+        std::lround(activeSstvLineSeconds() * sstvSampleRate));
+    if (nominalLineSamples <= 0) {
         return;
     }
 
@@ -730,6 +777,14 @@ void VideoProcessor::processSstvBuffer() {
             sstvFrameActive = supported;
             sstvSyncLockCount = supported ? 3 : 0;
             sstvLostSyncCount = 0;
+            sstvSamplesSinceLastSync = 0;
+            sstvLineOverlapActive = false;
+            sstvLineTimingScale = 1.0;
+            sstvPreviousAdvanceSamples = 0;
+            sstvHaveLinePeriodReference = false;
+            sstvLineAdvanceOverride = -1;
+            sstvDecodedRows = 0;
+            sstvScottiePrimed = false;
             sstvNextLine = 0;
             sstvHaveEvenLine = false;
             if (supported) {
@@ -742,6 +797,7 @@ void VideoProcessor::processSstvBuffer() {
                 sstvAudioBuffer.erase(sstvAudioBuffer.begin(),
                                       sstvAudioBuffer.begin() + headerEndSample);
             }
+            sstvVisSearchOffset = 0;
             emitStatus(QStringLiteral("SSTV VIS %1: %2 (%3)")
                            .arg(visCode)
                            .arg(sstvModeName(visCode))
@@ -753,44 +809,110 @@ void VideoProcessor::processSstvBuffer() {
             }
             return;
         }
+
+        if (!sstvStatusTimer.isValid() || sstvStatusTimer.elapsed() >= STATUS_INTERVAL_MS) {
+            emitStatus(QStringLiteral("SSTV: waiting for a valid VIS header"), true);
+            sstvStatusTimer.restart();
+        }
+        return;
     }
 
     int decodedLines = 0;
-    while (sstvAudioBuffer.size() >= static_cast<std::size_t>(lineSamples) && decodedLines < 6) {
+    while (decodedLines < 6) {
+        const int lineSamples = qRound(nominalLineSamples * sstvLineTimingScale);
+        const int guardSamples = (std::max)(
+            8,
+            qRound((std::max)(activeSstvSyncSeconds() * 2.0, 0.012) *
+                   sstvSampleRate * sstvLineTimingScale));
+        const int requiredSamples = lineSamples +
+                                    (sstvLineOverlapActive ? guardSamples : 0);
+        if (sstvAudioBuffer.size() < static_cast<std::size_t>(requiredSamples)) {
+            break;
+        }
         double score = 0.0;
-        const int lineStart = findSstvLineStart(&score);
+        int lineStart = findSstvLineStart(&score);
+        bool predictedLine = false;
         if (lineStart < 0) {
-            if (sstvFrameActive && ++sstvLostSyncCount > 8) {
+            if (sstvFrameActive && sstvLineOverlapActive && sstvLostSyncCount < 4) {
+                lineStart = guardSamples;
+                predictedLine = true;
+                ++sstvLostSyncCount;
+                score = 0.0;
+            }
+        }
+        if (lineStart < 0) {
+            const double holdoverSeconds = (std::clamp)(
+                activeSstvLineSeconds() * 3.4,
+                0.70,
+                2.00);
+            const int holdoverSamples = qRound(holdoverSeconds * sstvSampleRate);
+            if (sstvFrameActive && sstvSamplesSinceLastSync > holdoverSamples) {
                 sstvFrameActive = false;
                 sstvSyncLockCount = 0;
                 sstvLostSyncCount = 0;
+                sstvSamplesSinceLastSync = 0;
+                sstvLineOverlapActive = false;
+                sstvVisSearchOffset = 0;
+                emitStatus(QStringLiteral("SSTV %1: sync timeout; waiting for a new VIS header")
+                               .arg(sstvModeName(sstvLastVisCode)),
+                           true);
             }
-            const std::size_t keepSamples =
-                static_cast<std::size_t>(std::lround(activeSstvLineSeconds() * sstvSampleRate * 1.5));
+            const std::size_t keepSamples = static_cast<std::size_t>(
+                holdoverSamples + lineSamples + guardSamples);
             if (sstvAudioBuffer.size() > keepSamples) {
                 sstvAudioBuffer.erase(sstvAudioBuffer.begin(),
                                       sstvAudioBuffer.end() - static_cast<std::ptrdiff_t>(keepSamples));
             }
             if (!sstvStatusTimer.isValid() || sstvStatusTimer.elapsed() >= STATUS_INTERVAL_MS) {
                 emitStatus(sstvFrameActive
-                               ? QStringLiteral("SSTV Robot36: waiting for next line sync")
-                               : QStringLiteral("SSTV: waiting for VIS or stable Robot36 sync"),
+                               ? QStringLiteral("SSTV %1: holding mode through sync interruption (%2 ms)")
+                                     .arg(sstvModeName(sstvLastVisCode))
+                                     .arg(qRound(1000.0 * sstvSamplesSinceLastSync /
+                                                 (std::max)(1, sstvSampleRate)))
+                               : QStringLiteral("SSTV: waiting for a valid VIS header"),
                            true);
                 sstvStatusTimer.restart();
             }
             return;
         }
 
+        if (!predictedLine && sstvLineOverlapActive) {
+            const int expectedLineStart = guardSamples;
+            const int delta = lineStart - expectedLineStart;
+            const int nearbyLimit = qRound(0.025 * sstvSampleRate);
+            if (std::abs(delta) <= nearbyLimit) {
+                const int maxCorrection = (std::max)(2, qRound(0.00025 * sstvSampleRate));
+                lineStart = expectedLineStart +
+                            (std::clamp)(qRound(delta * 0.25),
+                                        -maxCorrection,
+                                        maxCorrection);
+            }
+        }
+
+        if (!predictedLine && sstvHaveLinePeriodReference) {
+            const int observedPeriod = sstvPreviousAdvanceSamples + lineStart;
+            const double observedScale = static_cast<double>(observedPeriod) /
+                                         nominalLineSamples;
+            if (observedScale >= 0.97 && observedScale <= 1.03) {
+                sstvLineTimingScale = 0.82 * sstvLineTimingScale +
+                                      0.18 * observedScale;
+            }
+        }
+
         if (lineStart > 0) {
             sstvAudioBuffer.erase(sstvAudioBuffer.begin(),
                                   sstvAudioBuffer.begin() + lineStart);
         }
-        if (sstvAudioBuffer.size() < static_cast<std::size_t>(lineSamples)) {
+        const int decodeLineSamples = qRound(nominalLineSamples * sstvLineTimingScale);
+        if (sstvAudioBuffer.size() < static_cast<std::size_t>(decodeLineSamples)) {
             return;
         }
 
         lastSstvSyncScore = score;
-        sstvLostSyncCount = 0;
+        if (!predictedLine) {
+            sstvLostSyncCount = 0;
+            sstvSamplesSinceLastSync = 0;
+        }
         if (!sstvFrameActive) {
             ++sstvSyncLockCount;
             if (sstvSyncLockCount < 3 || score < 6.0) {
@@ -801,6 +923,8 @@ void VideoProcessor::processSstvBuffer() {
             sstvFrameActive = true;
             sstvNextLine = 0;
             sstvHaveEvenLine = false;
+            sstvDecodedRows = 0;
+            sstvScottiePrimed = false;
             sstvRaster = QImage(activeSstvWidth(), activeSstvHeight(), QImage::Format_RGB32);
             sstvRaster.fill(QColor(8, 10, 12));
             emit frameReady(sstvRaster.copy());
@@ -808,18 +932,58 @@ void VideoProcessor::processSstvBuffer() {
                            .arg(sstvModeName(sstvLastVisCode)),
                        true);
         }
+        sstvLineAdvanceOverride = -1;
         decodeSstvLine(0);
+        const int advanceBase = sstvLineAdvanceOverride > 0
+                                    ? sstvLineAdvanceOverride
+                                    : decodeLineSamples;
+        const int advanceSamples = (std::max)(1, advanceBase - guardSamples);
         sstvAudioBuffer.erase(sstvAudioBuffer.begin(),
-                              sstvAudioBuffer.begin() + lineSamples);
+                              sstvAudioBuffer.begin() + advanceSamples);
+        sstvPreviousAdvanceSamples = advanceSamples;
+        sstvHaveLinePeriodReference = true;
+        sstvLineOverlapActive = true;
         ++decodedLines;
+
+        if (predictedLine &&
+            (!sstvStatusTimer.isValid() || sstvStatusTimer.elapsed() >= STATUS_INTERVAL_MS)) {
+            emitStatus(QStringLiteral("SSTV %1: predicted line timing, missed sync %2/4")
+                           .arg(sstvModeName(sstvLastVisCode))
+                           .arg(sstvLostSyncCount),
+                       true);
+            sstvStatusTimer.restart();
+        }
+
+        if (sstvDecodedRows >= activeSstvHeight()) {
+            emit frameReady(sstvRaster.copy());
+            emitStatus(QStringLiteral("SSTV %1: frame complete; waiting for the next VIS header")
+                           .arg(sstvModeName(sstvLastVisCode)),
+                       true);
+            sstvFrameActive = false;
+            sstvLineOverlapActive = false;
+            sstvSamplesSinceLastSync = 0;
+            sstvVisSearchOffset = 0;
+            sstvAudioBuffer.clear();
+            return;
+        }
     }
 }
 
 int VideoProcessor::findSstvLineStart(double *bestScore) const {
     const double lineSeconds = activeSstvLineSeconds();
-    const int lineSamples = static_cast<int>(std::lround(lineSeconds * sstvSampleRate));
-    const int syncSamples = static_cast<int>(std::lround(activeSstvSyncSeconds() * sstvSampleRate));
-    const int porchSamples = static_cast<int>(std::lround(ROBOT36_PORCH_SECONDS * sstvSampleRate));
+    const int lineSamples = static_cast<int>(
+        std::lround(lineSeconds * sstvSampleRate * sstvLineTimingScale));
+    const int syncSamples = static_cast<int>(
+        std::lround(activeSstvSyncSeconds() * sstvSampleRate * sstvLineTimingScale));
+    double porchSeconds = ROBOT36_PORCH_SECONDS;
+    if (const SstvModeSpec *mode = sstvModeSpecForVis(sstvLastVisCode)) {
+        if (mode->family == SstvSpecFamily::Rgb || mode->family == SstvSpecFamily::Pd) {
+            porchSeconds = mode->separatorSeconds;
+        }
+    }
+    const int porchSamples = (std::max)(
+        8,
+        static_cast<int>(std::lround(porchSeconds * sstvSampleRate * sstvLineTimingScale)));
     if (lineSamples <= 0 || syncSamples <= 0 ||
         sstvAudioBuffer.size() < static_cast<std::size_t>(lineSamples)) {
         return -1;
@@ -827,27 +991,147 @@ int VideoProcessor::findSstvLineStart(double *bestScore) const {
 
     const int maxStart = (std::min)(
         static_cast<int>(sstvAudioBuffer.size()) - lineSamples,
-        static_cast<int>(std::lround(lineSeconds * sstvSampleRate * 1.4)));
+        static_cast<int>(std::lround(lineSeconds * sstvSampleRate * 3.0)));
     const int step = (std::max)(4, sstvSampleRate / 2000);
     double best = 0.0;
     double bestSyncEnergy = 0.0;
     int bestIndex = -1;
 
-    for (int start = 0; start <= maxStart; start += step) {
-        const double syncEnergy = toneEnergy(sstvAudioBuffer, start, syncSamples, SSTV_SYNC_TONE_HZ);
-        const double lowEnergy = toneEnergy(sstvAudioBuffer, start, syncSamples, 1000.0);
-        const double highEnergy = toneEnergy(sstvAudioBuffer, start, syncSamples, SSTV_MIN_TONE_HZ);
+    auto scoreAt = [&](int start, double *syncEnergyOut) {
+        const double syncEnergy = toneEnergy(sstvAudioBuffer, start, syncSamples,
+                                             SSTV_SYNC_TONE_HZ + sstvToneOffsetHz);
+        const double lowEnergy = toneEnergy(sstvAudioBuffer, start, syncSamples,
+                                            1000.0 + sstvToneOffsetHz);
+        const double highEnergy = toneEnergy(sstvAudioBuffer, start, syncSamples,
+                                             SSTV_MIN_TONE_HZ + sstvToneOffsetHz);
         const double porchEnergy = toneEnergy(sstvAudioBuffer,
                                               start + syncSamples,
                                               porchSamples,
-                                              SSTV_MIN_TONE_HZ);
+                                              SSTV_MIN_TONE_HZ + sstvToneOffsetHz);
         const double competitor = (std::max)(lowEnergy, highEnergy);
         const double score = (syncEnergy / (competitor + 1.0e-8)) *
                              (1.0 + (std::min)(2.0, porchEnergy / (syncEnergy + 1.0e-8)) * 0.15);
-        if (score > best) {
-            best = score;
-            bestSyncEnergy = syncEnergy;
-            bestIndex = start;
+        if (syncEnergyOut) {
+            *syncEnergyOut = syncEnergy;
+        }
+        return score;
+    };
+
+    auto searchRange = [&](int rangeStart, int rangeEnd) {
+        rangeStart = (std::clamp)(rangeStart, 0, maxStart);
+        rangeEnd = (std::clamp)(rangeEnd, rangeStart, maxStart);
+        for (int start = rangeStart; start <= rangeEnd; start += step) {
+            double syncEnergy = 0.0;
+            const double score = scoreAt(start, &syncEnergy);
+            if (score > best) {
+                best = score;
+                bestSyncEnergy = syncEnergy;
+                bestIndex = start;
+            }
+        }
+    };
+
+    const int expectedStart = sstvLineOverlapActive
+                                  ? qRound((std::max)(activeSstvSyncSeconds() * 2.0, 0.012) *
+                                           sstvSampleRate * sstvLineTimingScale)
+                                  : 0;
+    const int preferredBefore = qRound(0.006 * sstvSampleRate);
+    const int preferredAfter = qRound(0.006 * sstvSampleRate);
+    searchRange(expectedStart - preferredBefore, expectedStart + preferredAfter);
+    if (!(bestIndex >= 0 && best > 4.0 && bestSyncEnergy > 5.0e-5)) {
+        if (sstvLineOverlapActive) {
+            if (bestScore) {
+                *bestScore = best;
+            }
+            return -1;
+        }
+        best = 0.0;
+        bestSyncEnergy = 0.0;
+        bestIndex = -1;
+        searchRange(0, maxStart);
+    }
+
+    if (bestIndex >= 0) {
+        const int fineStart = (std::max)(0, bestIndex - step);
+        const int fineEnd = (std::min)(maxStart, bestIndex + step);
+        for (int start = fineStart; start <= fineEnd; ++start) {
+            double syncEnergy = 0.0;
+            const double score = scoreAt(start, &syncEnergy);
+            if (score > best) {
+                best = score;
+                bestSyncEnergy = syncEnergy;
+                bestIndex = start;
+            }
+        }
+    }
+
+    // scoreAt() locates the sync pulse, but its maximum may move inside the
+    // 9 ms pulse as phase and noise change. Locate the rising 1200 Hz edge so
+    // every decoded raster line starts at the same horizontal coordinate.
+    if (bestIndex >= 0 && best > 4.0 && bestSyncEnergy > 5.0e-5) {
+        const int edgeRadius = (std::max)(syncSamples, qRound(0.004 * sstvSampleRate));
+        const int afterOffset = qRound(0.0007 * sstvSampleRate);
+        const int afterLength = (std::max)(24, qRound(0.0040 * sstvSampleRate));
+        const int beforeOffset = qRound(0.0005 * sstvSampleRate);
+        const int beforeLength = (std::max)(24, qRound(0.0025 * sstvSampleRate));
+        const int porchOffset = qRound(0.0003 * sstvSampleRate);
+        const int porchLength = (std::max)(16, (std::min)(porchSamples,
+                                                          qRound(0.0015 * sstvSampleRate)));
+        double bestEdgeScore = 0.0;
+        int bestEdgeIndex = -1;
+        const int edgeBegin = (std::max)(0, bestIndex - edgeRadius);
+        const int edgeEnd = (std::min)(maxStart, bestIndex + edgeRadius);
+        for (int candidate = edgeBegin; candidate <= edgeEnd; ++candidate) {
+            const int afterStart = candidate + afterOffset;
+            const double afterSync = toneEnergy(sstvAudioBuffer,
+                                                afterStart,
+                                                afterLength,
+                                                SSTV_SYNC_TONE_HZ + sstvToneOffsetHz);
+            const double afterComp = (std::max)(
+                toneEnergy(sstvAudioBuffer, afterStart, afterLength,
+                           SSTV_MIN_TONE_HZ + sstvToneOffsetHz),
+                toneEnergy(sstvAudioBuffer, afterStart, afterLength,
+                           1900.0 + sstvToneOffsetHz));
+            const int beforeStart = candidate - beforeOffset - beforeLength;
+            const double beforeSync = beforeStart >= 0
+                                          ? toneEnergy(sstvAudioBuffer,
+                                                       beforeStart,
+                                                       beforeLength,
+                                                       SSTV_SYNC_TONE_HZ + sstvToneOffsetHz)
+                                          : 0.0;
+            const double beforeComp = beforeStart >= 0
+                                          ? (std::max)(
+                                                toneEnergy(sstvAudioBuffer,
+                                                           beforeStart,
+                                                           beforeLength,
+                                                           SSTV_MIN_TONE_HZ + sstvToneOffsetHz),
+                                                toneEnergy(sstvAudioBuffer,
+                                                           beforeStart,
+                                                           beforeLength,
+                                                           1900.0 + sstvToneOffsetHz))
+                                          : 1.0;
+            const int porchStart = candidate + syncSamples + porchOffset;
+            const double porchTone = toneEnergy(sstvAudioBuffer,
+                                                porchStart,
+                                                porchLength,
+                                                SSTV_MIN_TONE_HZ + sstvToneOffsetHz);
+            const double porchSync = toneEnergy(sstvAudioBuffer,
+                                                porchStart,
+                                                porchLength,
+                                                SSTV_SYNC_TONE_HZ + sstvToneOffsetHz);
+            const double afterRatio = afterSync / (afterComp + 1.0e-8);
+            const double beforeRatio = beforeSync / (beforeComp + 1.0e-8);
+            const double porchRatio = porchTone / (porchSync + 1.0e-8);
+            const double edgeScore = afterRatio *
+                                     (std::min)(3.0, porchRatio) /
+                                     (1.0 + beforeRatio);
+            if (afterRatio > 1.8 && porchRatio > 1.1 && edgeScore > bestEdgeScore) {
+                bestEdgeScore = edgeScore;
+                bestEdgeIndex = candidate;
+            }
+        }
+        if (bestEdgeIndex >= 0) {
+            bestIndex = bestEdgeIndex;
         }
     }
 
@@ -855,10 +1139,10 @@ int VideoProcessor::findSstvLineStart(double *bestScore) const {
         *bestScore = best;
     }
 
-    return bestIndex >= 0 && best > 4.0 && bestSyncEnergy > 3.0e-5 ? bestIndex : -1;
+    return bestIndex >= 0 && best > 4.0 && bestSyncEnergy > 5.0e-5 ? bestIndex : -1;
 }
 
-int VideoProcessor::detectSstvVisCode(double *confidence, int *headerEndSample) const {
+int VideoProcessor::detectSstvVisCode(double *confidence, int *headerEndSample) {
     const int leaderSamples = static_cast<int>(std::lround(SSTV_VIS_LEADER_SECONDS * sstvSampleRate));
     const int breakSamples = static_cast<int>(std::lround(SSTV_VIS_BREAK_SECONDS * sstvSampleRate));
     const int bitSamples = static_cast<int>(std::lround(SSTV_VIS_BIT_SECONDS * sstvSampleRate));
@@ -869,49 +1153,165 @@ int VideoProcessor::detectSstvVisCode(double *confidence, int *headerEndSample) 
         return -1;
     }
 
-    const int maxStart = (std::min)(static_cast<int>(sstvAudioBuffer.size()) - headerSamples,
-                                    (std::max)(0, sstvSampleRate / 2));
-    const int step = (std::max)(16, sstvSampleRate / 100);
+    const int maxStart = static_cast<int>(sstvAudioBuffer.size()) - headerSamples;
+    const int step = (std::max)(16, sstvSampleRate / 1000);
+    const int firstStart = (std::clamp)(sstvVisSearchOffset, 0, maxStart);
+    const int leaderProbeSamples = (std::max)(32, qRound(0.040 * sstvSampleRate));
+    const int fullLeaderProbeSamples = (std::max)(64, qRound(0.200 * sstvSampleRate));
+    const int fullLeaderProbeOffset = qRound(0.050 * sstvSampleRate);
+    const int bitProbeSamples = (std::max)(32, qRound(0.020 * sstvSampleRate));
+    const int leaderProbeOffset = qRound(0.120 * sstvSampleRate);
+    const int bitProbeOffset = (bitSamples - bitProbeSamples) / 2;
     double bestConfidence = 0.0;
+    double bestToneOffset = 0.0;
     int bestCode = -1;
     int bestHeaderEnd = -1;
 
-    for (int start = 0; start <= maxStart; start += step) {
+    for (int start = firstStart; start <= maxStart; start += step) {
         const int breakStart = start + leaderSamples;
         const int secondLeaderStart = breakStart + breakSamples;
         const int visStart = secondLeaderStart + leaderSamples;
 
-        const double leader1 = toneEnergy(sstvAudioBuffer, start, leaderSamples, SSTV_VIS_LEADER_TONE_HZ);
-        const double leader1Comp = (std::max)(toneEnergy(sstvAudioBuffer, start, leaderSamples, SSTV_SYNC_TONE_HZ),
-                                             toneEnergy(sstvAudioBuffer, start, leaderSamples, SSTV_VIS_ZERO_TONE_HZ));
-        const double breakEnergy = toneEnergy(sstvAudioBuffer, breakStart, breakSamples, SSTV_SYNC_TONE_HZ);
-        const double breakComp = (std::max)(toneEnergy(sstvAudioBuffer, breakStart, breakSamples, SSTV_VIS_LEADER_TONE_HZ),
-                                           toneEnergy(sstvAudioBuffer, breakStart, breakSamples, SSTV_VIS_ZERO_TONE_HZ));
-        const double leader2 = toneEnergy(sstvAudioBuffer, secondLeaderStart, leaderSamples, SSTV_VIS_LEADER_TONE_HZ);
-        const double leader2Comp = (std::max)(toneEnergy(sstvAudioBuffer, secondLeaderStart, leaderSamples, SSTV_SYNC_TONE_HZ),
-                                             toneEnergy(sstvAudioBuffer, secondLeaderStart, leaderSamples, SSTV_VIS_ZERO_TONE_HZ));
-        const double startBit = toneEnergy(sstvAudioBuffer, visStart, bitSamples, SSTV_SYNC_TONE_HZ);
-        const double startComp = (std::max)(toneEnergy(sstvAudioBuffer, visStart, bitSamples, SSTV_VIS_ZERO_TONE_HZ),
-                                           toneEnergy(sstvAudioBuffer, visStart, bitSamples, SSTV_VIS_ONE_TONE_HZ));
-        const double stopStart = visStart + bitSamples * 9;
-        const double stopBit = toneEnergy(sstvAudioBuffer, stopStart, bitSamples, SSTV_SYNC_TONE_HZ);
-        const double stopComp = (std::max)(toneEnergy(sstvAudioBuffer, stopStart, bitSamples, SSTV_VIS_ZERO_TONE_HZ),
-                                          toneEnergy(sstvAudioBuffer, stopStart, bitSamples, SSTV_VIS_ONE_TONE_HZ));
+        const int probeStart = start + leaderProbeOffset;
+        double firstCrossing = -1.0;
+        double lastCrossing = -1.0;
+        int crossingCount = 0;
+        for (int sample = probeStart + 1;
+             sample < probeStart + leaderProbeSamples;
+             ++sample) {
+            const double previous = sstvAudioBuffer[static_cast<std::size_t>(sample - 1)];
+            const double current = sstvAudioBuffer[static_cast<std::size_t>(sample)];
+            if (previous < 0.0 && current >= 0.0) {
+                const double denominator = current - previous;
+                const double fraction = std::abs(denominator) > 1.0e-9
+                                            ? -previous / denominator
+                                            : 0.0;
+                const double crossing = static_cast<double>(sample - 1) + fraction;
+                if (firstCrossing < 0.0) {
+                    firstCrossing = crossing;
+                }
+                lastCrossing = crossing;
+                ++crossingCount;
+            }
+        }
+        if (crossingCount < 20 || lastCrossing <= firstCrossing) {
+            continue;
+        }
+        const double measuredLeaderHz =
+            (crossingCount - 1) * static_cast<double>(sstvSampleRate) /
+            (lastCrossing - firstCrossing);
+        const double toneOffset = (std::clamp)(measuredLeaderHz - SSTV_VIS_LEADER_TONE_HZ,
+                                               -150.0,
+                                               150.0);
+        if (std::abs(measuredLeaderHz - (SSTV_VIS_LEADER_TONE_HZ + toneOffset)) > 25.0 ||
+            std::abs(measuredLeaderHz - SSTV_VIS_LEADER_TONE_HZ) > 175.0) {
+            continue;
+        }
+        const double leader1 = toneEnergy(sstvAudioBuffer,
+                                          probeStart,
+                                          leaderProbeSamples,
+                                          SSTV_VIS_LEADER_TONE_HZ + toneOffset);
+        const int leader1Start = start + leaderProbeOffset;
+        const int leader2Start = secondLeaderStart + leaderProbeOffset;
+        const double leader1Comp = (std::max)(
+            toneEnergy(sstvAudioBuffer, leader1Start, leaderProbeSamples,
+                       SSTV_SYNC_TONE_HZ + toneOffset),
+            toneEnergy(sstvAudioBuffer, leader1Start, leaderProbeSamples,
+                       SSTV_VIS_ZERO_TONE_HZ + toneOffset));
+        const double leader2 = toneEnergy(sstvAudioBuffer, leader2Start,
+                                          leaderProbeSamples,
+                                          SSTV_VIS_LEADER_TONE_HZ + toneOffset);
+        const double leader2Comp = (std::max)(
+            toneEnergy(sstvAudioBuffer, leader2Start, leaderProbeSamples,
+                       SSTV_SYNC_TONE_HZ + toneOffset),
+            toneEnergy(sstvAudioBuffer, leader2Start, leaderProbeSamples,
+                       SSTV_VIS_ZERO_TONE_HZ + toneOffset));
+        const int fullLeader1Start = start + fullLeaderProbeOffset;
+        const int fullLeader2Start = secondLeaderStart + fullLeaderProbeOffset;
+        const double fullLeader1 = toneEnergy(sstvAudioBuffer,
+                                              fullLeader1Start,
+                                              fullLeaderProbeSamples,
+                                              SSTV_VIS_LEADER_TONE_HZ + toneOffset);
+        const double fullLeader2 = toneEnergy(sstvAudioBuffer,
+                                              fullLeader2Start,
+                                              fullLeaderProbeSamples,
+                                              SSTV_VIS_LEADER_TONE_HZ + toneOffset);
+        const double fullLeader1Comp = (std::max)({
+            toneEnergy(sstvAudioBuffer, fullLeader1Start, fullLeaderProbeSamples,
+                       SSTV_SYNC_TONE_HZ + toneOffset),
+            toneEnergy(sstvAudioBuffer, fullLeader1Start, fullLeaderProbeSamples,
+                       SSTV_VIS_ZERO_TONE_HZ + toneOffset),
+            toneEnergy(sstvAudioBuffer, fullLeader1Start, fullLeaderProbeSamples,
+                       SSTV_MAX_TONE_HZ + toneOffset)});
+        const double fullLeader2Comp = (std::max)({
+            toneEnergy(sstvAudioBuffer, fullLeader2Start, fullLeaderProbeSamples,
+                       SSTV_SYNC_TONE_HZ + toneOffset),
+            toneEnergy(sstvAudioBuffer, fullLeader2Start, fullLeaderProbeSamples,
+                       SSTV_VIS_ZERO_TONE_HZ + toneOffset),
+            toneEnergy(sstvAudioBuffer, fullLeader2Start, fullLeaderProbeSamples,
+                       SSTV_MAX_TONE_HZ + toneOffset)});
+        const double shortLeaderRatio = (leader1 / (leader1Comp + 1.0e-8) +
+                                         leader2 / (leader2Comp + 1.0e-8)) * 0.5;
+        const double fullLeaderRatio = (fullLeader1 / (fullLeader1Comp + 1.0e-8) +
+                                        fullLeader2 / (fullLeader2Comp + 1.0e-8)) * 0.5;
+        const double leaderRatio = shortLeaderRatio * 0.25 + fullLeaderRatio * 0.75;
+        if (shortLeaderRatio < 1.8 || fullLeaderRatio < 3.2 ||
+            fullLeader1 < 2.0e-5 || fullLeader2 < 2.0e-5) {
+            continue;
+        }
 
-        const double leaderRatio = (leader1 / (leader1Comp + 1.0e-8) +
-                                    leader2 / (leader2Comp + 1.0e-8)) * 0.5;
-        const double framingRatio = (breakEnergy / (breakComp + 1.0e-8) +
-                                     startBit / (startComp + 1.0e-8) +
-                                     stopBit / (stopComp + 1.0e-8)) / 3.0;
+        const double breakEnergy = toneEnergy(sstvAudioBuffer, breakStart, breakSamples,
+                                              SSTV_SYNC_TONE_HZ + toneOffset);
+        const double breakComp = (std::max)(
+            toneEnergy(sstvAudioBuffer, breakStart, breakSamples,
+                       SSTV_VIS_LEADER_TONE_HZ + toneOffset),
+            toneEnergy(sstvAudioBuffer, breakStart, breakSamples,
+                       SSTV_VIS_ZERO_TONE_HZ + toneOffset));
+        const double startBit = toneEnergy(sstvAudioBuffer,
+                                           visStart + bitProbeOffset,
+                                           bitProbeSamples,
+                                           SSTV_SYNC_TONE_HZ + toneOffset);
+        const double startComp = (std::max)(
+            toneEnergy(sstvAudioBuffer, visStart + bitProbeOffset, bitProbeSamples,
+                       SSTV_VIS_ZERO_TONE_HZ + toneOffset),
+            toneEnergy(sstvAudioBuffer, visStart + bitProbeOffset, bitProbeSamples,
+                       SSTV_VIS_ONE_TONE_HZ + toneOffset));
+        const double stopStart = visStart + bitSamples * 9;
+        const double stopBit = toneEnergy(sstvAudioBuffer,
+                                          stopStart + bitProbeOffset,
+                                          bitProbeSamples,
+                                          SSTV_SYNC_TONE_HZ + toneOffset);
+        const double stopComp = (std::max)(
+            toneEnergy(sstvAudioBuffer, stopStart + bitProbeOffset, bitProbeSamples,
+                       SSTV_VIS_ZERO_TONE_HZ + toneOffset),
+            toneEnergy(sstvAudioBuffer, stopStart + bitProbeOffset, bitProbeSamples,
+                       SSTV_VIS_ONE_TONE_HZ + toneOffset));
+
+        const double breakRatio = breakEnergy / (breakComp + 1.0e-8);
+        const double startRatio = startBit / (startComp + 1.0e-8);
+        const double stopRatio = stopBit / (stopComp + 1.0e-8);
+        if (breakRatio < 1.8 || startRatio < 1.8 || stopRatio < 1.8) {
+            continue;
+        }
+        const double framingRatio = (breakRatio + startRatio + stopRatio) / 3.0;
 
         int code = 0;
         int oneCount = 0;
         double bitConfidence = 0.0;
+        double weakestBitEnergy = std::numeric_limits<double>::max();
         for (int bit = 0; bit < 8; ++bit) {
             const int bitStart = visStart + bitSamples * (bit + 1);
-            const double oneEnergy = toneEnergy(sstvAudioBuffer, bitStart, bitSamples, SSTV_VIS_ONE_TONE_HZ);
-            const double zeroEnergy = toneEnergy(sstvAudioBuffer, bitStart, bitSamples, SSTV_VIS_ZERO_TONE_HZ);
+            const double oneEnergy = toneEnergy(sstvAudioBuffer,
+                                                bitStart + bitProbeOffset,
+                                                bitProbeSamples,
+                                                SSTV_VIS_ONE_TONE_HZ + toneOffset);
+            const double zeroEnergy = toneEnergy(sstvAudioBuffer,
+                                                 bitStart + bitProbeOffset,
+                                                 bitProbeSamples,
+                                                 SSTV_VIS_ZERO_TONE_HZ + toneOffset);
             const bool one = oneEnergy > zeroEnergy;
+            weakestBitEnergy = (std::min)(weakestBitEnergy,
+                                          (std::max)(oneEnergy, zeroEnergy));
             const double ratio = (std::max)(oneEnergy, zeroEnergy) /
                                  ((std::min)(oneEnergy, zeroEnergy) + 1.0e-8);
             bitConfidence += (std::min)(ratio, 8.0);
@@ -928,10 +1328,11 @@ int VideoProcessor::detectSstvVisCode(double *confidence, int *headerEndSample) 
                                 (std::min)(framingRatio, 10.0) * 0.35 +
                                 bitConfidence * 0.20;
 
-        if (evenParity && combined > bestConfidence) {
+        if (evenParity && weakestBitEnergy > 5.0e-6 && combined > bestConfidence) {
             bestConfidence = combined;
             bestCode = code;
             bestHeaderEnd = start + headerSamples;
+            bestToneOffset = toneOffset;
         }
     }
 
@@ -941,7 +1342,13 @@ int VideoProcessor::detectSstvVisCode(double *confidence, int *headerEndSample) 
     if (headerEndSample) {
         *headerEndSample = bestHeaderEnd;
     }
-    return bestConfidence >= 3.8 ? bestCode : -1;
+    const int lastChecked = firstStart + ((maxStart - firstStart) / step) * step;
+    sstvVisSearchOffset = lastChecked + step;
+    if (bestConfidence >= 3.0) {
+        sstvToneOffsetHz = bestToneOffset;
+        return bestCode;
+    }
+    return -1;
 }
 
 bool VideoProcessor::isSupportedSstvVisCode(int visCode) const {
@@ -1024,49 +1431,36 @@ void VideoProcessor::decodeRobot36Line(int lineStart) {
         sstvRaster.fill(QColor(8, 10, 12));
     }
 
-    const int syncSamples = static_cast<int>(std::lround(ROBOT36_SYNC_SECONDS * sstvSampleRate));
-    const int porchSamples = static_cast<int>(std::lround(ROBOT36_PORCH_SECONDS * sstvSampleRate));
-    const int lumaSamples = static_cast<int>(std::lround(ROBOT36_LUMA_SECONDS * sstvSampleRate));
-    const int separatorSamples = static_cast<int>(std::lround(ROBOT36_SEPARATOR_SECONDS * sstvSampleRate));
-    const int midPorchSamples = static_cast<int>(std::lround(ROBOT36_MID_PORCH_SECONDS * sstvSampleRate));
-    const int chromaSamples = static_cast<int>(std::lround(ROBOT36_CHROMA_SECONDS * sstvSampleRate));
+    const double timing = sstvLineTimingScale;
+    const int syncSamples = static_cast<int>(std::lround(ROBOT36_SYNC_SECONDS * sstvSampleRate * timing));
+    const int porchSamples = static_cast<int>(std::lround(ROBOT36_PORCH_SECONDS * sstvSampleRate * timing));
+    const int lumaSamples = static_cast<int>(std::lround(ROBOT36_LUMA_SECONDS * sstvSampleRate * timing));
+    const int separatorSamples = static_cast<int>(std::lround(ROBOT36_SEPARATOR_SECONDS * sstvSampleRate * timing));
+    const int midPorchSamples = static_cast<int>(std::lround(ROBOT36_MID_PORCH_SECONDS * sstvSampleRate * timing));
+    const int chromaSamples = static_cast<int>(std::lround(ROBOT36_CHROMA_SECONDS * sstvSampleRate * timing));
     const int lumaStart = lineStart + syncSamples + porchSamples;
     const int separatorStart = lumaStart + lumaSamples;
     const int chromaStart = separatorStart + separatorSamples + midPorchSamples;
-    const int frequencyWindow = (std::max)(24, static_cast<int>(std::lround(0.0018 * sstvSampleRate)));
 
     std::array<uchar, SSTV_WIDTH> luma = {};
     std::array<uchar, SSTV_WIDTH / 2> chroma = {};
 
-    for (int x = 0; x < SSTV_WIDTH; ++x) {
-        const int center = lumaStart + static_cast<int>(std::lround(
-                                      (x + 0.5) * static_cast<double>(lumaSamples) / SSTV_WIDTH));
-        const double hz = estimateToneFrequency(sstvAudioBuffer,
-                                                center,
-                                                frequencyWindow,
-                                                SSTV_MIN_TONE_HZ,
-                                                SSTV_MAX_TONE_HZ);
-        luma[static_cast<std::size_t>(x)] = sstvFrequencyToByte(hz);
-    }
-
-    for (int x = 0; x < SSTV_WIDTH / 2; ++x) {
-        const int center = chromaStart + static_cast<int>(std::lround(
-                                       (x + 0.5) * static_cast<double>(chromaSamples) / (SSTV_WIDTH / 2)));
-        const double hz = estimateToneFrequency(sstvAudioBuffer,
-                                                center,
-                                                frequencyWindow,
-                                                SSTV_MIN_TONE_HZ,
-                                                SSTV_MAX_TONE_HZ);
-        chroma[static_cast<std::size_t>(x)] = sstvFrequencyToByte(hz);
-    }
+    const std::vector<uchar> decodedLuma =
+        decodeSstvToneSpan(lumaStart, lumaSamples, SSTV_WIDTH);
+    const std::vector<uchar> decodedChroma =
+        decodeSstvToneSpan(chromaStart, chromaSamples, SSTV_WIDTH / 2);
+    std::copy_n(decodedLuma.begin(), SSTV_WIDTH, luma.begin());
+    std::copy_n(decodedChroma.begin(), SSTV_WIDTH / 2, chroma.begin());
+    sstvMedianFilter3(luma);
+    sstvMedianFilter3(chroma);
 
     const int separatorCenter = separatorStart + separatorSamples / 2;
     const double separatorHz = estimateToneFrequency(sstvAudioBuffer,
                                                      separatorCenter,
                                                      (std::max)(24, separatorSamples),
-                                                     1200.0,
-                                                     2300.0);
-    const bool currentLineCarriesV = separatorHz < 1900.0;
+                                                     1200.0 + sstvToneOffsetHz,
+                                                     2300.0 + sstvToneOffsetHz);
+    const bool currentLineCarriesV = separatorHz < 1900.0 + sstvToneOffsetHz;
     const int lineIndex = sstvNextLine % SSTV_HEIGHT;
 
     if (currentLineCarriesV) {
@@ -1086,6 +1480,7 @@ void VideoProcessor::decodeRobot36Line(int lineStart) {
     }
 
     sstvNextLine = (lineIndex + 1) % SSTV_HEIGHT;
+    ++sstvDecodedRows;
     ++sstvLinesSinceFrame;
     if (sstvFrameTimer.elapsed() >= 250 || sstvLinesSinceFrame >= 4) {
         emit frameReady(sstvRaster.copy());
@@ -1110,52 +1505,37 @@ void VideoProcessor::decodeRobot72Line(int lineStart) {
         sstvRaster.fill(QColor(8, 10, 12));
     }
 
-    const int syncSamples = static_cast<int>(std::lround(ROBOT36_SYNC_SECONDS * sstvSampleRate));
-    const int porchSamples = static_cast<int>(std::lround(ROBOT36_PORCH_SECONDS * sstvSampleRate));
-    const int lumaSamples = static_cast<int>(std::lround(0.138 * sstvSampleRate));
-    const int separatorSamples = static_cast<int>(std::lround(ROBOT36_SEPARATOR_SECONDS * sstvSampleRate));
-    const int chromaSamples = static_cast<int>(std::lround(0.069 * sstvSampleRate));
+    const double timing = sstvLineTimingScale;
+    const int syncSamples = static_cast<int>(std::lround(ROBOT36_SYNC_SECONDS * sstvSampleRate * timing));
+    const int porchSamples = static_cast<int>(std::lround(ROBOT36_PORCH_SECONDS * sstvSampleRate * timing));
+    const int lumaSamples = static_cast<int>(std::lround(0.138 * sstvSampleRate * timing));
+    const int separatorSamples = static_cast<int>(std::lround(ROBOT36_SEPARATOR_SECONDS * sstvSampleRate * timing));
+    const int chromaSamples = static_cast<int>(std::lround(0.069 * sstvSampleRate * timing));
     const int lumaStart = lineStart + syncSamples + porchSamples;
     const int vStart = lumaStart + lumaSamples + separatorSamples;
     const int uStart = vStart + chromaSamples + separatorSamples;
-    const int frequencyWindow = (std::max)(24, static_cast<int>(std::lround(0.0018 * sstvSampleRate)));
 
     std::array<uchar, SSTV_WIDTH> luma = {};
     std::array<uchar, SSTV_WIDTH / 2> uChroma = {};
     std::array<uchar, SSTV_WIDTH / 2> vChroma = {};
 
-    for (int x = 0; x < SSTV_WIDTH; ++x) {
-        const int center = lumaStart + static_cast<int>(std::lround(
-                                      (x + 0.5) * static_cast<double>(lumaSamples) / SSTV_WIDTH));
-        luma[static_cast<std::size_t>(x)] =
-            sstvFrequencyToByte(estimateToneFrequency(sstvAudioBuffer,
-                                                       center,
-                                                       frequencyWindow,
-                                                       SSTV_MIN_TONE_HZ,
-                                                       SSTV_MAX_TONE_HZ));
-    }
-    for (int x = 0; x < SSTV_WIDTH / 2; ++x) {
-        const int vCenter = vStart + static_cast<int>(std::lround(
-                                     (x + 0.5) * static_cast<double>(chromaSamples) / (SSTV_WIDTH / 2)));
-        const int uCenter = uStart + static_cast<int>(std::lround(
-                                     (x + 0.5) * static_cast<double>(chromaSamples) / (SSTV_WIDTH / 2)));
-        vChroma[static_cast<std::size_t>(x)] =
-            sstvFrequencyToByte(estimateToneFrequency(sstvAudioBuffer,
-                                                       vCenter,
-                                                       frequencyWindow,
-                                                       SSTV_MIN_TONE_HZ,
-                                                       SSTV_MAX_TONE_HZ));
-        uChroma[static_cast<std::size_t>(x)] =
-            sstvFrequencyToByte(estimateToneFrequency(sstvAudioBuffer,
-                                                       uCenter,
-                                                       frequencyWindow,
-                                                       SSTV_MIN_TONE_HZ,
-                                                       SSTV_MAX_TONE_HZ));
-    }
+    const std::vector<uchar> decodedLuma =
+        decodeSstvToneSpan(lumaStart, lumaSamples, SSTV_WIDTH);
+    const std::vector<uchar> decodedV =
+        decodeSstvToneSpan(vStart, chromaSamples, SSTV_WIDTH / 2);
+    const std::vector<uchar> decodedU =
+        decodeSstvToneSpan(uStart, chromaSamples, SSTV_WIDTH / 2);
+    std::copy_n(decodedLuma.begin(), SSTV_WIDTH, luma.begin());
+    std::copy_n(decodedV.begin(), SSTV_WIDTH / 2, vChroma.begin());
+    std::copy_n(decodedU.begin(), SSTV_WIDTH / 2, uChroma.begin());
+    sstvMedianFilter3(luma);
+    sstvMedianFilter3(uChroma);
+    sstvMedianFilter3(vChroma);
 
     const int lineIndex = sstvNextLine % SSTV_HEIGHT;
     renderSstvLine(lineIndex, luma, &uChroma, &vChroma);
     sstvNextLine = (lineIndex + 1) % SSTV_HEIGHT;
+    ++sstvDecodedRows;
     ++sstvLinesSinceFrame;
     if (sstvFrameTimer.elapsed() >= 250 || sstvLinesSinceFrame >= 4) {
         emit frameReady(sstvRaster.copy());
@@ -1182,11 +1562,11 @@ void VideoProcessor::decodeRgbSstvLine(int lineStart) {
         sstvRaster.fill(QColor(8, 10, 12));
     }
 
-    const int syncSamples = static_cast<int>(std::lround(mode->syncSeconds * sstvSampleRate));
-    const int channelSamples = static_cast<int>(std::lround(mode->channelSeconds * sstvSampleRate));
-    const int separatorSamples = static_cast<int>(std::lround(mode->separatorSeconds * sstvSampleRate));
-    const int lineSamples = static_cast<int>(std::lround(mode->scanLineSeconds * sstvSampleRate));
-    const int frequencyWindow = (std::max)(24, static_cast<int>(std::lround(0.0018 * sstvSampleRate)));
+    const double timing = sstvLineTimingScale;
+    const int syncSamples = static_cast<int>(std::lround(mode->syncSeconds * sstvSampleRate * timing));
+    const int channelSamples = static_cast<int>(std::lround(mode->channelSeconds * sstvSampleRate * timing));
+    const int separatorSamples = static_cast<int>(std::lround(mode->separatorSeconds * sstvSampleRate * timing));
+    const int frequencyWindow = sstvPixelFrequencyWindow(channelSamples, mode->width, sstvSampleRate);
 
     auto decodeChannel = [&](int channelStart, std::array<uchar, SSTV_WIDTH> &dst) {
         for (int x = 0; x < mode->width; ++x) {
@@ -1196,8 +1576,8 @@ void VideoProcessor::decodeRgbSstvLine(int lineStart) {
                 sstvFrequencyToByte(estimateToneFrequency(sstvAudioBuffer,
                                                            center,
                                                            frequencyWindow,
-                                                           SSTV_MIN_TONE_HZ,
-                                                           SSTV_MAX_TONE_HZ));
+                                                           SSTV_MIN_TONE_HZ + sstvToneOffsetHz,
+                                                           SSTV_MAX_TONE_HZ + sstvToneOffsetHz));
         }
     };
 
@@ -1206,14 +1586,54 @@ void VideoProcessor::decodeRgbSstvLine(int lineStart) {
     std::array<uchar, SSTV_WIDTH> blue = {};
 
     if (sstvLastVisCode == 60 || sstvLastVisCode == 56 || sstvLastVisCode == 76) {
+        if (!sstvScottiePrimed) {
+            // Scottie starts with an extra sync followed by G0/B0. Regular
+            // line syncs then sit between B and R, so retain these two
+            // channels until R0 arrives after the next sync.
+            const int greenStart = lineStart + syncSamples + separatorSamples;
+            const int blueStart = greenStart + channelSamples + separatorSamples;
+            decodeChannel(greenStart, sstvScottieGreen);
+            decodeChannel(blueStart, sstvScottieBlue);
+            sstvMedianFilter3(sstvScottieGreen);
+            sstvMedianFilter3(sstvScottieBlue);
+            sstvLineAdvanceOverride = blueStart + channelSamples - lineStart;
+            sstvScottiePrimed = true;
+            return;
+        }
+
         const int redStart = lineStart + syncSamples + separatorSamples;
-        const int blueEnd = lineStart + lineSamples - syncSamples;
-        const int blueStart = blueEnd - channelSamples;
-        const int greenEnd = blueStart - separatorSamples;
-        const int greenStart = greenEnd - channelSamples;
+        const int nextGreenStart = redStart + channelSamples + separatorSamples;
+        const int nextBlueStart = nextGreenStart + channelSamples + separatorSamples;
         decodeChannel(redStart, red);
-        decodeChannel(greenStart, green);
-        decodeChannel(blueStart, blue);
+        decodeChannel(nextGreenStart, green);
+        decodeChannel(nextBlueStart, blue);
+        sstvMedianFilter3(red);
+        sstvMedianFilter3(green);
+        sstvMedianFilter3(blue);
+
+        const int lineIndex = sstvNextLine % mode->height;
+        renderRgbSstvLine(lineIndex, red, sstvScottieGreen, sstvScottieBlue);
+        sstvScottieGreen = green;
+        sstvScottieBlue = blue;
+        sstvNextLine = (lineIndex + 1) % mode->height;
+        ++sstvDecodedRows;
+        ++sstvLinesSinceFrame;
+        if (sstvFrameTimer.elapsed() >= 250 || sstvLinesSinceFrame >= 3) {
+            emit frameReady(sstvRaster.copy());
+            sstvFrameTimer.restart();
+            sstvLinesSinceFrame = 0;
+        }
+        if (!sstvStatusTimer.isValid() || sstvStatusTimer.elapsed() >= STATUS_INTERVAL_MS) {
+            emitStatus(QStringLiteral("SSTV %1: line %2/%3, sync %4, timing %5%")
+                           .arg(sstvModeName(sstvLastVisCode))
+                           .arg(lineIndex + 1)
+                           .arg(mode->height)
+                           .arg(lastSstvSyncScore, 0, 'f', 1)
+                           .arg(sstvLineTimingScale * 100.0, 0, 'f', 3),
+                       true);
+            sstvStatusTimer.restart();
+        }
+        return;
     } else if (sstvLastVisCode == 55) {
         const int redStart = lineStart + syncSamples + separatorSamples;
         const int greenStart = redStart + channelSamples;
@@ -1230,9 +1650,14 @@ void VideoProcessor::decodeRgbSstvLine(int lineStart) {
         decodeChannel(blueStart, blue);
     }
 
+    sstvMedianFilter3(red);
+    sstvMedianFilter3(green);
+    sstvMedianFilter3(blue);
+
     const int lineIndex = sstvNextLine % mode->height;
     renderRgbSstvLine(lineIndex, red, green, blue);
     sstvNextLine = (lineIndex + 1) % mode->height;
+    ++sstvDecodedRows;
     ++sstvLinesSinceFrame;
     if (sstvFrameTimer.elapsed() >= 250 || sstvLinesSinceFrame >= 3) {
         emit frameReady(sstvRaster.copy());
@@ -1277,10 +1702,11 @@ void VideoProcessor::decodePdSstvLine(int lineStart) {
         sstvRaster.fill(QColor(8, 10, 12));
     }
 
-    const int syncSamples = static_cast<int>(std::lround(mode->syncSeconds * sstvSampleRate));
-    const int porchSamples = static_cast<int>(std::lround(mode->separatorSeconds * sstvSampleRate));
-    const int channelSamples = static_cast<int>(std::lround(mode->channelSeconds * sstvSampleRate));
-    const int frequencyWindow = (std::max)(24, static_cast<int>(std::lround(0.0018 * sstvSampleRate)));
+    const double timing = sstvLineTimingScale;
+    const int syncSamples = static_cast<int>(std::lround(mode->syncSeconds * sstvSampleRate * timing));
+    const int porchSamples = static_cast<int>(std::lround(mode->separatorSeconds * sstvSampleRate * timing));
+    const int channelSamples = static_cast<int>(std::lround(mode->channelSeconds * sstvSampleRate * timing));
+    const int frequencyWindow = sstvPixelFrequencyWindow(channelSamples, mode->width, sstvSampleRate);
     const int baseStart = lineStart + syncSamples + porchSamples;
 
     auto decodeChannelValue = [&](int channelStart, int x) -> uchar {
@@ -1289,8 +1715,8 @@ void VideoProcessor::decodePdSstvLine(int lineStart) {
         return sstvFrequencyToByte(estimateToneFrequency(sstvAudioBuffer,
                                                           center,
                                                           frequencyWindow,
-                                                          SSTV_MIN_TONE_HZ,
-                                                          SSTV_MAX_TONE_HZ));
+                                                          SSTV_MIN_TONE_HZ + sstvToneOffsetHz,
+                                                          SSTV_MAX_TONE_HZ + sstvToneOffsetHz));
     };
 
     const int yEvenStart = baseStart;
@@ -1319,6 +1745,7 @@ void VideoProcessor::decodePdSstvLine(int lineStart) {
     }
 
     sstvNextLine = (linePair + 1) % (std::max)(1, mode->height / 2);
+    sstvDecodedRows += (evenLineIndex == oddLineIndex) ? 1 : 2;
     ++sstvLinesSinceFrame;
     if (sstvFrameTimer.elapsed() >= 250 || sstvLinesSinceFrame >= 2) {
         emit frameReady(sstvRaster.copy());
@@ -1371,24 +1798,26 @@ double VideoProcessor::toneEnergy(const std::vector<float> &samples,
         return 0.0;
     }
 
-    const double increment = TWO_PI * frequencyHz / sstvSampleRate;
-    double phase = 0.0;
-    double sumI = 0.0;
-    double sumQ = 0.0;
     double mean = 0.0;
     for (int i = start; i < end; ++i) {
         mean += samples[static_cast<std::size_t>(i)];
     }
     mean /= static_cast<double>(end - start);
 
+    const double omega = TWO_PI * frequencyHz / sstvSampleRate;
+    const double coefficient = 2.0 * std::cos(omega);
+    double previous = 0.0;
+    double previous2 = 0.0;
     for (int i = start; i < end; ++i) {
         const double sample = samples[static_cast<std::size_t>(i)] - mean;
-        sumI += sample * std::cos(phase);
-        sumQ += sample * std::sin(phase);
-        phase += increment;
+        const double current = sample + coefficient * previous - previous2;
+        previous2 = previous;
+        previous = current;
     }
     const double norm = static_cast<double>(end - start);
-    return (sumI * sumI + sumQ * sumQ) / (norm * norm + 1.0e-12);
+    const double power = previous * previous + previous2 * previous2 -
+                         coefficient * previous * previous2;
+    return (std::max)(0.0, power) / (norm * norm + 1.0e-12);
 }
 
 double VideoProcessor::estimateToneFrequency(const std::vector<float> &samples,
@@ -1438,11 +1867,119 @@ double VideoProcessor::estimateToneFrequency(const std::vector<float> &samples,
             bestHz = hz;
         }
     }
+
+    // A short window is important for SSTV detail, but a 50 Hz-only bank
+    // produces visible banding. Refine locally without widening the window
+    // across neighbouring pixels.
+    const double refineStart = (std::max)(minHz, bestHz - 50.0);
+    const double refineEnd = (std::min)(maxHz, bestHz + 50.0);
+    for (double hz = refineStart; hz <= refineEnd + 0.1; hz += 5.0) {
+        const double energy = toneEnergy(samples, start, end - start, hz);
+        if (energy > bestEnergy) {
+            bestEnergy = energy;
+            bestHz = hz;
+        }
+    }
     return bestHz;
 }
 
+std::vector<uchar> VideoProcessor::decodeSstvToneSpan(int start,
+                                                      int spanSamples,
+                                                      int pixelCount) const {
+    std::vector<uchar> result(static_cast<std::size_t>((std::max)(0, pixelCount)), 0);
+    if (pixelCount <= 0 || spanSamples <= 0 || sstvSampleRate <= 0 ||
+        start < 0 || start >= static_cast<int>(sstvAudioBuffer.size())) {
+        return result;
+    }
+
+    const int end = (std::min)(start + spanSamples,
+                               static_cast<int>(sstvAudioBuffer.size()));
+    const int mixerWindow = (std::clamp)(sstvSampleRate / 4000, 8, 24);
+    const int warmupStart = (std::max)(0, start - mixerWindow * 3);
+    std::vector<double> ringI(static_cast<std::size_t>(mixerWindow), 0.0);
+    std::vector<double> ringQ(static_cast<std::size_t>(mixerWindow), 0.0);
+    std::vector<double> frequencySum(static_cast<std::size_t>(pixelCount), 0.0);
+    std::vector<double> weightSum(static_cast<std::size_t>(pixelCount), 0.0);
+
+    const double mixerHz = 1900.0 + sstvToneOffsetHz;
+    const double phaseStep = TWO_PI * mixerHz / sstvSampleRate;
+    double phase = std::remainder(phaseStep * warmupStart, TWO_PI);
+    double sumI = 0.0;
+    double sumQ = 0.0;
+    double previousI = 0.0;
+    double previousQ = 0.0;
+    bool havePrevious = false;
+    int filled = 0;
+    int ringIndex = 0;
+
+    for (int sampleIndex = warmupStart; sampleIndex < end; ++sampleIndex) {
+        const double sample = sstvAudioBuffer[static_cast<std::size_t>(sampleIndex)];
+        const double mixedI = sample * std::cos(phase);
+        const double mixedQ = -sample * std::sin(phase);
+        phase = std::remainder(phase + phaseStep, TWO_PI);
+
+        sumI -= ringI[static_cast<std::size_t>(ringIndex)];
+        sumQ -= ringQ[static_cast<std::size_t>(ringIndex)];
+        ringI[static_cast<std::size_t>(ringIndex)] = mixedI;
+        ringQ[static_cast<std::size_t>(ringIndex)] = mixedQ;
+        sumI += mixedI;
+        sumQ += mixedQ;
+        ringIndex = (ringIndex + 1) % mixerWindow;
+        filled = (std::min)(mixerWindow, filled + 1);
+        if (filled < mixerWindow) {
+            continue;
+        }
+
+        const double currentI = sumI / mixerWindow;
+        const double currentQ = sumQ / mixerWindow;
+        const int effectiveIndex = sampleIndex - (mixerWindow - 1) / 2;
+        if (havePrevious && effectiveIndex >= start && effectiveIndex < end) {
+            const double real = currentI * previousI + currentQ * previousQ;
+            const double imag = currentQ * previousI - currentI * previousQ;
+            const double amplitude = std::sqrt((currentI * currentI + currentQ * currentQ) *
+                                               (previousI * previousI + previousQ * previousQ));
+            const double frequency = mixerHz +
+                                     std::atan2(imag, real) * sstvSampleRate / TWO_PI;
+            if (amplitude > 1.0e-7 &&
+                frequency >= SSTV_MIN_TONE_HZ + sstvToneOffsetHz - 150.0 &&
+                frequency <= SSTV_MAX_TONE_HZ + sstvToneOffsetHz + 150.0) {
+                const int pixel = (std::clamp)(
+                    static_cast<int>((static_cast<long long>(effectiveIndex - start) * pixelCount) /
+                                     spanSamples),
+                    0,
+                    pixelCount - 1);
+                frequencySum[static_cast<std::size_t>(pixel)] += frequency * amplitude;
+                weightSum[static_cast<std::size_t>(pixel)] += amplitude;
+            }
+        }
+        previousI = currentI;
+        previousQ = currentQ;
+        havePrevious = true;
+    }
+
+    for (int pixel = 0; pixel < pixelCount; ++pixel) {
+        double frequency = 1900.0 + sstvToneOffsetHz;
+        const double weight = weightSum[static_cast<std::size_t>(pixel)];
+        if (weight > 0.0) {
+            frequency = frequencySum[static_cast<std::size_t>(pixel)] / weight;
+        } else {
+            const int center = start + static_cast<int>(std::lround(
+                (pixel + 0.5) * static_cast<double>(spanSamples) / pixelCount));
+            frequency = estimateToneFrequency(sstvAudioBuffer,
+                                              center,
+                                              48,
+                                              SSTV_MIN_TONE_HZ + sstvToneOffsetHz,
+                                              SSTV_MAX_TONE_HZ + sstvToneOffsetHz);
+        }
+        result[static_cast<std::size_t>(pixel)] = sstvFrequencyToByte(frequency);
+    }
+    return result;
+}
+
 uchar VideoProcessor::sstvFrequencyToByte(double frequencyHz) const {
-    const double normalized = (frequencyHz - SSTV_MIN_TONE_HZ) / (SSTV_MAX_TONE_HZ - SSTV_MIN_TONE_HZ);
+    const double correctedHz = frequencyHz - sstvToneOffsetHz;
+    const double normalized = (correctedHz - SSTV_MIN_TONE_HZ) /
+                              (SSTV_MAX_TONE_HZ - SSTV_MIN_TONE_HZ);
     return static_cast<uchar>((std::clamp)(static_cast<int>(std::lround(normalized * 255.0)), 0, 255));
 }
 

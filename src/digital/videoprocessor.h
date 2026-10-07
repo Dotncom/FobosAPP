@@ -35,6 +35,7 @@ public slots:
                    bool vSyncEnabled);
     void setTestPatternEnabled(bool enabled);
     void configureSstv(bool enabled);
+    void resetSstvDecoder();
     void setSstvTestPatternEnabled(bool enabled);
     void configureApt(bool enabled);
     void setAptTestPatternEnabled(bool enabled);
@@ -65,7 +66,7 @@ private:
     void resetSstvState(bool clearImage);
     void processSstvBuffer();
     int findSstvLineStart(double *bestScore) const;
-    int detectSstvVisCode(double *confidence, int *headerEndSample) const;
+    int detectSstvVisCode(double *confidence, int *headerEndSample);
     bool isSupportedSstvVisCode(int visCode) const;
     QString sstvModeName(int visCode) const;
     int activeSstvWidth() const;
@@ -92,6 +93,9 @@ private:
                                  int windowSamples,
                                  double minHz,
                                  double maxHz) const;
+    std::vector<uchar> decodeSstvToneSpan(int start,
+                                         int spanSamples,
+                                         int pixelCount) const;
     uchar sstvFrequencyToByte(double frequencyHz) const;
     void ensureSstvTestPatternTimer();
     void generateSstvTestPatternPcmFrame();
@@ -182,7 +186,19 @@ private:
     bool sstvFrameActive = false;
     int sstvSyncLockCount = 0;
     int sstvLostSyncCount = 0;
+    int sstvSamplesSinceLastSync = 0;
+    bool sstvLineOverlapActive = false;
+    double sstvLineTimingScale = 1.0;
+    int sstvPreviousAdvanceSamples = 0;
+    bool sstvHaveLinePeriodReference = false;
+    int sstvLineAdvanceOverride = -1;
+    int sstvDecodedRows = 0;
+    bool sstvScottiePrimed = false;
+    std::array<uchar, 320> sstvScottieGreen = {};
+    std::array<uchar, 320> sstvScottieBlue = {};
     int sstvLastVisCode = 8;
+    int sstvVisSearchOffset = 0;
+    double sstvToneOffsetHz = 0.0;
     bool sstvTestPatternEnabled = false;
     QTimer *sstvTestPatternTimer = nullptr;
     int sstvTestPatternLine = 0;

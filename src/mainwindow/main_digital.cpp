@@ -260,6 +260,9 @@ void YourClassName::updateVideoProcessorMode() {
     }
 
     const bool iqVideoEnabled = isVideoDecodeActive();
+    if (sstvDemodulationCombo) {
+        sstvDemodulationCombo->setEnabled(pendingSettings.modulationType == MOD_SSTV);
+    }
     const bool analogVideoEnabled = iqVideoEnabled && pendingSettings.modulationType == MOD_ATV;
     videoIqFramePending.store(false);
     const bool testPatternEnabled = videoTestPatternCheckbox && videoTestPatternCheckbox->isChecked();

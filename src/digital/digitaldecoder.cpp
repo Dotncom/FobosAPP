@@ -167,14 +167,16 @@ constexpr std::array<std::array<int, FT8_LDPC_MAX_CHECK_DEGREE>, FT8_LDPC_CHECK_
 }};
 
 bool isSupportedDecoderMode(int modulationType) {
-    return modulationType == MOD_FT8 ||
+    return modulationType == MOD_CW ||
+           modulationType == MOD_FT8 ||
            modulationType == MOD_RTTY ||
            modulationType == MOD_FSK ||
            modulationType == MOD_DMR;
 }
 
 bool isDigitalMode(int modulationType) {
-    return modulationType == MOD_FT8 ||
+    return modulationType == MOD_CW ||
+           modulationType == MOD_FT8 ||
            modulationType == MOD_RTTY ||
            modulationType == MOD_FSK ||
            modulationType == MOD_PSK ||
@@ -1029,6 +1031,7 @@ bool DigitalDecoder::isEnabled() const {
 }
 
 void DigitalDecoder::reset() {
+    cwDecoder.reset();
     resetRttyState();
     markPhase = 0.0;
     spacePhase = 0.0;
@@ -1086,6 +1089,13 @@ void DigitalDecoder::queueDmrVoicePcm(const QByteArray &pcmData) {
 }
 
 void DigitalDecoder::configure(const RadioSettings &settings, int sampleRate) {
+    CwAudioDecoder::Settings cwSettings;
+    cwSettings.sampleRate = sampleRate;
+    cwSettings.toneHz = settings.cwDecoderToneHz;
+    cwSettings.initialWpm = settings.cwDecoderWpm;
+    cwSettings.adaptiveSpeed = settings.cwDecoderAdaptiveSpeed;
+    cwSettings.alphabet = settings.cwDecoderAlphabet;
+    cwDecoder.configure(cwSettings);
     dmrDecoder.setLabHints(settings.dmrLabEnabled,
                            settings.dmrLabColorCode,
                            settings.dmrLabTimeslot,
@@ -1147,6 +1157,20 @@ void DigitalDecoder::processPcmFrame(const QByteArray &pcmData, const RadioSetti
     QString decodedText;
     const int sampleCount = pcmData.size() / static_cast<int>(sizeof(qint16));
     const char *raw = pcmData.constData();
+
+    if (settings.modulationType == MOD_CW) {
+        CwAudioDecoder::Settings cwSettings;
+        cwSettings.sampleRate = sampleRate;
+        cwSettings.toneHz = settings.cwDecoderToneHz;
+        cwSettings.initialWpm = settings.cwDecoderWpm;
+        cwSettings.adaptiveSpeed = settings.cwDecoderAdaptiveSpeed;
+        cwSettings.alphabet = settings.cwDecoderAlphabet;
+        cwDecoder.configure(cwSettings);
+        const CwAudioDecoder::Result result = cwDecoder.processPcm16(pcmData);
+        if (!result.status.isEmpty()) updateStatus(result.status);
+        if (!result.text.isEmpty()) emit textDecoded(result.text);
+        return;
+    }
 
     if (settings.modulationType == MOD_DMR) {
         const DmrDecoder::Result result =
@@ -1739,7 +1763,10 @@ void DigitalDecoder::configureForMode(int modulationType, int sampleRate) {
         return;
     }
 
-    if (modulationType == MOD_RTTY) {
+    if (modulationType == MOD_CW) {
+        updateStatus(QStringLiteral("CW decoder: waiting for %1 Hz tone")
+                         .arg(currentSettings.cwDecoderToneHz, 0, 'f', 0));
+    } else if (modulationType == MOD_RTTY) {
         updateStatus(QStringLiteral("RTTY decoder: Baudot 45.45 baud, 170 Hz shift, mark 2125 Hz"));
     } else if (modulationType == MOD_FSK) {
         updateStatus(QStringLiteral("FSK decoder: Baudot 45.45 baud from discriminator"));

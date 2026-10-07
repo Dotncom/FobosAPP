@@ -1,5 +1,39 @@
 # Changelog
 
+## 4.8.3 - 2026-10-07
+
+### Added
+
+- Added an audio CW/Morse decoder with adjustable tone, initial/adaptive speed,
+  English/International, Ukrainian, and parallel alphabet views.
+- Added a simulator-only transmitter laboratory for microphone AM/NFM/WFM,
+  DSB/USB/LSB, CW and standards-compatible FT8 baseband generation, waveform
+  preview, duration limiting, and CF32 plus JSON export.
+- Added SSTV demodulation selection for USB, LSB and NFM reception.
+- Added self-tests for CW decoding, transmitter waveform generation and SSTV
+  mode/timing behavior.
+
+### Changed
+
+- Expanded SSTV support and timing recovery for Robot 36/72, Martin M1/M2,
+  Scottie S1/S2/DX, SC2-180 and the supported PD family.
+- Made SSTV VIS acquisition more selective and kept line synchronization
+  through short fades without treating arbitrary audio as a valid image.
+- Improved Robot 36 chroma recovery and Scottie channel/line sequencing for
+  cleaner real-radio image reception.
+- Expanded the English and Ukrainian in-app guide and UI translations for CW,
+  SSTV and the transmitter laboratory.
+
+### Notes
+
+- The transmitter backend in this release is a simulator and cannot emit RF.
+  Real transmitter hardware remains deliberately disabled until dedicated
+  safety interlocks and hardware testing exist.
+- CW and SSTV decoding remain experimental and depend on signal quality,
+  demodulation choice and audio tuning.
+- Android is unchanged and is intentionally not published with this desktop
+  and Raspberry source release.
+
 ## 4.8.2 - 2026-10-07
 
 ### Added

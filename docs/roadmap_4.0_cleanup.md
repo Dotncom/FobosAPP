@@ -64,8 +64,8 @@ Before every public upload:
 
 Current release recommendation:
 
-1. `4.8.2` is the current release baseline.
-2. Vulkan VkFFT remains experimental in 4.8.2. Continue validating
+1. `4.8.3` is the current release baseline.
+2. Vulkan VkFFT remains experimental in 4.8.3. Continue validating
    Auto/CPU/GPU modes on discrete NVIDIA/AMD hardware and Linux/Raspberry
    before making it the next release default.
 3. Do not publish Android unless rebuilt and smoke-tested on its development
@@ -262,14 +262,20 @@ Long-term idea: use FobosAPP as the receive/control side of a homebuilt
 transceiver system. Fobos itself is RX-only; TX must be a separate controlled
 subsystem.
 
-Implementation order:
+Implemented foundation:
 
-1. Define `TransmitterBackend` separately from `ReceiverBackend`.
-2. Add a simulator-only TX backend that cannot transmit.
-3. Add UI/state plumbing for simulator PTT, sequencing, and fault display.
-4. Prototype Raspberry-side GPIO/service control with no RF connected.
-5. Add hardware interlocks, watchdog, timeout, RX mute/protect sequencing,
+1. `TransmitterBackend` is separate from `ReceiverBackend` and does not touch
+   the receive IQ hot path.
+2. A simulator-only backend generates baseband IQ but cannot emit RF.
+3. The TX laboratory provides AM/NFM/WFM/DSB/USB/LSB microphone modulation,
+   CW and FT8 text generation, waveform preview, a hard duration limit, and
+   CF32 plus JSON export for offline verification.
+
+Remaining implementation order:
+
+1. Prototype Raspberry-side GPIO/service control with no RF connected.
+2. Add hardware interlocks, watchdog, timeout, RX mute/protect sequencing,
    relay timing, PA enable, SWR/current/temp fault handling, and emergency
    inhibit.
-6. Only after bench tests with dummy load: add real external TX module control.
-7. Keep real TX controls disabled unless explicitly configured.
+3. Only after bench tests with dummy load: add real external TX module control.
+4. Keep real TX controls disabled unless explicitly configured.

@@ -216,6 +216,9 @@ void YourClassName::panSpectrumView(int deltaPixels, int widthPixels) {
 
 void YourClassName::onModulationChanged(int id) {
     pendingSettings.modulationType = id;
+    if (cwDecoderControlsWidget) {
+        cwDecoderControlsWidget->setVisible(id == MOD_CW);
+    }
     pendingSettings.bandwidth = defaultBandwidthForModulation(id);
     if (bandwidthControl) {
         QSignalBlocker blocker(bandwidthControl);

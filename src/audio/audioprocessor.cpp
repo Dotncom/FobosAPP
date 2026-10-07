@@ -240,6 +240,7 @@ void AudioProcessor::configure(const RadioSettings &settings) {
     const bool resetDemodulator =
         audioSettings.inputMode != settings.inputMode ||
         audioSettings.modulationType != settings.modulationType ||
+        audioSettings.sstvDemodulationMode != settings.sstvDemodulationMode ||
         std::abs(audioSettings.centerFrequency - settings.centerFrequency) > 0.5 ||
         std::abs(audioSettings.listeningFrequency - settings.listeningFrequency) > 0.5 ||
         std::abs(audioSettings.sampleRate - settings.sampleRate) > 0.5 ||
@@ -960,6 +961,10 @@ void AudioProcessor::processDemodulatorBlock(const std::vector<float>& iqBlock,
     }
 
     const int modulationType = settings.modulationType;
+    const int demodulationType = modulationType == MOD_SSTV
+                                     ? sstvDemodulationModulationType(
+                                           settings.sstvDemodulationMode)
+                                     : modulationType;
     if (modulationType == MOD_DMR) {
         processDmrIqDemodulatorBlock(iqBlock, dmrBasebandSamples, dmrBasebandSampleRate, settings);
         return;
@@ -970,12 +975,12 @@ void AudioProcessor::processDemodulatorBlock(const std::vector<float>& iqBlock,
     const double fShift = settings.listeningFrequency - settings.centerFrequency;
     const double phaseIncrement = -TWO_PI * fShift / rfInputRate;
     const double bandwidth = settings.bandwidth;
-    const int decimationFactor = channelDecimationFactor(rfInputRate, modulationType, bandwidth);
+    const int decimationFactor = channelDecimationFactor(rfInputRate, demodulationType, bandwidth);
     const double rfChannelRate = rfInputRate / decimationFactor;
     const double audioTimingChannelRate = audioTimingRate / decimationFactor;
     const double outputStep = AUDIO_OUTPUT_RATE / audioTimingChannelRate;
 
-    double cutoff = channelCutoffForMode(modulationType, bandwidth);
+    double cutoff = channelCutoffForMode(demodulationType, bandwidth);
     cutoff = (std::min)(cutoff, rfChannelRate * 0.45);
     const float lowPassAlpha = static_cast<float>((std::clamp)(
         1.0 - std::exp(-TWO_PI * cutoff / rfChannelRate),
@@ -983,7 +988,7 @@ void AudioProcessor::processDemodulatorBlock(const std::vector<float>& iqBlock,
         1.0
         ));
     const bool digitalAudioMode = isDigitalAudioMode(modulationType);
-    double demodAudioCutoff = demodAudioCutoffForMode(modulationType, bandwidth);
+    double demodAudioCutoff = demodAudioCutoffForMode(demodulationType, bandwidth);
     if (!digitalAudioMode && settings.audioLowPassHz > 0.0) {
         demodAudioCutoff = clampDouble(settings.audioLowPassHz, 100.0, 20000.0);
     }
@@ -1007,7 +1012,7 @@ void AudioProcessor::processDemodulatorBlock(const std::vector<float>& iqBlock,
                   1.0))
             : 0.0f;
 
-    const bool lowerSideband = isLowerSidebandMode(modulationType);
+    const bool lowerSideband = isLowerSidebandMode(demodulationType);
     const double sidebandHighCut = (std::min)(cutoff, rfChannelRate * 0.45);
     const double sidebandLowCut = (std::min)(SSB_LOW_CUT_HZ, sidebandHighCut * 0.5);
     const double sidebandCenter = (sidebandLowCut + sidebandHighCut) * 0.5;
@@ -1042,7 +1047,9 @@ void AudioProcessor::processDemodulatorBlock(const std::vector<float>& iqBlock,
     double samPhase = samCarrierPhase;
     double samFrequency = samCarrierFrequency;
     const double samMaxFrequency = TWO_PI * SAM_LOCK_RANGE_HZ / rfChannelRate;
-    const double fmDeemphasisSeconds = modulationType == MOD_NFM ? NFM_DEEMPHASIS_SECONDS : FM_DEEMPHASIS_SECONDS;
+    const double fmDeemphasisSeconds = demodulationType == MOD_NFM
+                                           ? NFM_DEEMPHASIS_SECONDS
+                                           : FM_DEEMPHASIS_SECONDS;
     const float fmDeemphasisAlpha = static_cast<float>(
         1.0 - std::exp(-1.0 / ((std::max)(1.0, rfChannelRate) * fmDeemphasisSeconds))
         );
@@ -1236,7 +1243,7 @@ void AudioProcessor::processDemodulatorBlock(const std::vector<float>& iqBlock,
         const float envelope = std::sqrt(lowPassI * lowPassI + lowPassQ * lowPassQ);
         float demodulatedSample = 0.0f;
 
-        switch (modulationType) {
+        switch (demodulationType) {
         case MOD_ATV:
         case MOD_NFM:
         case MOD_APT:
@@ -1259,12 +1266,16 @@ void AudioProcessor::processDemodulatorBlock(const std::vector<float>& iqBlock,
             fmPrevI = limitedI;
             fmPrevQ = limitedQ;
             fmPreviousValid = true;
-            if (modulationType == MOD_FSK || modulationType == MOD_DMR) {
+            if (demodulationType == MOD_FSK || demodulationType == MOD_DMR) {
                 demodulatedSample *= 10.0f;
             } else {
                 fmDeemphasisState += fmDeemphasisAlpha * (demodulatedSample - fmDeemphasisState);
-                demodulatedSample = fmDeemphasisState * ((modulationType == MOD_WFM || modulationType == MOD_ATV) ? 2.5f : 8.0f);
-                if (modulationType == MOD_APT) {
+                demodulatedSample = fmDeemphasisState *
+                                    ((demodulationType == MOD_WFM ||
+                                      demodulationType == MOD_ATV)
+                                         ? 2.5f
+                                         : 8.0f);
+                if (demodulationType == MOD_APT) {
                     demodulatedSample *= 0.5f;
                 }
             }
@@ -1403,6 +1414,7 @@ void AudioProcessor::SDRThread() {
     RadioSettings activeSettings = currentSettingsSnapshot();
     int activeInputMode = activeSettings.inputMode;
     int activeModulationType = activeSettings.modulationType;
+    int activeSstvDemodulationMode = activeSettings.sstvDemodulationMode;
     uint64_t audioBlockCounter = 0;
     double activeCenterFrequency = activeSettings.centerFrequency;
     double activeListeningFrequency = activeSettings.listeningFrequency;
@@ -1430,6 +1442,7 @@ void AudioProcessor::SDRThread() {
         if (demodulatorResetRequested.exchange(false) ||
             activeInputMode != settings.inputMode ||
             activeModulationType != settings.modulationType ||
+            activeSstvDemodulationMode != settings.sstvDemodulationMode ||
             std::abs(activeCenterFrequency - settings.centerFrequency) > 0.5 ||
             std::abs(activeListeningFrequency - settings.listeningFrequency) > 0.5 ||
             std::abs(activeSampleRate - settings.sampleRate) > 0.5 ||
@@ -1443,6 +1456,7 @@ void AudioProcessor::SDRThread() {
                 normalizedDmrBasebandSampleRate(settings.dmrBasebandSampleRate)) {
             activeInputMode = settings.inputMode;
             activeModulationType = settings.modulationType;
+            activeSstvDemodulationMode = settings.sstvDemodulationMode;
             activeCenterFrequency = settings.centerFrequency;
             activeListeningFrequency = settings.listeningFrequency;
             activeSampleRate = settings.sampleRate;

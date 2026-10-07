@@ -221,6 +221,22 @@ using AMBE-capable binaries.
    - licenses/SPIRV-Tools-LICENSE.txt
    - licenses/SPIRV-Headers-LICENSE.txt
 
+15. ft8_lib
+   Project path:
+   - third_party/ft8_lib/
+
+   Upstream:
+   - https://github.com/kgoba/ft8_lib
+
+   Purpose: standards-compatible FT8 message packing and channel encoding for
+   the simulator-only transmitter laboratory. FobosAPP supplies its own
+   waveform generator and does not enable RF output through this component.
+
+   Copyright: ft8_lib contributors
+   License: MIT License.
+   Local license text:
+   - licenses/ft8_lib/LICENSE
+
 Release/source obligation note:
 If a binary release includes GPL DMR voice backend DLLs, publish the
 corresponding FobosAPP and FobosDMRVoiceBackend-gpl source, plus the exact

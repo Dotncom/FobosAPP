@@ -37,6 +37,8 @@ QJsonObject YourClassName::settingsToJson() const {
     settings["sampleRate"] = pendingSettings.sampleRate;
     settings["bandwidth"] = pendingSettings.bandwidth;
     settings["modulationType"] = pendingSettings.modulationType;
+    settings["sstvDemodulationMode"] =
+        normalizedSstvDemodulationMode(pendingSettings.sstvDemodulationMode);
     settings["fftLength"] = pendingSettings.fftLength;
     settings["fftBinWidthModeEnabled"] = fftBinWidthModeEnabled;
     settings["fftTargetBinWidthHz"] = fftTargetBinWidthHz;
@@ -236,6 +238,14 @@ void YourClassName::applySettingsFromJson(const QJsonObject &settingsJson, bool 
     pendingSettings.sampleRate = readDouble("sampleRate", pendingSettings.sampleRate);
     pendingSettings.bandwidth = readDouble("bandwidth", pendingSettings.bandwidth);
     pendingSettings.modulationType = readInt("modulationType", pendingSettings.modulationType);
+    pendingSettings.sstvDemodulationMode = normalizedSstvDemodulationMode(
+        readInt("sstvDemodulationMode", pendingSettings.sstvDemodulationMode));
+    if (sstvDemodulationCombo) {
+        const QSignalBlocker blocker(sstvDemodulationCombo);
+        const int index = sstvDemodulationCombo->findData(
+            pendingSettings.sstvDemodulationMode);
+        sstvDemodulationCombo->setCurrentIndex(index >= 0 ? index : 0);
+    }
     pendingSettings.fftLength = readInt("fftLength", pendingSettings.fftLength);
     fftBinWidthModeEnabled = readBool("fftBinWidthModeEnabled", fftBinWidthModeEnabled);
     fftTargetBinWidthHz = (std::clamp)(readDouble("fftTargetBinWidthHz", fftTargetBinWidthHz),

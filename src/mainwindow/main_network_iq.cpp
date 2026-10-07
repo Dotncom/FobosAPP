@@ -76,6 +76,8 @@ void YourClassName::sendNetworkIqFrame(const QByteArray &iqData, double sampleRa
     frame["listeningFrequency"] = pendingSettings.listeningFrequency;
     frame["bandwidth"] = pendingSettings.bandwidth;
     frame["modulationType"] = pendingSettings.modulationType;
+    frame["sstvDemodulationMode"] =
+        normalizedSstvDemodulationMode(pendingSettings.sstvDemodulationMode);
     frame["inputMode"] = isChannelIqProcessingMode() ? 0 : pendingSettings.inputMode;
     frame["payloadEncoding"] = "raw";
 
@@ -155,6 +157,8 @@ void YourClassName::handleNetworkIqPayload(const QJsonObject &frame, QByteArray 
     iqSettings.listeningFrequency = frame.value("listeningFrequency").toDouble(iqSettings.listeningFrequency);
     iqSettings.bandwidth = frame.value("bandwidth").toDouble(iqSettings.bandwidth);
     iqSettings.modulationType = frame.value("modulationType").toInt(iqSettings.modulationType);
+    iqSettings.sstvDemodulationMode = normalizedSstvDemodulationMode(
+        frame.value("sstvDemodulationMode").toInt(iqSettings.sstvDemodulationMode));
     iqSettings.inputMode = frame.value("inputMode").toInt(iqSettings.inputMode);
 
     if (channelizedFrame) {

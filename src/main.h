@@ -93,6 +93,7 @@
 class ZeroSpanDialog;
 class ResearchAnalysisDialog;
 class ZoomSpectrumDialog;
+class TransmitDialog;
 
 extern fobos_dev_t *device;
 extern float* dataq;
@@ -375,6 +376,7 @@ private:
                                                       const QStringList &order) const;
     void openPresetManager();
     void openZoomSpectrum();
+    void openTransmitDialog();
     void openApplicationSettings();
     void openApplicationHelp();
     void exportSettingsBackup();
@@ -606,6 +608,7 @@ private:
     QComboBox *listeningScanPresetCombo = nullptr;
     QComboBox *videoDemodCombo = nullptr;
     QComboBox *videoStandardCombo = nullptr;
+    QComboBox *sstvDemodulationCombo = nullptr;
     QComboBox *dmrLabColorCodeCombo = nullptr;
     QComboBox *dmrLabSlotCombo = nullptr;
     QComboBox *dmrLabCallTypeCombo = nullptr;
@@ -617,6 +620,7 @@ private:
     QComboBox *dmrPrivacyFrameOffsetCombo = nullptr;
     QComboBox *dmrPrivacyDropCombo = nullptr;
     QComboBox *dmrPrivacyBitLayoutCombo = nullptr;
+    QComboBox *cwDecoderAlphabetCombo = nullptr;
     QComboBox *spectrumEventModeCombo = nullptr;
     QLineEdit *dsdNeoProgramEdit = nullptr;
     QComboBox *qthSourceCombo = nullptr;
@@ -625,6 +629,8 @@ private:
     QComboBox *gnssTimeZoneCombo = nullptr;
     QCheckBox *dmrManualTimingCheckbox = nullptr;
     QSpinBox *dmrTimingOffsetSpin = nullptr;
+    QSpinBox *cwDecoderToneSpin = nullptr;
+    QSpinBox *cwDecoderWpmSpin = nullptr;
     QComboBox *dmrPrivacyKeyIdCombo = nullptr;
     QDoubleSpinBox *dmrSlicerRatioSpin = nullptr;
     QSpinBox *gnssDopplerSpanSpin = nullptr;
@@ -639,8 +645,10 @@ private:
     QCheckBox *waterfall3DFixedPlaneCheckbox = nullptr;
     QCheckBox *waterfall3DVncSliceInputCheckbox = nullptr;
     QCheckBox *dmrAdaptiveSlicerCheckbox = nullptr;
+    QCheckBox *cwDecoderAdaptiveCheckbox = nullptr;
     QCheckBox *dmrPrivacyForwardCheckbox = nullptr;
     QCheckBox *dsdNeoAutoStartCheckbox = nullptr;
+    QWidget *cwDecoderControlsWidget = nullptr;
     QSpinBox *dsdNeoInputPortSpin = nullptr;
     QSpinBox *dsdNeoUdpOutputPortSpin = nullptr;
     QButtonGroup *modulationButtonGroup = nullptr;
@@ -650,6 +658,7 @@ private:
     QPushButton *networkButton = nullptr;
     QPushButton *presetManagerButton = nullptr;
     QPushButton *zoomSpectrumButton = nullptr;
+    QPushButton *transmitButton = nullptr;
     QPushButton *appSettingsButton = nullptr;
     QPushButton *controlsToggleButton = nullptr;
     QPushButton *digitalToggleButton = nullptr;
@@ -885,6 +894,7 @@ private:
     QCheckBox *gnssSatelliteTableCheckbox = nullptr;
     QDialog *gnssSatelliteTableDialog = nullptr;
     ZoomSpectrumDialog *zoomSpectrumDialog = nullptr;
+    TransmitDialog *transmitDialog = nullptr;
     QTableWidget *gnssSatelliteTable = nullptr;
     QLabel *dsdNeoStatusLabel = nullptr;
 

@@ -2,7 +2,7 @@
 
 FobosAPP is an SDR receiver application for RigExpert Fobos SDR hardware.
 The current packaged release is Windows-first, with active Linux/Raspberry Pi
-and Android USB/network client support work. Version 4.8.2 keeps the stable
+and Android USB/network client support work. Version 4.8.3 keeps the stable
 real-device, network, and video/image work from the 2.x/3.x line, expands the
 receiver backend layer, adds native RTL-SDR/rtl_tcp and optional SoapySDR
 backends, improves scan/measurement tooling, adds practical external
@@ -14,8 +14,11 @@ receiver frequency/amplitude calibration offsets, adaptive multithreaded FFT
 processing, selectable FFT windows, and detailed spectrum-analysis overlays.
 Desktop builds can additionally use the experimental Vulkan VkFFT backend,
 with automatic FFTW fallback and an exact Hz-per-point mode for custom even FFT
-lengths. Version 4.8.2 also adds a live narrow-band Zoom FFT analyzer, improves
-high-rate waterfall production and resize preservation, and prepares an
+lengths. Version 4.8.3 also includes the live narrow-band Zoom FFT analyzer,
+adds an audio CW decoder, expands practical SSTV reception and introduces a
+simulator-only transmitter laboratory for offline AM/FM/SSB, Morse and FT8 IQ
+generation. It retains high-rate waterfall production and resize preservation,
+and prepares an
 experimental native HackRF RX backend. Android is maintained and released
 separately when its package changes.
 

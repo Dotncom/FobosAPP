@@ -40,6 +40,35 @@ enum ModulationMode {
     MOD_DMR = 17
 };
 
+enum SstvDemodulationMode {
+    SSTV_DEMOD_USB = 0,
+    SSTV_DEMOD_LSB = 1,
+    SSTV_DEMOD_NFM = 2
+};
+
+inline int normalizedSstvDemodulationMode(int mode) {
+    switch (mode) {
+    case SSTV_DEMOD_USB:
+    case SSTV_DEMOD_LSB:
+    case SSTV_DEMOD_NFM:
+        return mode;
+    default:
+        return SSTV_DEMOD_USB;
+    }
+}
+
+inline int sstvDemodulationModulationType(int mode) {
+    switch (normalizedSstvDemodulationMode(mode)) {
+    case SSTV_DEMOD_LSB:
+        return MOD_LSB;
+    case SSTV_DEMOD_NFM:
+        return MOD_NFM;
+    case SSTV_DEMOD_USB:
+    default:
+        return MOD_USB;
+    }
+}
+
 enum InputMode {
     INPUT_RF = 0,
     INPUT_HF_COMBINED = 1,
@@ -190,6 +219,7 @@ struct RadioSettings {
     double sampleRate = 50000000.0;
     double bandwidth = 200000.0;
     int modulationType = MOD_WFM;
+    int sstvDemodulationMode = SSTV_DEMOD_USB;
     int fftLength = 65536;
     int fftWindowType = FFT_WINDOW_RECTANGULAR;
     int lnaGain = 1;
@@ -208,6 +238,10 @@ struct RadioSettings {
     double hfAudioBlankerThreshold = 8.0;
     bool audioEnabled = true;
     bool syncEnabled = false;
+    double cwDecoderToneHz = 700.0;
+    int cwDecoderWpm = 18;
+    bool cwDecoderAdaptiveSpeed = true;
+    int cwDecoderAlphabet = 2;
     std::uint8_t gpoValue = 0;
     bool dmrLabEnabled = false;
     int dmrLabColorCode = -1;

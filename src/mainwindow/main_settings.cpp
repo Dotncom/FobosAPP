@@ -969,6 +969,32 @@ void YourClassName::loadPersistentSettings() {
     audioHttpStreamEnabled = settings.value("audioHttpStream/enabled", audioHttpStreamEnabled).toBool();
     audioHttpStreamPort = static_cast<quint16>((std::clamp)(settings.value("audioHttpStream/port", static_cast<int>(audioHttpStreamPort)).toInt(), 1, 65535));
     digitalDecodeEnabled = settings.value("digital/decodeEnabled", digitalDecodeEnabled).toBool();
+    pendingSettings.cwDecoderToneHz =
+        (std::clamp)(settings.value("digital/cwToneHz", pendingSettings.cwDecoderToneHz).toDouble(),
+                     100.0,
+                     3000.0);
+    pendingSettings.cwDecoderWpm =
+        (std::clamp)(settings.value("digital/cwInitialWpm", pendingSettings.cwDecoderWpm).toInt(),
+                     5,
+                     60);
+    pendingSettings.cwDecoderAdaptiveSpeed =
+        settings.value("digital/cwAdaptiveSpeed", pendingSettings.cwDecoderAdaptiveSpeed).toBool();
+    pendingSettings.cwDecoderAlphabet =
+        (std::clamp)(settings.value("digital/cwAlphabet", pendingSettings.cwDecoderAlphabet).toInt(),
+                     0,
+                     2);
+    if (cwDecoderToneSpin) cwDecoderToneSpin->setValue(qRound(pendingSettings.cwDecoderToneHz));
+    if (cwDecoderWpmSpin) cwDecoderWpmSpin->setValue(pendingSettings.cwDecoderWpm);
+    if (cwDecoderAdaptiveCheckbox) {
+        cwDecoderAdaptiveCheckbox->setChecked(pendingSettings.cwDecoderAdaptiveSpeed);
+    }
+    if (cwDecoderAlphabetCombo) {
+        const int index = cwDecoderAlphabetCombo->findData(pendingSettings.cwDecoderAlphabet);
+        if (index >= 0) cwDecoderAlphabetCombo->setCurrentIndex(index);
+    }
+    if (cwDecoderControlsWidget) {
+        cwDecoderControlsWidget->setVisible(pendingSettings.modulationType == MOD_CW);
+    }
     auto setComboToData = [](QComboBox *combo, const QVariant &data) {
         if (!combo) {
             return;
@@ -1170,6 +1196,15 @@ void YourClassName::loadPersistentSettings() {
     updateDsdNeoBridgeSettings();
     updateGopherTrunkBridgeSettings();
     videoDecodeEnabled = settings.value("video/decodeEnabled", videoDecodeEnabled).toBool();
+    pendingSettings.sstvDemodulationMode = normalizedSstvDemodulationMode(
+        settings.value("video/sstvDemodulationMode",
+                       pendingSettings.sstvDemodulationMode).toInt());
+    if (sstvDemodulationCombo) {
+        const QSignalBlocker blocker(sstvDemodulationCombo);
+        const int index = sstvDemodulationCombo->findData(
+            pendingSettings.sstvDemodulationMode);
+        sstvDemodulationCombo->setCurrentIndex(index >= 0 ? index : 0);
+    }
     if (videoDemodCombo) {
         const int demodMode = settings.value("video/demodMode", VideoProcessor::FmVideo).toInt();
         const int demodIndex = videoDemodCombo->findData(demodMode);
@@ -1626,6 +1661,17 @@ void YourClassName::savePersistentSettings() {
     settings.setValue("audioHttpStream/enabled", audioHttpStreamEnabled);
     settings.setValue("audioHttpStream/port", static_cast<int>(audioHttpStreamPort));
     settings.setValue("digital/decodeEnabled", digitalDecodeEnabled);
+    settings.setValue("digital/cwToneHz",
+                      cwDecoderToneSpin ? cwDecoderToneSpin->value()
+                                        : pendingSettings.cwDecoderToneHz);
+    settings.setValue("digital/cwInitialWpm",
+                      cwDecoderWpmSpin ? cwDecoderWpmSpin->value()
+                                       : pendingSettings.cwDecoderWpm);
+    settings.setValue("digital/cwAdaptiveSpeed",
+                      !cwDecoderAdaptiveCheckbox || cwDecoderAdaptiveCheckbox->isChecked());
+    settings.setValue("digital/cwAlphabet",
+                      cwDecoderAlphabetCombo ? cwDecoderAlphabetCombo->currentData().toInt()
+                                             : pendingSettings.cwDecoderAlphabet);
     settings.setValue("digital/dmrLockEnabled", dmrLabCaptureCheckbox && dmrLabCaptureCheckbox->isChecked());
     settings.setValue("digital/dmrLabColorCode", dmrLabColorCodeCombo ? dmrLabColorCodeCombo->currentData().toInt() : -1);
     settings.setValue("digital/dmrLabTimeslot", dmrLabSlotCombo ? dmrLabSlotCombo->currentData().toInt() : 0);
@@ -1702,6 +1748,12 @@ void YourClassName::savePersistentSettings() {
     settings.setValue("digital/dsdNeoInputPort", dsdNeoInputPortSpin ? dsdNeoInputPortSpin->value() : 7355);
     settings.setValue("digital/dsdNeoUdpOutputPort", dsdNeoUdpOutputPortSpin ? dsdNeoUdpOutputPortSpin->value() : 23456);
     settings.setValue("video/decodeEnabled", videoDecodeEnabled);
+    settings.setValue("video/sstvDemodulationMode",
+                      sstvDemodulationCombo
+                          ? normalizedSstvDemodulationMode(
+                                sstvDemodulationCombo->currentData().toInt())
+                          : normalizedSstvDemodulationMode(
+                                pendingSettings.sstvDemodulationMode));
     settings.setValue("video/demodMode", videoDemodCombo ? videoDemodCombo->currentData().toInt() : VideoProcessor::FmVideo);
     settings.setValue("video/standardIndex", videoStandardCombo ? videoStandardCombo->currentIndex() : 0);
     settings.setValue("video/invert", videoInvertCheckbox && videoInvertCheckbox->isChecked());

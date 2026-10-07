@@ -22,6 +22,7 @@ if (-not (Test-Path -LiteralPath $BuildPath)) {
 New-Item -ItemType Directory -Path $DeployPath -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $DeployPath "platforms") -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $DeployPath "imageformats") -Force | Out-Null
+New-Item -ItemType Directory -Path (Join-Path $DeployPath "audio") -Force | Out-Null
 
 $RootFiles = @(
     @{ Source = Join-Path $BuildPath "FobosAPP.exe"; Name = "FobosAPP.exe" },
@@ -34,6 +35,7 @@ $RootFiles = @(
     @{ Source = Join-Path $QtRoot "bin\Qt5Widgets.dll"; Name = "Qt5Widgets.dll" },
     @{ Source = Join-Path $QtRoot "bin\Qt5Network.dll"; Name = "Qt5Network.dll" },
     @{ Source = Join-Path $QtRoot "bin\Qt5SerialPort.dll"; Name = "Qt5SerialPort.dll" },
+    @{ Source = Join-Path $QtRoot "bin\Qt5Multimedia.dll"; Name = "Qt5Multimedia.dll" },
     @{ Source = Join-Path $VcRedistDir "MSVCP140.dll"; Name = "MSVCP140.dll" },
     @{ Source = Join-Path $VcRedistDir "MSVCP140_1.dll"; Name = "MSVCP140_1.dll" },
     @{ Source = Join-Path $VcRedistDir "VCRUNTIME140.dll"; Name = "VCRUNTIME140.dll" },
@@ -85,6 +87,17 @@ foreach ($PluginName in $ImageFormatPlugins) {
     }
 }
 
+$AudioPlugins = @(
+    "qtaudio_windows.dll",
+    "qtaudio_wasapi.dll"
+)
+foreach ($PluginName in $AudioPlugins) {
+    $PluginPath = Join-Path $QtRoot "plugins\audio\$PluginName"
+    if (Test-Path -LiteralPath $PluginPath) {
+        Copy-Item -LiteralPath $PluginPath -Destination (Join-Path $DeployPath "audio\$PluginName") -Force
+    }
+}
+
 $DocFiles = @(
     "README.md",
     "CHANGELOG.md",
@@ -111,7 +124,7 @@ $ReleaseDocFiles = @(
     "docs\dmr_external_backend.md",
     "docs\gnss_preflight_4.1.md",
     "docs\iq_pipeline_audit.md",
-    "docs\release_notes_4.8.2.md",
+    "docs\release_notes_4.8.3.md",
     "docs\roadmap_4.0_cleanup.md"
 )
 foreach ($DocFile in $ReleaseDocFiles) {

@@ -179,6 +179,15 @@ void YourClassName::processDigitalAudioFrame(const QByteArray &pcmData, int samp
     }
 
     RadioSettings settings = pendingSettings;
+    settings.cwDecoderToneHz = cwDecoderToneSpin ? cwDecoderToneSpin->value()
+                                                 : settings.cwDecoderToneHz;
+    settings.cwDecoderWpm = cwDecoderWpmSpin ? cwDecoderWpmSpin->value()
+                                             : settings.cwDecoderWpm;
+    settings.cwDecoderAdaptiveSpeed =
+        !cwDecoderAdaptiveCheckbox || cwDecoderAdaptiveCheckbox->isChecked();
+    settings.cwDecoderAlphabet =
+        cwDecoderAlphabetCombo ? cwDecoderAlphabetCombo->currentData().toInt()
+                               : settings.cwDecoderAlphabet;
     settings.dmrLabEnabled = dmrLabCaptureCheckbox && dmrLabCaptureCheckbox->isChecked();
     settings.dmrLabColorCode = dmrLabColorCodeCombo
                                    ? dmrLabColorCodeCombo->currentData().toInt()
@@ -319,6 +328,15 @@ void YourClassName::updateDigitalDecoderMode() {
         dmrBackend != DMR_BACKEND_DSD_NEO &&
         dmrBackend != DMR_BACKEND_GOPHERTRUNK;
     RadioSettings settings = pendingSettings;
+    settings.cwDecoderToneHz = cwDecoderToneSpin ? cwDecoderToneSpin->value()
+                                                 : settings.cwDecoderToneHz;
+    settings.cwDecoderWpm = cwDecoderWpmSpin ? cwDecoderWpmSpin->value()
+                                             : settings.cwDecoderWpm;
+    settings.cwDecoderAdaptiveSpeed =
+        !cwDecoderAdaptiveCheckbox || cwDecoderAdaptiveCheckbox->isChecked();
+    settings.cwDecoderAlphabet =
+        cwDecoderAlphabetCombo ? cwDecoderAlphabetCombo->currentData().toInt()
+                               : settings.cwDecoderAlphabet;
     settings.dmrBasebandSampleRate =
         dmrBasebandRateCombo
             ? normalizedDmrBasebandSampleRate(dmrBasebandRateCombo->currentData().toInt())

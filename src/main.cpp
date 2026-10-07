@@ -23,6 +23,7 @@
 #include "gnssserialutils.h"
 #include "tuningutils.h"
 #include "zoomspectrumdialog.h"
+#include "transmitdialog.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -358,11 +359,50 @@ YourClassName::YourClassName(QWidget *parent)
     markTranslatable(digitalModeLabel, QStringLiteral("mode"), QStringLiteral("Mode:"));
     digitalModeLayout->addWidget(digitalModeLabel);
     addModulationRadioButton(digitalWidget, digitalModeLayout, "FT8", MOD_FT8, "FT8 weak-signal decoder");
+    addModulationRadioButton(digitalWidget, digitalModeLayout, "CW", MOD_CW, "Morse audio decoder");
     addModulationRadioButton(digitalWidget, digitalModeLayout, "RTTY", MOD_RTTY, "AFSK RTTY decoder");
     addModulationRadioButton(digitalWidget, digitalModeLayout, "FSK", MOD_FSK, "Frequency-shift keying decoder");
     addModulationRadioButton(digitalWidget, digitalModeLayout, "PSK", MOD_PSK, "PSK audio mode placeholder");
     addModulationRadioButton(digitalWidget, digitalModeLayout, "DMR", MOD_DMR, "DMR 4FSK sync monitor");
     digitalModeLayout->addStretch();
+    cwDecoderControlsWidget = new QWidget(digitalWidget);
+    QHBoxLayout *cwDecoderLayout = new QHBoxLayout(cwDecoderControlsWidget);
+    cwDecoderLayout->setContentsMargins(0, 0, 0, 0);
+    QLabel *cwToneLabel = new QLabel("CW tone:", cwDecoderControlsWidget);
+    markTranslatable(cwToneLabel, QStringLiteral("cw_decoder_tone"), QStringLiteral("CW tone:"));
+    cwDecoderToneSpin = new QSpinBox(cwDecoderControlsWidget);
+    cwDecoderToneSpin->setRange(100, 3000);
+    cwDecoderToneSpin->setValue(700);
+    cwDecoderToneSpin->setSuffix(QStringLiteral(" Hz"));
+    QLabel *cwWpmLabel = new QLabel("Initial speed:", cwDecoderControlsWidget);
+    markTranslatable(cwWpmLabel, QStringLiteral("cw_decoder_speed"), QStringLiteral("Initial speed:"));
+    cwDecoderWpmSpin = new QSpinBox(cwDecoderControlsWidget);
+    cwDecoderWpmSpin->setRange(5, 60);
+    cwDecoderWpmSpin->setValue(18);
+    cwDecoderWpmSpin->setSuffix(QStringLiteral(" WPM"));
+    cwDecoderAdaptiveCheckbox = new QCheckBox("Adaptive speed", cwDecoderControlsWidget);
+    markTranslatable(cwDecoderAdaptiveCheckbox,
+                     QStringLiteral("cw_decoder_adaptive"),
+                     QStringLiteral("Adaptive speed"));
+    cwDecoderAdaptiveCheckbox->setChecked(true);
+    QLabel *cwAlphabetLabel = new QLabel("Alphabet:", cwDecoderControlsWidget);
+    markTranslatable(cwAlphabetLabel,
+                     QStringLiteral("cw_decoder_alphabet"),
+                     QStringLiteral("Alphabet:"));
+    cwDecoderAlphabetCombo = new QComboBox(cwDecoderControlsWidget);
+    cwDecoderAlphabetCombo->addItem(QStringLiteral("English / International"), 0);
+    cwDecoderAlphabetCombo->addItem(QString::fromUtf8(u8"Українська"), 1);
+    cwDecoderAlphabetCombo->addItem(QString::fromUtf8(u8"English + Українська"), 2);
+    cwDecoderAlphabetCombo->setCurrentIndex(2);
+    cwDecoderLayout->addWidget(cwToneLabel);
+    cwDecoderLayout->addWidget(cwDecoderToneSpin);
+    cwDecoderLayout->addWidget(cwWpmLabel);
+    cwDecoderLayout->addWidget(cwDecoderWpmSpin);
+    cwDecoderLayout->addWidget(cwDecoderAdaptiveCheckbox);
+    cwDecoderLayout->addWidget(cwAlphabetLabel);
+    cwDecoderLayout->addWidget(cwDecoderAlphabetCombo);
+    cwDecoderLayout->addStretch(1);
+    cwDecoderControlsWidget->setVisible(pendingSettings.modulationType == MOD_CW);
     dmrLabLayout->addWidget(dmrLabCaptureCheckbox, 0, 0);
     QLabel *dmrCcLabel = new QLabel("CC:", digitalWidget);
     markTranslatable(dmrCcLabel, QStringLiteral("dmr_cc"), QStringLiteral("CC:"));
@@ -429,6 +469,7 @@ YourClassName::YourClassName(QWidget *parent)
     digitalHeaderLayout->addWidget(digitalClearButton);
     digitalLayout->addLayout(digitalHeaderLayout);
     digitalLayout->addLayout(digitalModeLayout);
+    digitalLayout->addWidget(cwDecoderControlsWidget);
     digitalLayout->addLayout(dmrLabLayout);
     digitalLayout->addWidget(digitalStatusLabel);
     digitalLayout->addWidget(digitalTextEdit);
@@ -456,6 +497,12 @@ YourClassName::YourClassName(QWidget *parent)
     videoStandardCombo = new QComboBox(videoPanel);
     videoStandardCombo->addItem("PAL 15.625 kHz", 15625.0);
     videoStandardCombo->addItem("NTSC 15.734 kHz", 15734.2657);
+    sstvDemodulationCombo = new QComboBox(videoPanel);
+    sstvDemodulationCombo->addItem(QStringLiteral("USB"), SSTV_DEMOD_USB);
+    sstvDemodulationCombo->addItem(QStringLiteral("LSB"), SSTV_DEMOD_LSB);
+    sstvDemodulationCombo->addItem(QStringLiteral("NFM"), SSTV_DEMOD_NFM);
+    sstvDemodulationCombo->setToolTip(
+        QStringLiteral("Select USB/LSB for HF SSTV or NFM for audio sent through an FM handheld radio"));
     videoInvertCheckbox = new QCheckBox("Invert", videoPanel);
     markTranslatable(videoInvertCheckbox, QStringLiteral("invert"), QStringLiteral("Invert"));
     videoHSyncCheckbox = new QCheckBox("HSync", videoPanel);
@@ -478,6 +525,12 @@ YourClassName::YourClassName(QWidget *parent)
     addModulationRadioButton(videoPanel, videoModeLayout, "APT", MOD_APT, "NOAA APT weather satellite image decoder");
     addModulationRadioButton(videoPanel, videoModeLayout, "WEFAX", MOD_WEFAX, "HF weather fax image decoder");
     addModulationRadioButton(videoPanel, videoModeLayout, "LRPT", MOD_LRPT, "Meteor LRPT beta IQ monitor");
+    QLabel *sstvDemodulationLabel = new QLabel(QStringLiteral("SSTV demod:"), videoPanel);
+    markTranslatable(sstvDemodulationLabel,
+                     QStringLiteral("sstv_demodulation"),
+                     QStringLiteral("SSTV demod:"));
+    videoModeLayout->addWidget(sstvDemodulationLabel);
+    videoModeLayout->addWidget(sstvDemodulationCombo);
     videoModeLayout->addStretch();
     videoHeaderLayout->addWidget(videoDecodeCheckbox);
     videoHeaderLayout->addWidget(videoDemodCombo);
@@ -1072,6 +1125,13 @@ YourClassName::YourClassName(QWidget *parent)
     videoToggleButton->setMaximumWidth(54);
     videoToggleButton->setFixedHeight(44);
     videoToggleButton->setToolTip("Show or hide the video/image decoder panel");
+    transmitButton = new QPushButton(QStringLiteral("TX..."), this);
+    markTranslatable(transmitButton, QStringLiteral("transmitter"), QStringLiteral("TX..."));
+    transmitButton->setMaximumWidth(58);
+    transmitButton->setFixedHeight(44);
+    transmitButton->setToolTip(uiText(
+        QStringLiteral("transmitter_tooltip"),
+        QStringLiteral("Open the simulator-first transmitter laboratory; RF output is locked.")));
     recordingModeCombo = new QComboBox(this);
     recordingModeCombo->addItem("Audio WAV", static_cast<int>(RecordingManager::Mode::AudioWav));
     recordingModeCombo->addItem("Channel IQ WAV", static_cast<int>(RecordingManager::Mode::ChannelIqWav));
@@ -2532,6 +2592,7 @@ YourClassName::YourClassName(QWidget *parent)
 
     graphToolLayout->addWidget(digitalToggleButton);
     graphToolLayout->addWidget(videoToggleButton);
+    graphToolLayout->addWidget(transmitButton);
 
     graphLayout->addWidget(graphWidget);
     graphLayout->addWidget(scaleWidget); 
@@ -3412,6 +3473,7 @@ YourClassName::YourClassName(QWidget *parent)
     });
     connect(fobosButton, &QPushButton::clicked, this, &YourClassName::listFobosDevices);
     connect(networkButton, &QPushButton::clicked, this, &YourClassName::openNetworkSettingsDialog);
+    connect(transmitButton, &QPushButton::clicked, this, &YourClassName::openTransmitDialog);
     connect(networkController, &NetworkController::statusChanged, this, &YourClassName::onNetworkStatusChanged);
     connect(networkController, &NetworkController::channelReady, this, [this](const QString &status) {
         Q_UNUSED(status);
@@ -3506,6 +3568,32 @@ YourClassName::YourClassName(QWidget *parent)
         digitalDecodeEnabled = checked;
         updateDigitalDecoderMode();
     });
+    const auto applyCwDecoderSettings = [this]() {
+        pendingSettings.cwDecoderToneHz = cwDecoderToneSpin ? cwDecoderToneSpin->value() : 700.0;
+        pendingSettings.cwDecoderWpm = cwDecoderWpmSpin ? cwDecoderWpmSpin->value() : 18;
+        pendingSettings.cwDecoderAdaptiveSpeed =
+            !cwDecoderAdaptiveCheckbox || cwDecoderAdaptiveCheckbox->isChecked();
+        pendingSettings.cwDecoderAlphabet =
+            cwDecoderAlphabetCombo ? cwDecoderAlphabetCombo->currentData().toInt() : 2;
+        if (pendingSettings.modulationType == MOD_CW) updateDigitalDecoderMode();
+        savePersistentSettings();
+    };
+    connect(cwDecoderToneSpin,
+            QOverload<int>::of(&QSpinBox::valueChanged),
+            this,
+            [applyCwDecoderSettings](int) { applyCwDecoderSettings(); });
+    connect(cwDecoderWpmSpin,
+            QOverload<int>::of(&QSpinBox::valueChanged),
+            this,
+            [applyCwDecoderSettings](int) { applyCwDecoderSettings(); });
+    connect(cwDecoderAdaptiveCheckbox,
+            &QCheckBox::toggled,
+            this,
+            [applyCwDecoderSettings](bool) { applyCwDecoderSettings(); });
+    connect(cwDecoderAlphabetCombo,
+            QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this,
+            [applyCwDecoderSettings](int) { applyCwDecoderSettings(); });
     auto updateDmrLabControls = [this](bool locked) {
         const QList<QWidget *> controls = {
             dmrLabColorCodeCombo,
@@ -3844,6 +3932,24 @@ YourClassName::YourClassName(QWidget *parent)
     connect(videoStandardCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this]() {
         updateVideoProcessorMode();
     });
+    connect(sstvDemodulationCombo,
+            QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this,
+            [this]() {
+                pendingSettings.sstvDemodulationMode = normalizedSstvDemodulationMode(
+                    sstvDemodulationCombo->currentData().toInt());
+                if (audioProcessor) {
+                    audioProcessor->configure(audioProcessorSettings());
+                }
+                if (videoProcessor && videoProcessorThread) {
+                    QMetaObject::invokeMethod(videoProcessor,
+                                              [processor = videoProcessor]() {
+                                                  processor->resetSstvDecoder();
+                                              },
+                                              Qt::QueuedConnection);
+                }
+                savePersistentSettings();
+            });
     connect(videoInvertCheckbox, &QCheckBox::toggled, this, [this]() {
         updateVideoProcessorMode();
     });
@@ -7659,6 +7765,16 @@ void YourClassName::openZoomSpectrum() {
     zoomSpectrumDialog->setSource(processor->zoomSpectrumProcessor(),
                                   selectedLowHz,
                                   selectedHighHz);
+}
+
+void YourClassName::openTransmitDialog() {
+    if (!transmitDialog) {
+        transmitDialog = new TransmitDialog(uiLanguage, this);
+    }
+    transmitDialog->setLanguage(uiLanguage);
+    transmitDialog->show();
+    transmitDialog->raise();
+    transmitDialog->activateWindow();
 }
 
 void YourClassName::finishFobosStop(bool forcedRecovery) {

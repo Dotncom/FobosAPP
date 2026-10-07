@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(FobosAPP VERSION 4.8.2)
+project(FobosAPP VERSION 4.8.3)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -17,8 +17,8 @@ if(WIN32 AND NOT DEFINED Qt5_DIR AND EXISTS "C:/Qt/5.15.2/msvc2019_64/lib/cmake/
 endif()
 
 find_package(Qt5 REQUIRED COMPONENTS Core Widgets Network SerialPort)
+find_package(Qt5 COMPONENTS Multimedia QUIET)
 if(NOT WIN32)
-    find_package(Qt5 COMPONENTS Multimedia QUIET)
     find_package(OpenGL REQUIRED)
     find_package(Threads REQUIRED)
 endif()
@@ -92,6 +92,7 @@ endif()
 
 option(FOBOS_ENABLE_VKFFT "Enable experimental Vulkan VkFFT acceleration when the SDK is available" ON)
 option(FOBOS_BUILD_GPU_FFT_SELFTEST "Build the VkFFT numerical comparison utility" OFF)
+option(FOBOS_BUILD_CW_SELFTEST "Build the CW audio decoder self-test" OFF)
 set(FOBOS_HAS_VKFFT OFF)
 if(FOBOS_ENABLE_VKFFT AND EXISTS "${CMAKE_SOURCE_DIR}/third_party/VkFFT/vkFFT/vkFFT.h")
     find_package(Vulkan QUIET COMPONENTS glslang SPIRV-Tools)
@@ -177,6 +178,8 @@ set(SOURCES
     src/digital/digitalvideohunterdetector.h
     src/digital/digitaldecoder.cpp
     src/digital/digitaldecoder.h
+    src/digital/cwaudiodecoder.cpp
+    src/digital/cwaudiodecoder.h
     src/backends/bladerfbackend.cpp
     src/backends/bladerfbackend.h
     src/backends/hackrfbackend.cpp
@@ -219,6 +222,17 @@ set(SOURCES
     src/research/zoomspectrumprocessor.h
     src/research/zoomspectrumdialog.cpp
     src/research/zoomspectrumdialog.h
+    src/transmit/transmitterbackend.cpp
+    src/transmit/transmitterbackend.h
+    src/transmit/transmitwaveformgenerator.cpp
+    src/transmit/transmitwaveformgenerator.h
+    src/transmit/transmitdialog.cpp
+    src/transmit/transmitdialog.h
+    third_party/ft8_lib/ft8/constants.c
+    third_party/ft8_lib/ft8/crc.c
+    third_party/ft8_lib/ft8/encode.c
+    third_party/ft8_lib/ft8/message.c
+    third_party/ft8_lib/ft8/text.c
     src/audio/playbackmanager.cpp
     src/audio/playbackmanager.h
     src/presets/presethelpers.cpp
@@ -307,6 +321,8 @@ target_include_directories(FobosAPP PRIVATE
     ${CMAKE_SOURCE_DIR}/src/scan
     ${CMAKE_SOURCE_DIR}/src/ui
     ${CMAKE_SOURCE_DIR}/src/utils
+    ${CMAKE_SOURCE_DIR}/src/transmit
+    ${CMAKE_SOURCE_DIR}/third_party/ft8_lib
     ${CMAKE_SOURCE_DIR}/FobosDMRVoiceBackend-gpl/include
     ${FOBOS_STANDARD_INCLUDE_DIR}
     ${FOBOS_AGILE_INCLUDE_DIR}
@@ -376,6 +392,57 @@ if(FOBOS_HAS_VKFFT AND FOBOS_BUILD_GPU_FFT_SELFTEST)
     )
 endif()
 
+if(FOBOS_BUILD_CW_SELFTEST)
+    add_executable(FobosCwDecoderSelfTest
+        tools/cw_decoder_selftest.cpp
+        src/digital/cwaudiodecoder.cpp
+        src/digital/cwaudiodecoder.h
+    )
+    target_include_directories(FobosCwDecoderSelfTest PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/digital
+    )
+    target_link_libraries(FobosCwDecoderSelfTest PRIVATE Qt5::Core)
+    if(MSVC)
+        target_compile_options(FobosCwDecoderSelfTest PRIVATE /utf-8)
+    endif()
+
+    add_executable(FobosTransmitSelfTest
+        tools/transmit_waveform_selftest.cpp
+        src/transmit/transmitwaveformgenerator.cpp
+        src/transmit/transmitwaveformgenerator.h
+        src/transmit/transmitterbackend.h
+        third_party/ft8_lib/ft8/constants.c
+        third_party/ft8_lib/ft8/crc.c
+        third_party/ft8_lib/ft8/encode.c
+        third_party/ft8_lib/ft8/message.c
+        third_party/ft8_lib/ft8/text.c
+    )
+    target_include_directories(FobosTransmitSelfTest PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/transmit
+        ${CMAKE_SOURCE_DIR}/third_party/ft8_lib
+    )
+    target_link_libraries(FobosTransmitSelfTest PRIVATE Qt5::Core)
+    if(MSVC)
+        target_compile_options(FobosTransmitSelfTest PRIVATE /utf-8)
+    endif()
+
+    add_executable(FobosSstvDecoderSelfTest
+        tools/sstv_decoder_selftest.cpp
+        src/digital/videoprocessor.cpp
+        src/digital/videoprocessor.h
+    )
+    target_include_directories(FobosSstvDecoderSelfTest PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/core
+        ${CMAKE_SOURCE_DIR}/src/digital
+        ${CMAKE_SOURCE_DIR}/src/utils
+    )
+    target_link_libraries(FobosSstvDecoderSelfTest PRIVATE Qt5::Core Qt5::Gui Qt5::Widgets)
+    if(MSVC)
+        target_compile_options(FobosSstvDecoderSelfTest PRIVATE /utf-8)
+    endif()
+endif()
+
 if(WIN32)
     target_compile_definitions(FobosAPP PRIVATE FOBOSAPP_HAS_FFTW_THREADS=1)
 elseif(FFTW_FLOAT_THREADS_LIBRARY)
@@ -396,9 +463,12 @@ else()
     target_link_libraries(FobosAPP PRIVATE OpenGL::GL Threads::Threads)
 endif()
 
-if(NOT WIN32 AND Qt5Multimedia_FOUND)
+if(Qt5Multimedia_FOUND)
     target_link_libraries(FobosAPP PRIVATE Qt5::Multimedia)
-    target_compile_definitions(FobosAPP PRIVATE FOBOSAPP_HAS_QT_AUDIO=1)
+    target_compile_definitions(FobosAPP PRIVATE FOBOSAPP_HAS_QT_MULTIMEDIA=1)
+    if(NOT WIN32)
+        target_compile_definitions(FobosAPP PRIVATE FOBOSAPP_HAS_QT_AUDIO=1)
+    endif()
 elseif(NOT WIN32)
     message(WARNING "Qt5 Multimedia was not found. Linux audio playback will be disabled until the Qt Multimedia development package is installed.")
 endif()
