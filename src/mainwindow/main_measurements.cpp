@@ -78,6 +78,8 @@ void YourClassName::openResearchAnalysis(int tabIndex) {
                 context.centerFrequencyHz = pendingSettings.centerFrequency;
                 context.listeningFrequencyHz = pendingSettings.listeningFrequency;
                 context.inputMode = pendingSettings.inputMode;
+                context.modulationType = pendingSettings.modulationType;
+                context.bandwidthHz = pendingSettings.bandwidth;
                 context.fftLength = pendingSettings.fftLength;
                 context.fftWindowType = pendingSettings.fftWindowType;
                 return context;
@@ -117,6 +119,32 @@ void YourClassName::openResearchAnalysis(int tabIndex) {
                                                             spectrumPercentile99Enabled);
                 savePersistentSettings();
                 updateSpectrumScienceUi();
+            },
+            [this](bool enabled,
+                   double carrierOffsetHz,
+                   double phaseRadians,
+                   double timingPhase,
+                   double confidence) {
+                pendingSettings.liveDigitalSyncEnabled = enabled;
+                pendingSettings.liveDigitalSyncCarrierOffsetHz =
+                    enabled && std::isfinite(carrierOffsetHz)
+                        ? carrierOffsetHz
+                        : 0.0;
+                pendingSettings.liveDigitalSyncPhaseRadians =
+                    enabled && std::isfinite(phaseRadians)
+                        ? phaseRadians
+                        : 0.0;
+                pendingSettings.liveDigitalSyncTimingPhase =
+                    enabled && std::isfinite(timingPhase)
+                        ? (std::clamp)(timingPhase, 0.0, 1.0)
+                        : 0.5;
+                pendingSettings.liveDigitalSyncConfidence =
+                    enabled && std::isfinite(confidence)
+                        ? (std::clamp)(confidence, 0.0, 1.0)
+                        : 0.0;
+                if (audioProcessor) {
+                    audioProcessor->configure(audioProcessorSettings());
+                }
             },
             this);
     }
@@ -280,7 +308,7 @@ void YourClassName::exportSpectrumScienceCsv() {
     const SpectrumScienceMarker markerB = spectrumScienceAnalyzer.marker(1);
     QTextStream out(&file);
     out.setCodec("UTF-8");
-    out << "# FobosAPP scientific spectrum report\n";
+    out << "# Obrii SDR scientific spectrum report\n";
     out << "# created," << QDateTime::currentDateTime().toString(Qt::ISODateWithMs) << '\n';
     out << "# center_hz," << QString::number(pendingSettings.centerFrequency, 'f', 3) << '\n';
     out << "# listening_hz," << QString::number(pendingSettings.listeningFrequency, 'f', 3) << '\n';

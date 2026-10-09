@@ -163,7 +163,7 @@ void diagnosticTerminateHandler() {
 } // namespace
 
 void installDiagnosticLogger() {
-    const QString logPath = QDir(QCoreApplication::applicationDirPath()).filePath("FobosAPP_diagnostic.log");
+    const QString logPath = QDir(QCoreApplication::applicationDirPath()).filePath("ObriiSDR_diagnostic.log");
     if (QFileInfo(logPath).size() >= DIAGNOSTIC_LOG_MAX_BYTES) {
         QFile::remove(logPath + QStringLiteral(".1"));
         QFile::rename(logPath, logPath + QStringLiteral(".1"));

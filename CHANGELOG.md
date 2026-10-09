@@ -1,5 +1,55 @@
 # Changelog
 
+## 5.0.0 - 2026-10-09
+
+### Added
+
+- Added the graphical DSP path designer with live compact block editors,
+  persistent layouts, control blocks, resizable research plots, and independent
+  Multi-VFO spectrum/waterfall views.
+- Added a reorderable live audio-filter chain with classic filters, FM
+  de-emphasis, parametric EQ and shelves, gain/dynamics stages, adaptive notch,
+  impulse blanking, CW and sub-tone suppression, spectral denoise, and a custom
+  graphical FIR/EQ.
+- Added Multi-VFO monitoring and channel selection inside one wide IQ span,
+  including separate standard-interface and DSP-board spectrum/waterfall views.
+- Added expanded spectrum-research tools for detector modes, traces, markers,
+  zero span, triggers, IQ integrity, scientific export, dual-HF analysis,
+  constellation, eye diagram, synchronization, and live correction experiments.
+- Added hardware-tested experimental native HackRF receive support and bundled
+  redistributable runtime libraries and notices. Transmit remains disabled.
+- Added individual saved dBFS minimum/maximum controls for every DSP-board VFO
+  spectrum/waterfall block and every standard Multi-VFO mosaic channel.
+
+### Changed
+
+- Renamed the desktop and Raspberry application to Obrii SDR, including the
+  executable, launcher, help text, recording metadata, and release packaging.
+  Existing FobosAPP settings are migrated automatically on first launch.
+- Added an embedded Obrii SDR splash screen shown while the main window and
+  receiver backends initialize.
+- Reworked ordinary audio channel extraction with multistage decimation and
+  precise polyphase resampling, with a selectable simplified compatibility path.
+- Improved large-FFT responsiveness by dropping stale queued visual frames
+  instead of repeatedly calculating history the interface can no longer show.
+- Expanded CW, SSTV, DMR, GNSS, scan, calibration, replay, network, help, and
+  Ukrainian localization workflows.
+
+### Fixed
+
+- Stabilized FFT switching, Hz-per-point synchronization, waterfall history
+  preservation, DSP-board VFO selection, Fobos startup tuning, HackRF tuning,
+  and receiver-specific frequency/sample-rate limits.
+- Reduced normal diagnostic log noise while retaining detailed profiling behind
+  the Logging option.
+
+### Notes
+
+- The native bladeRF RX prototype remains disabled and hidden after physical
+  testing failed at device detection. Its source is retained for future work.
+- DMR voice and SDR-only GNSS decoding remain experimental.
+- Android is unchanged and is intentionally not included in this release.
+
 ## 4.8.3 - 2026-10-07
 
 ### Added

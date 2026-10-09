@@ -89,4 +89,4 @@ cmake --build "${BUILD_DIR}" -j "${JOBS}"
 
 echo
 echo "Build complete:"
-echo "  ${BUILD_DIR}/FobosAPP"
+echo "  ${BUILD_DIR}/ObriiSDR"

@@ -2167,7 +2167,7 @@ void DataProcessor::startRetuneRawDump(const QString &reason,
                                   .toString(QStringLiteral("yyyyMMdd_HHmmss_zzz"));
     const QString token = safeFileToken(reason);
     const QString basePath =
-        baseDir.filePath(QStringLiteral("FobosAPP_retune_%1_epoch%2_%3")
+        baseDir.filePath(QStringLiteral("ObriiSDR_retune_%1_epoch%2_%3")
                              .arg(timestamp,
                                   QString::number(static_cast<qulonglong>(epoch)),
                                   token));
@@ -2302,7 +2302,7 @@ void DataProcessor::finishRetuneRawDumpLocked(const QString &status) {
     const QString rawPath = retuneRawDumpBasePath + QStringLiteral(".f32iq");
     const QString jsonPath = retuneRawDumpBasePath + QStringLiteral(".json");
     QJsonObject root;
-    root.insert(QStringLiteral("app"), QStringLiteral("FobosAPP"));
+    root.insert(QStringLiteral("app"), QStringLiteral("ObriiSDR"));
     root.insert(QStringLiteral("version"), 1);
     root.insert(QStringLiteral("status"), status);
     root.insert(QStringLiteral("format"), QStringLiteral("float32_le_interleaved_iq"));
@@ -2458,6 +2458,27 @@ bool DataProcessor::retuneCenterFrequency(double centerFrequencyHz) {
              << "frequency" << frequencyHz
              << "result" << result;
     return result == 0;
+}
+
+bool DataProcessor::applyHackRfGainSettings(int lnaGainDb, int vgaGainDb) {
+    if (activeStreamKind != ReceiverBackendStreamKind::HackRfNative) {
+        return false;
+    }
+    void *hackRfDevice = activeDevice.load();
+    if (!running.load() || !hackRfDevice) {
+        return false;
+    }
+
+    const int snappedLnaDb = (std::clamp)(lnaGainDb, 0, 40) / 8 * 8;
+    const int snappedVgaDb = (std::clamp)(vgaGainDb, 0, 62) / 2 * 2;
+    const int lnaResult = setHackRfLnaGainSafely(hackRfDevice,
+                                                 static_cast<std::uint32_t>(snappedLnaDb));
+    const int vgaResult = setHackRfVgaGainSafely(hackRfDevice,
+                                                 static_cast<std::uint32_t>(snappedVgaDb));
+    qDebug() << "[HackRF] live gains"
+             << "LNA" << snappedLnaDb << "result" << lnaResult
+             << "VGA" << snappedVgaDb << "result" << vgaResult;
+    return lnaResult == 0 && vgaResult == 0;
 }
 
 bool DataProcessor::applyRtlGainSettings(bool agc, int gainTenthsDb) {

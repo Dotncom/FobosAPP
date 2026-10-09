@@ -62,6 +62,7 @@ signals:
     void panRequested(int deltaPixels, int widthPixels);
     void scienceMarkerRequested(double frequency);
     void bandwidthSelectionChanged(double lowHz, double highHz);
+    void multiVfoSelectionRequested(double lowHz, double highHz);
 
 protected:
     void initializeGL() override;
@@ -131,6 +132,7 @@ private:
     QPoint hoverCursorPos;
     bool bandwidthMeasurementActive = false;
     bool bandwidthMeasurementVisible = false;
+    bool multiVfoSelectionActive = false;
     QPoint bandwidthMeasureStartPos;
     QPoint bandwidthMeasureEndPos;
     bool spectrumPanActive = false;

@@ -1,51 +1,46 @@
-# FobosAPP
+# Obrii SDR
 
-FobosAPP is an SDR receiver application for RigExpert Fobos SDR hardware.
+Obrii SDR is a wideband SDR receiver and research workstation, optimized first
+for RigExpert Fobos SDR hardware while also supporting additional receiver
+backends.
 The current packaged release is Windows-first, with active Linux/Raspberry Pi
-and Android USB/network client support work. Version 4.8.3 keeps the stable
-real-device, network, and video/image work from the 2.x/3.x line, expands the
-receiver backend layer, adds native RTL-SDR/rtl_tcp and optional SoapySDR
-backends, improves scan/measurement tooling, adds practical external
-NMEA/u-blox GNSS receiver support, keeps SDR GNSS acquisition diagnostics
-available, and keeps the desktop, Raspberry Pi, and Android tuning controls
-current. It also adds GPU-rendered 3D waterfall modes to the desktop/Raspberry
-application, interactive camera and slice inspection, 3D spectrum replay,
-receiver frequency/amplitude calibration offsets, adaptive multithreaded FFT
-processing, selectable FFT windows, and detailed spectrum-analysis overlays.
-Desktop builds can additionally use the experimental Vulkan VkFFT backend,
-with automatic FFTW fallback and an exact Hz-per-point mode for custom even FFT
-lengths. Version 4.8.3 also includes the live narrow-band Zoom FFT analyzer,
-adds an audio CW decoder, expands practical SSTV reception and introduces a
-simulator-only transmitter laboratory for offline AM/FM/SSB, Morse and FT8 IQ
-generation. It retains high-rate waterfall production and resize preservation,
-and prepares an
-experimental native HackRF RX backend. Android is maintained and released
-separately when its package changes.
+support and a separately maintained Android USB/network client. Version 5.0.0
+introduces the Obrii SDR identity, a graphical DSP path designer, a live
+reorderable audio-filter chain, Multi-VFO channel views, expanded research
+analysis, and a hardware-tested experimental native HackRF RX backend. It keeps
+the high-rate Fobos path, native RTL-SDR/rtl_tcp, optional SoapySDR, external
+NMEA/u-blox GNSS, SDR GNSS acquisition diagnostics, 2D/3D waterfall and replay,
+Zoom FFT, CW/SSTV decoding, DMR experiments, and the simulator-only transmitter
+laboratory. FFTW/VkFFT selection, exact Hz-per-point FFT sizes, stale-frame
+dropping, and multistage channel extraction keep the wideband desktop and
+Raspberry paths responsive. Android is released separately only when its
+package changes.
 
 ## Windows Release Package
 
 Use the packaged `release/bin` folder as a self-contained runtime directory.
-Keep `FobosAPP.exe`, the Qt DLLs, Fobos DLLs, FFTW DLL, libusb DLL, VC runtime
+Keep `ObriiSDR.exe`, the Qt DLLs, Fobos DLLs, FFTW DLL, libusb DLL, VC runtime
 DLLs, and the `platforms/qwindows.dll` plugin together in the same folder tree.
 
-The app stores `FobosAPP.ini` in the per-user configuration directory (for
-example `%LOCALAPPDATA%\FobosAPP` on Windows or `~/.config/FobosAPP` on Linux), so it
+The app stores `ObriiSDR.ini` in the per-user configuration directory (for
+example `%LOCALAPPDATA%\ObriiSDR` on Windows or `~/.config/ObriiSDR` on Linux), so it
 does not require administrator rights and survives replacement of the release
-folder. A legacy INI beside the executable is migrated automatically when no
-per-user settings file exists. Diagnostic logs are still written beside the
-executable when that directory is writable.
+folder. Existing `%LOCALAPPDATA%\FobosAPP\FobosAPP.ini` and legacy INI files
+beside the executable are migrated automatically when no Obrii SDR settings
+file exists. Diagnostic logs are still written beside the executable when that
+directory is writable.
 
-`FobosAPP.ini` contains user presets, scan lists, QTH map markers, API keys for
+`ObriiSDR.ini` contains user presets, scan lists, QTH map markers, API keys for
 map providers, and UI settings. The desktop app provides
 `Settings... -> Settings backup -> Export settings... / Import settings...` for
 making a separate backup or moving settings to another computer.
 
-DMR voice in 4.8.x is experimental. Windows packages may include optional
+DMR voice remains experimental. Windows packages may include optional
 `dmr_voice_backends/fobos_dmr_voice_*.dll` GPL backend modules. See
 `THIRD_PARTY_LICENSES.txt` and `licenses/dmr_voice_backend/` before
 redistributing AMBE-capable binaries.
 
-GNSS/QTH work in 4.8.x has two paths:
+GNSS/QTH has two paths:
 
 - External serial GNSS receivers are the practical path. Standard NMEA modules
   provide live coordinates, time, satellite diagnostics, sky view, QTH map
@@ -72,7 +67,7 @@ GNSS/QTH work in 4.8.x has two paths:
 
 ## Optional DMR Voice Backends
 
-FobosAPP loads optional DMR voice modules from `dmr_voice_backends/` at runtime.
+Obrii SDR loads optional DMR voice modules from `dmr_voice_backends/` at runtime.
 The app itself uses the stable C ABI in
 `FobosDMRVoiceBackend-gpl/include/fobos_dmr_voice_backend.h`; third-party AMBE
 implementations are kept as optional Git submodules so users can fetch and build
@@ -86,8 +81,8 @@ Optional backend dependencies:
 When cloning from Git:
 
 ```bash
-git clone https://github.com/Dotncom/FobosAPP.git
-cd FobosAPP
+git clone https://github.com/Dotncom/ObriiSDR.git
+cd ObriiSDR
 git submodule update --init --recursive third_party/mbelib-neo third_party/softdmr
 ```
 
@@ -123,12 +118,12 @@ On Linux/Raspberry Pi the same backend project builds shared libraries with
 
 The Digital Audio dock has a `DMR backend` selector:
 
-- `FobosAPP + mbelib`
-- `FobosAPP + OpenDMR/OP25`
+- `Obrii SDR + mbelib`
+- `Obrii SDR + OpenDMR/OP25`
 - `DSD-neo`
 - `GopherTrunk (future)` reserved for later work
 
-The optional DSD-neo bridge is disabled by default. When selected, FobosAPP
+The optional DSD-neo bridge is disabled by default. When selected, Obrii SDR
 forwards the selected DMR discriminator PCM as raw mono PCM16LE over local UDP and
 can accept decoded DMR voice audio back over UDP.
 
@@ -229,7 +224,7 @@ You can also sign an already-built executable directly:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools\sign_windows.ps1 `
-  -Path release\bin\FobosAPP.exe `
+  -Path release\bin\ObriiSDR.exe `
   -PfxPath C:\path\to\certificate.pfx `
   -CertPassword pfx-password
 ```
@@ -247,8 +242,8 @@ cmake --build build/linux-release -j
 Raspberry Pi OS quick trial:
 
 ```bash
-unzip FobosAPP-raspberry-source.zip
-cd FobosAPP-raspberry-source
+unzip ObriiSDR-raspberry-source.zip
+cd ObriiSDR-raspberry-source
 chmod +x tools/*.sh
 sudo ./tools/install_deps_debian.sh
 sudo cp packaging/linux/99-fobos-sdr.rules /etc/udev/rules.d/
@@ -289,7 +284,7 @@ cp build/fobos-dmr-voice-backend-gpl/libfobos_dmr_voice_*.so \
 ./tools/run_linux.sh
 ```
 
-During development, FobosAPP also searches `build/fobos-dmr-voice-backend-gpl/`
+During development, Obrii SDR also searches `build/fobos-dmr-voice-backend-gpl/`
 directly, so the copy step is optional for quick local tests.
 
 On Windows, create that source zip with:
@@ -298,7 +293,7 @@ On Windows, create that source zip with:
 powershell -ExecutionPolicy Bypass -File tools\package_raspberry_source.ps1
 ```
 
-The archive is written to `release/FobosAPP-raspberry-source.zip`.
+The archive is written to `release/ObriiSDR-raspberry-source.zip`.
 
 If `libfobos` or `libfobos_sdr` are not installed under `/usr/local`, pass their
 roots explicitly:
@@ -316,7 +311,7 @@ with the project and installs both Linux libraries into
 - `third_party/patched/libfobos`
 - `third_party/patched/libfobos-sdr-agile`
 
-The standard tree is the patched `libfobos` source used by FobosAPP, so Linux
+The standard tree is the patched `libfobos` source used by Obrii SDR, so Linux
 builds do not silently fall back to the official upstream version. If the
 vendored trees are missing, the script stops with an error. For a deliberate
 upstream experiment only, run:
@@ -338,7 +333,7 @@ sudo cmake --install build/linux-release --prefix /usr/local
 
 The Network Settings dialog includes an optional ready-audio UDP relay. Enable
 `Send ready audio by UDP` on the machine that demodulates audio and enter the
-target IP/port. On the listening machine, run another FobosAPP instance and
+target IP/port. On the listening machine, run another Obrii SDR instance and
 enable `Receive ready audio by UDP` on the same port. The relay carries 48 kHz
 mono PCM frames and is intended for low-latency Raspberry Pi monitoring without
 an external VLC loop.
@@ -347,12 +342,12 @@ For VLC or another generic player, enable `Serve VLC-compatible HTTP/WAV audio`
 on the machine that demodulates audio. Open
 `http://<raspberry-ip>:21092/audio.wav` from the player, replacing the IP and
 port as needed. This mode also carries 48 kHz mono PCM, but uses an ordinary
-HTTP WAV stream instead of the FobosAPP UDP framing.
+HTTP WAV stream instead of the Obrii SDR UDP framing.
 
 ## Android USB/Network Client
 
 An Android USB/network client lives in `android/network-client`. It is a
-separate Android Studio project that can talk to the existing FobosAPP network
+separate Android Studio project that can talk to the existing Obrii SDR network
 server over the TCP control channel or run the current direct USB/OTG Fobos
 preview path. The current Android client supports remote
 start/stop/settings, observer/controller role handling, spectrum/waterfall

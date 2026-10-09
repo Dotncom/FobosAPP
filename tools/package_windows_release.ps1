@@ -27,9 +27,9 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
 $ReleaseDir = Join-Path $Workspace "release"
 New-Item -ItemType Directory -Path $ReleaseDir -Force | Out-Null
 
-$Stage = Join-Path $ReleaseDir "FobosAPP-v$Version-windows-x64"
+$Stage = Join-Path $ReleaseDir "ObriiSDR-v$Version-windows-x64"
 if ([string]::IsNullOrWhiteSpace($OutputPath)) {
-    $OutputPath = Join-Path $ReleaseDir "FobosAPP-v$Version-windows-x64.zip"
+    $OutputPath = Join-Path $ReleaseDir "ObriiSDR-v$Version-windows-x64.zip"
 }
 $OutputFullPath = [System.IO.Path]::GetFullPath($OutputPath)
 if (-not $OutputFullPath.StartsWith($Workspace, [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -45,8 +45,14 @@ $excludedNames = @(
     "FobosAPP.ini",
     "FobosAPP_diagnostic.log",
     "FobosAPP-backup.exe",
+    "FobosAPP.exe",
+    "OBRII.png",
+    "ObriiSDR.ini",
+    "ObriiSDR_diagnostic.log",
+    "ObriiSDR-backup.exe",
     "dmr_lab_replay.exe",
-    "dmr_lab_replay.md"
+    "dmr_lab_replay.md",
+    "bladerf_native_beta.md"
 )
 $excludedExtensions = @(
     ".bmp",
@@ -59,7 +65,8 @@ $excludedExtensions = @(
     ".wav"
 )
 $excludedDirs = @(
-    "recordings"
+    "recordings",
+    "bladerf"
 )
 
 $runtimeRoot = $RuntimePath.TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)

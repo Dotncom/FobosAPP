@@ -1,4 +1,7 @@
 #include "main.h"
+#include "multivfowidget.h"
+#include "audiofilterchainwidget.h"
+#include "dspflowpanel.h"
 
 #include "appconstants.h"
 #include "dmrprivacyutils.h"
@@ -171,6 +174,21 @@ void YourClassName::applyUiLanguage() {
         markTranslatable(widget, key, widget->property("i18nFallback").toString());
     }
 
+    if (audioFilterChainWidget) {
+        audioFilterChainWidget->setLanguage(normalizedUiLanguage(uiLanguage) == QStringLiteral("uk"));
+    }
+    if (multiVfoWidget) {
+        multiVfoWidget->setLanguage(normalizedUiLanguage(uiLanguage) == QStringLiteral("uk"));
+    }
+    if (dspFlowPanel) {
+        dspFlowPanel->setLanguage(normalizedUiLanguage(uiLanguage) == QStringLiteral("uk"));
+    }
+    if (dspPathButton) {
+        dspPathButton->setToolTip(normalizedUiLanguage(uiLanguage) == QStringLiteral("uk")
+                                      ? QStringLiteral("Відкрити конструктор DSP-шляху")
+                                      : QStringLiteral("Open the DSP path designer"));
+    }
+
     if (languageComboBox) {
         QSignalBlocker blocker(languageComboBox);
         const int index = languageComboBox->findData(uiLanguage);
@@ -302,11 +320,11 @@ void YourClassName::applyUiLanguage() {
     setComboItemText(dmrBackendCombo,
                      DMR_BACKEND_FOBOS_MBELIB,
                      QStringLiteral("dmr_backend_fobos_mbelib"),
-                     QStringLiteral("FobosAPP + mbelib"));
+                     QStringLiteral("Obrii SDR + mbelib"));
     setComboItemText(dmrBackendCombo,
                      DMR_BACKEND_FOBOS_OPENDMR,
                      QStringLiteral("dmr_backend_fobos_opendmr"),
-                     QStringLiteral("FobosAPP + OpenDMR/OP25"));
+                     QStringLiteral("Obrii SDR + OpenDMR/OP25"));
     setComboItemText(dmrBackendCombo,
                      DMR_BACKEND_GOPHERTRUNK,
                      QStringLiteral("dmr_backend_gopher_future"),
@@ -596,6 +614,7 @@ void YourClassName::applyUiLanguage() {
                                   .arg(uiText(QStringLiteral("rtl_gain"), QStringLiteral("RTL gain")))
                                   .arg(pendingSettings.rtlTunerGainTenthsDb / 10.0, 0, 'f', 1));
     }
+    updateReceiverSpecificControls();
     if (scaleLabel) {
         scaleLabel->setText(QStringLiteral("%1: %2").arg(uiText(QStringLiteral("scale"), QStringLiteral("Scale")),
                                                         formatScalePercent(currentScale)));

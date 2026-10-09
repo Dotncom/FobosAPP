@@ -21,6 +21,15 @@ constexpr int HACKRF_ERR_NOT_LOADED = -16001;
 constexpr int HACKRF_ERR_NOT_OPEN = -16002;
 constexpr int HACKRF_ERR_UNSUPPORTED_INDEX = -16003;
 
+struct HackRfNativeDeviceList {
+    char **serialNumbers = nullptr;
+    int *usbBoardIds = nullptr;
+    int *usbDeviceIndex = nullptr;
+    int deviceCount = 0;
+    void **usbDevices = nullptr;
+    int usbDeviceCount = 0;
+};
+
 struct HackRfApi {
     QLibrary library;
     QString loadedPath;
@@ -29,6 +38,9 @@ struct HackRfApi {
 
     int (*init)() = nullptr;
     int (*open)(void **device) = nullptr;
+    HackRfNativeDeviceList *(*device_list)() = nullptr;
+    int (*device_list_open)(HackRfNativeDeviceList *list, int index, void **device) = nullptr;
+    void (*device_list_free)(HackRfNativeDeviceList *list) = nullptr;
     int (*close)(void *device) = nullptr;
     const char *(*error_name)(int status) = nullptr;
     int (*set_freq)(void *device, std::uint64_t frequencyHz) = nullptr;
@@ -143,6 +155,9 @@ bool ensureLoadedLocked() {
             resolveSymbol(hackrf, hackrf.stop_rx, "hackrf_stop_rx") &&
             resolveSymbol(hackrf, hackrf.is_streaming, "hackrf_is_streaming");
         resolveSymbol(hackrf, hackrf.error_name, "hackrf_error_name", false);
+        resolveSymbol(hackrf, hackrf.device_list, "hackrf_device_list", false);
+        resolveSymbol(hackrf, hackrf.device_list_open, "hackrf_device_list_open", false);
+        resolveSymbol(hackrf, hackrf.device_list_free, "hackrf_device_list_free", false);
         resolveSymbol(hackrf, hackrf.compute_baseband_filter_bw_round_down_lt,
                       "hackrf_compute_baseband_filter_bw_round_down_lt", false);
         resolveSymbol(hackrf, hackrf.set_antenna_enable, "hackrf_set_antenna_enable", false);
@@ -207,15 +222,61 @@ QString hackRfLastErrorMessage() {
     return api().lastError;
 }
 
-QVector<HackRfDeviceInfo> enumerateHackRfDevices() {
+QVector<HackRfDeviceInfo> enumerateHackRfDevices(HackRfRuntimeStatus *status) {
     QVector<HackRfDeviceInfo> devices;
-    if (!hackRfLibraryAvailable()) {
-        return devices;
+    if (status) {
+        *status = HackRfRuntimeStatus{};
     }
-    HackRfDeviceInfo info;
-    info.nativeIndex = 0;
-    info.label = QStringLiteral("HackRF native auto (libhackrf)");
-    devices.append(info);
+    const int result = withApi([&devices, status](HackRfApi &hackrf) {
+        if (status) {
+            status->libraryAvailable = true;
+            status->loadedPath = hackrf.loadedPath;
+            status->modernDeviceListAvailable =
+                hackrf.device_list && hackrf.device_list_open && hackrf.device_list_free;
+        }
+        if (hackrf.device_list && hackrf.device_list_open && hackrf.device_list_free) {
+            HackRfNativeDeviceList *list = hackrf.device_list();
+            if (!list) {
+                hackrf.lastError = QStringLiteral("hackrf_device_list returned null");
+                if (status) {
+                    status->errorMessage = hackrf.lastError;
+                }
+                return HACKRF_SUCCESS;
+            }
+            const int count = (std::max)(0, list->deviceCount);
+            if (status) {
+                status->deviceCount = count;
+            }
+            devices.reserve(count);
+            for (int index = 0; index < count; ++index) {
+                HackRfDeviceInfo info;
+                info.nativeIndex = index;
+                if (list->serialNumbers && list->serialNumbers[index]) {
+                    info.serial = QString::fromLatin1(list->serialNumbers[index]).trimmed();
+                }
+                info.label = info.serial.isEmpty()
+                                 ? QStringLiteral("HackRF native #%1").arg(index + 1)
+                                 : QStringLiteral("HackRF native #%1 (%2)")
+                                       .arg(index + 1)
+                                       .arg(info.serial);
+                devices.append(info);
+            }
+            hackrf.device_list_free(list);
+            return HACKRF_SUCCESS;
+        }
+
+        HackRfDeviceInfo info;
+        info.nativeIndex = 0;
+        info.label = QStringLiteral("HackRF native auto (legacy libhackrf)");
+        devices.append(info);
+        if (status) {
+            status->deviceCount = 1;
+        }
+        return HACKRF_SUCCESS;
+    });
+    if (status && result == HACKRF_ERR_NOT_LOADED) {
+        status->errorMessage = hackRfLastErrorMessage();
+    }
     return devices;
 }
 
@@ -224,11 +285,24 @@ int openHackRfDeviceSafely(void **dev, int nativeIndex) {
         return HACKRF_ERR_NOT_OPEN;
     }
     *dev = nullptr;
-    if (nativeIndex != 0) {
+    if (nativeIndex < 0) {
         return HACKRF_ERR_UNSUPPORTED_INDEX;
     }
-    return withApi([dev](HackRfApi &hackrf) {
-        const int result = hackrf.open(dev);
+    return withApi([dev, nativeIndex](HackRfApi &hackrf) {
+        int result = HACKRF_ERR_UNSUPPORTED_INDEX;
+        if (hackrf.device_list && hackrf.device_list_open && hackrf.device_list_free) {
+            HackRfNativeDeviceList *list = hackrf.device_list();
+            if (!list) {
+                hackrf.lastError = QStringLiteral("hackrf_device_list returned null");
+                return HACKRF_ERR_NOT_OPEN;
+            }
+            if (nativeIndex < list->deviceCount) {
+                result = hackrf.device_list_open(list, nativeIndex, dev);
+            }
+            hackrf.device_list_free(list);
+        } else if (nativeIndex == 0) {
+            result = hackrf.open(dev);
+        }
         if (result != HACKRF_SUCCESS) {
             hackrf.lastError = statusToStringLocked(hackrf, result);
         }

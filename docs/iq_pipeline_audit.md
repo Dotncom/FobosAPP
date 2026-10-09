@@ -21,9 +21,12 @@ The 2026-06-13 synthetic GPS self-test also found the injected PRN immediately i
 ## Remaining Suspect Areas
 
 1. Channelizer and resampler correctness:
+   - ordinary analog/audio modes and network Channel IQ now share the streaming frequency-translating channelizer;
+   - coarse decimation is followed by a 64-phase, 32-tap Blackman-windowed FIR resampler, and the advertised output rate is the exact target rate rather than input rate divided by an integer;
+   - DMR and dual-input HF noise cancellation intentionally retain their specialized timing paths;
    - verify frequency-shift sign with real offset test tones, not only synthetic GNSS;
    - verify I/Q order and conjugation assumptions with a known positive/negative offset source;
-   - compare FobosAPP channelized output against a trusted external tool.
+   - compare Obrii SDR channelized output against a trusted external tool.
 2. Receiver spurs and interference:
    - the waterfall showed stable narrow lines near the GNSS band;
    - true GPS L1 C/A is spread-spectrum and often below the visible noise floor;
@@ -69,6 +72,6 @@ hot-path invariants, and the evaluation of whether `DataProcessor` and
 ## Next Practical Tests
 
 1. Feed a known complex test tone through the live channelizer and verify positive/negative offset sign.
-2. Record GNSS IQ with the current bicone setup, then run FobosAPP acquisition offline with the `GPS replay` button and compare with GNSS-SDR.
+2. Record GNSS IQ with the current bicone setup, then run Obrii SDR acquisition offline with the `GPS replay` button and compare with GNSS-SDR.
 3. Test with a GNSS active antenna plus bias tee or an external GNSS LNA/filter if available.
 4. Repeat DMR with the same IQ stream diagnostics enabled and check whether the raw stream remains stable during voice tests.

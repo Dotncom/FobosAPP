@@ -1,4 +1,5 @@
 #include "main.h"
+#include "audiofilterchainwidget.h"
 #include "appconstants.h"
 #include "appsettingsutils.h"
 #include "diagnosticlogging.h"
@@ -49,6 +50,8 @@ void YourClassName::updateUiFromPendingSettings() {
         }
         comboBox->blockSignals(false);
     }
+    rebuildReceiverModeChoices();
+    updateReceiverSpecificControls();
     if (clkBox) {
         clkBox->blockSignals(true);
         const int index = clkBox->findData(pendingSettings.clockSource);
@@ -102,7 +105,9 @@ void YourClassName::updateUiFromPendingSettings() {
     if (listeningFrequencyControl) {
         QSignalBlocker blocker(listeningFrequencyControl);
         if (pendingSettings.inputMode == INPUT_RF) {
-            listeningFrequencyControl->setRangeHz(RF_MIN_LISTENING_FREQUENCY, RF_EXPERIMENTAL_MAX_FREQUENCY);
+            listeningFrequencyControl->setRangeHz(
+                rfMinimumListeningFrequency(pendingSettings),
+                rfMaximumFrequency(pendingSettings));
         } else {
             listeningFrequencyControl->setRangeHz(directMinFrequencyForMode(pendingSettings.inputMode,
                                                                             pendingSettings.sampleRate),
@@ -136,19 +141,27 @@ void YourClassName::updateUiFromPendingSettings() {
     }
     if (lnaGainSlider) {
         lnaGainSlider->blockSignals(true);
-        lnaGainSlider->setValue(pendingSettings.lnaGain);
+        lnaGainSlider->setValue(isHackRfNativeSelected()
+                                    ? pendingSettings.hackRfLnaGainDb
+                                    : pendingSettings.lnaGain);
         lnaGainSlider->blockSignals(false);
     }
     if (lnaGainLabel) {
-        lnaGainLabel->setText(QStringLiteral("%1: %2").arg(uiText(QStringLiteral("lna_gain"), QStringLiteral("LNA Gain"))).arg(pendingSettings.lnaGain));
+        lnaGainLabel->setText(isHackRfNativeSelected()
+                                  ? QStringLiteral("HackRF LNA: %1 dB").arg(pendingSettings.hackRfLnaGainDb)
+                                  : QStringLiteral("%1: %2").arg(uiText(QStringLiteral("lna_gain"), QStringLiteral("LNA Gain"))).arg(pendingSettings.lnaGain));
     }
     if (vgaGainSlider) {
         vgaGainSlider->blockSignals(true);
-        vgaGainSlider->setValue(pendingSettings.vgaGain);
+        vgaGainSlider->setValue(isHackRfNativeSelected()
+                                    ? pendingSettings.hackRfVgaGainDb
+                                    : pendingSettings.vgaGain);
         vgaGainSlider->blockSignals(false);
     }
     if (vgaGainLabel) {
-        vgaGainLabel->setText(QStringLiteral("%1: %2").arg(uiText(QStringLiteral("vga_gain"), QStringLiteral("VGA Gain"))).arg(pendingSettings.vgaGain));
+        vgaGainLabel->setText(isHackRfNativeSelected()
+                                  ? QStringLiteral("HackRF VGA: %1 dB").arg(pendingSettings.hackRfVgaGainDb)
+                                  : QStringLiteral("%1: %2").arg(uiText(QStringLiteral("vga_gain"), QStringLiteral("VGA Gain"))).arg(pendingSettings.vgaGain));
     }
     if (audioCheckbox) {
         audioCheckbox->blockSignals(true);
@@ -259,6 +272,9 @@ void YourClassName::updateUiFromPendingSettings() {
         audioHighPassSlider->blockSignals(true);
         audioHighPassSlider->setValue(audioHighPassHzToSliderValue(pendingSettings.audioHighPassHz));
         audioHighPassSlider->blockSignals(false);
+    }
+    if (audioFilterChainWidget) {
+        audioFilterChainWidget->setConfigurationJson(pendingSettings.audioFilterChainJson);
     }
     if (hfNoiseCancelDepthSlider) {
         hfNoiseCancelDepthSlider->blockSignals(true);

@@ -66,11 +66,26 @@ QVector<double> YourClassName::standardScanFrequencyList(QString *error) const {
     const QString centers = standardScanCentersEdit
                                 ? standardScanCentersEdit->text().trimmed()
                                 : standardScanCentersMhz.trimmed();
-    return parseStandardScanCentersMhz(centers,
-                                       pendingSettings.sampleRate,
-                                       AGILE_SCAN_MIN_POINTS,
-                                       error,
-                                       nullptr);
+    QVector<double> frequencies = parseStandardScanCentersMhz(centers,
+                                                               pendingSettings.sampleRate,
+                                                               AGILE_SCAN_MIN_POINTS,
+                                                               error,
+                                                               nullptr);
+    const double minimumFrequency = rfMinimumCenterFrequency(pendingSettings);
+    const double maximumFrequency = rfMaximumCenterFrequency(pendingSettings);
+    for (const double frequency : frequencies) {
+        if (frequency < minimumFrequency || frequency > maximumFrequency) {
+            if (error) {
+                *error = uiText(
+                    QStringLiteral("scan_receiver_frequency_range"),
+                    QStringLiteral("A scan center is outside the selected receiver range: %1-%2 MHz"))
+                             .arg(minimumFrequency / 1000000.0, 0, 'f', 3)
+                             .arg(maximumFrequency / 1000000.0, 0, 'f', 3);
+            }
+            return {};
+        }
+    }
+    return frequencies;
 }
 
 QVector<double> YourClassName::listeningScanFrequencyList(QString *error) const {
@@ -117,7 +132,7 @@ void YourClassName::normalizeStandardScanCentersUi(bool requireTwoCenters) {
 }
 
 void YourClassName::applyStandardScanRangeToCenters() {
-    auto parseRangeMhz = [](QString text, double *frequencyHz) -> bool {
+    auto parseRangeMhz = [this](QString text, double *frequencyHz) -> bool {
         if (!frequencyHz) {
             return false;
         }
@@ -129,8 +144,8 @@ void YourClassName::applyStandardScanRangeToCenters() {
         const double hz = mhz * 1000000.0;
         if (!ok ||
             !std::isfinite(hz) ||
-            hz < RF_MIN_CENTER_FREQUENCY ||
-            hz > RF_EXPERIMENTAL_MAX_FREQUENCY) {
+            hz < rfMinimumCenterFrequency(pendingSettings) ||
+            hz > rfMaximumCenterFrequency(pendingSettings)) {
             return false;
         }
         *frequencyHz = hz;
@@ -935,8 +950,8 @@ bool YourClassName::applyStandardScanRetune(double targetFrequencyHz, const char
     }
 
     const double requestedFrequency = (std::clamp)(targetFrequencyHz,
-                                                   RF_MIN_CENTER_FREQUENCY,
-                                                   RF_EXPERIMENTAL_MAX_FREQUENCY);
+                                                   rfMinimumCenterFrequency(pendingSettings),
+                                                   rfMaximumCenterFrequency(pendingSettings));
     double tunedFrequency = requestedFrequency;
 
     if (externalBackendSelected) {

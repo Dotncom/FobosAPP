@@ -11,7 +11,7 @@ if (-not (Test-Path -LiteralPath $ReleaseDir)) {
 }
 
 if ([string]::IsNullOrWhiteSpace($OutputPath)) {
-    $OutputPath = Join-Path $ReleaseDir "FobosAPP-raspberry-source.zip"
+    $OutputPath = Join-Path $ReleaseDir "ObriiSDR-raspberry-source.zip"
 }
 
 $OutputFullPath = [System.IO.Path]::GetFullPath($OutputPath)
@@ -19,7 +19,7 @@ if (-not $OutputFullPath.StartsWith($Workspace, [System.StringComparison]::Ordin
     throw "OutputPath must stay inside the workspace: $Workspace"
 }
 
-$Stage = Join-Path $ReleaseDir "FobosAPP-raspberry-source"
+$Stage = Join-Path $ReleaseDir "ObriiSDR-raspberry-source"
 if (Test-Path -LiteralPath $Stage) {
     Remove-Item -LiteralPath $Stage -Recurse -Force
 }

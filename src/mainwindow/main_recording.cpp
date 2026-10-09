@@ -143,7 +143,7 @@ QJsonObject YourClassName::recordingScientificSnapshot(const QString &phase) con
     snapshot["capturedAtUtc"] = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
 
     QJsonObject software;
-    software["name"] = QStringLiteral("FobosAPP");
+    software["name"] = QStringLiteral("Obrii SDR");
     software["version"] = QStringLiteral(FOBOSAPP_VERSION);
     software["buildAbi"] = QSysInfo::buildAbi();
     software["cpuArchitecture"] = QSysInfo::currentCpuArchitecture();

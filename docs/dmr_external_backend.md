@@ -1,11 +1,11 @@
 # DMR External Decoder Bridge
 
-FobosAPP can use several DMR paths from the `DMR backend` combo in the
+Obrii SDR can use several DMR paths from the `DMR backend` combo in the
 `Digital Audio` dock:
 
-- `FobosAPP + mbelib` uses the internal DMR parser with the mbelib voice backend
+- `Obrii SDR + mbelib` uses the internal DMR parser with the mbelib voice backend
   path.
-- `FobosAPP + OpenDMR/OP25` uses the internal DMR parser with the OpenDMR/OP25
+- `Obrii SDR + OpenDMR/OP25` uses the internal DMR parser with the OpenDMR/OP25
   runtime voice backend preference.
 - `DSD-neo` mirrors the selected DMR discriminator PCM to an external decoder
   process for comparison and optional decoded-audio playback.
@@ -19,7 +19,7 @@ test case proves that another backend is needed.
 
 ## DSD-neo Data Flow
 
-FobosAPP exports the narrow selected DMR channel after IQ channel selection and
+Obrii SDR exports the narrow selected DMR channel after IQ channel selection and
 FM/4FSK discriminator processing:
 
 ```text
@@ -39,10 +39,10 @@ The DSD-neo row controls the external process:
 
 - `Auto start` starts the configured `dsd-neo` executable.
 - Program path defaults to `dsd-neo/dsd-neo.exe` in the Windows release
-  layout, resolved relative to the FobosAPP executable folder.
-- `UDP in 7355` is the local DSD-neo PCM input port where FobosAPP sends DMR
+  layout, resolved relative to the Obrii SDR executable folder.
+- `UDP in 7355` is the local DSD-neo PCM input port where Obrii SDR sends DMR
   PCM.
-- `UDP 23456` is the local decoded-audio input where FobosAPP listens.
+- `UDP 23456` is the local decoded-audio input where Obrii SDR listens.
 
 When the bridge is enabled without auto-start, launch DSD-neo manually and point
 it at the same UDP input/output ports.
@@ -55,22 +55,22 @@ The auto-start path uses the same shape as this manual command:
 .\dsd-neo\dsd-neo.exe -fs -i udp:127.0.0.1:7355 -s 48000 -o udp:127.0.0.1:23456 -nm
 ```
 
-If the DMR 4FSK baseband rate in FobosAPP is changed, FobosAPP passes that
+If the DMR 4FSK baseband rate in Obrii SDR is changed, Obrii SDR passes that
 selected value through `-s`.
 
 ## Format Contract
 
 - Input to DSD-neo: raw PCM16LE mono UDP datagrams.
-- Input sample rate: current FobosAPP DMR 4FSK baseband rate, normally 48 kHz.
-- DSD-neo output back to FobosAPP: UDP raw PCM16 mono, expected 8 kHz DMR voice.
-- FobosAPP upsamples returned DSD-neo voice to 48 kHz before local playback.
+- Input sample rate: current Obrii SDR DMR 4FSK baseband rate, normally 48 kHz.
+- DSD-neo output back to Obrii SDR: UDP raw PCM16 mono, expected 8 kHz DMR voice.
+- Obrii SDR upsamples returned DSD-neo voice to 48 kHz before local playback.
 
 ## GopherTrunk Virtual Dibit Source
 
 GopherTrunk already exposes the useful DMR boundary we need: a continuous
-stream of decoded dibits plus a monotonic `baseIdx`. For FobosAPP this is a
+stream of decoded dibits plus a monotonic `baseIdx`. For Obrii SDR this is a
 better integration point than pretending to be a generic SDR device, because
-FobosAPP owns the Fobos-specific wideband IQ path, channel selection,
+Obrii SDR owns the Fobos-specific wideband IQ path, channel selection,
 discriminator, symbol timing, and slicer.
 
 The local lab adapter is:
@@ -94,7 +94,7 @@ Recommended manual lab command:
 .\downloads\gophertrunk\bin\fobos-dmr-virtual.exe -listen 127.0.0.1:7460 -audio-udp 127.0.0.1:23456
 ```
 
-The next FobosAPP-side step is to expose the selected DMR burst stream from
+The next Obrii SDR-side step is to expose the selected DMR burst stream from
 `DmrDecoder::Result` and feed it to this TCP port. Send a `reset` packet on
 start, stop, retune, sample-rate change, DMR lock loss, or slicer reset. The
 stream should contain full 132-dibit DMR bursts (`54 payload + 24 center +
@@ -104,7 +104,7 @@ the two-slot phase, 264/288-dibit stride, embedded LC, and talkgroup/radio IDs.
 
 ## Licensing Boundary
 
-DSD-neo remains an external program. FobosAPP does not compile it into the core
+DSD-neo remains an external program. Obrii SDR does not compile it into the core
 application and does not require it for normal SDR, scan, GNSS, or internal DMR
 metadata tests. Release packages may include instructions or a compatible
 external binary only when its license and redistribution requirements are

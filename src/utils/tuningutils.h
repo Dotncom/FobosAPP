@@ -9,6 +9,10 @@
 double directMaxFrequency(double sampleRate);
 double directMinFrequencyForMode(int inputMode, double sampleRate);
 QPair<double, double> listeningScanVisibleSpanHz(const RadioSettings &settings);
+double rfMinimumCenterFrequency(const RadioSettings &settings);
+double rfMaximumCenterFrequency(const RadioSettings &settings);
+double rfMinimumListeningFrequency(const RadioSettings &settings);
+double rfMaximumFrequency(const RadioSettings &settings);
 double autoTuneRoundingStepHz(double frequencyHz, double visibleSpanHz);
 double roundAutoTuneFrequencyHz(double frequencyHz, double visibleSpanHz);
 void normalizeTuning(RadioSettings &settings, bool preserveCenter = false);

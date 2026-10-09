@@ -151,7 +151,7 @@ bool SpectrumFrameRecorder::loadFile(const QString &path,
     const QByteArray magic = file.read(8);
     if (magic != QByteArray(kSpectrumMagic, 8)) {
         if (errorMessage) {
-            *errorMessage = QStringLiteral("not a FobosAPP spectrum-frame recording");
+            *errorMessage = QStringLiteral("not an Obrii SDR spectrum-frame recording");
         }
         return false;
     }
@@ -280,12 +280,12 @@ SpectrumFrameRecord SpectrumFrameRecorder::makeFrame(const std::vector<float> &f
 QString SpectrumFrameRecorder::makeRecordingPath() {
     const QString timestamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss_zzz"));
     return QDir(QCoreApplication::applicationDirPath())
-        .filePath(QStringLiteral("recordings/spectrum/FobosAPP_%1_spectrum.fbspec").arg(timestamp));
+        .filePath(QStringLiteral("recordings/spectrum/ObriiSDR_%1_spectrum.fbspec").arg(timestamp));
 }
 
 QJsonObject SpectrumFrameRecorder::makeMetadataObject() const {
     QJsonObject root;
-    root["app"] = QStringLiteral("FobosAPP");
+    root["app"] = QStringLiteral("ObriiSDR");
     root["format"] = QStringLiteral("fobos_spectrum_frames");
     root["version"] = 1;
     root["recordedAtUtc"] = startedAtUtc.toString(Qt::ISODateWithMs);

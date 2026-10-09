@@ -1092,7 +1092,7 @@ void YourClassName::toggleGnssNmeaLogging() {
                                    .arg(error));
         return;
     }
-    gnssNmeaLogFile->write("# FobosAPP NMEA log\n");
+    gnssNmeaLogFile->write("# Obrii SDR NMEA log\n");
     gnssNmeaLogFile->write(QStringLiteral("# UTC %1\n")
                                .arg(QDateTime::currentDateTimeUtc().toString(Qt::ISODate))
                                .toLatin1());

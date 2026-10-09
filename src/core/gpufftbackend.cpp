@@ -131,7 +131,7 @@ struct GpuFftBackend::Impl {
         }
 
         VkApplicationInfo applicationInfo = {VK_STRUCTURE_TYPE_APPLICATION_INFO};
-        applicationInfo.pApplicationName = "FobosAPP VkFFT";
+        applicationInfo.pApplicationName = "Obrii SDR VkFFT";
         applicationInfo.applicationVersion = VK_MAKE_VERSION(4, 8, 0);
         applicationInfo.pEngineName = "VkFFT";
         applicationInfo.engineVersion = 1;

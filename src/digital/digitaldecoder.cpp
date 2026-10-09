@@ -1106,6 +1106,9 @@ void DigitalDecoder::configure(const RadioSettings &settings, int sampleRate) {
                            static_cast<float>(settings.dmrSlicerRatio),
                            settings.dmrAdaptiveSlicer,
                            settings.dmrAmbeLayout);
+    dmrDecoder.setLiveTimingHint(settings.liveDigitalSyncEnabled,
+                                 settings.liveDigitalSyncTimingPhase,
+                                 settings.liveDigitalSyncConfidence);
     configureForMode(settings.modulationType, sampleRate);
 }
 
@@ -1146,6 +1149,9 @@ void DigitalDecoder::processPcmFrame(const QByteArray &pcmData, const RadioSetti
                            static_cast<float>(settings.dmrSlicerRatio),
                            settings.dmrAdaptiveSlicer,
                            settings.dmrAmbeLayout);
+    dmrDecoder.setLiveTimingHint(settings.liveDigitalSyncEnabled,
+                                 settings.liveDigitalSyncTimingPhase,
+                                 settings.liveDigitalSyncConfidence);
     configureForMode(settings.modulationType, sampleRate);
     if (pcmData.size() < static_cast<int>(sizeof(qint16))) {
         return;

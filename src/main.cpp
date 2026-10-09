@@ -11,6 +11,7 @@
 #include "dsdneobridge.h"
 #include "gophertrunkbridge.h"
 #include "finetunewidget.h"
+#include "multivfowidget.h"
 #include "modulationutils.h"
 #include "qthlocator.h"
 #include "qthmapwidget.h"
@@ -24,6 +25,7 @@
 #include "tuningutils.h"
 #include "zoomspectrumdialog.h"
 #include "transmitdialog.h"
+#include "dspflowpanel.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -32,6 +34,7 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
+#include <QEventLoop>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -71,11 +74,14 @@
 #include <QCoreApplication>
 #include <QRegularExpression>
 #include <QScopeGuard>
+#include <QScreen>
 #include <QSettings>
+#include <QSplashScreen>
 #include <QSerialPort>
 #include <QSerialPortInfo>
 #include <QtMath>
 #include <QUrl>
+#include "audiofilterchainwidget.h"
 #if !defined(_WIN32) && defined(FOBOSAPP_HAS_QT_AUDIO)
 #include <QAudioDeviceInfo>
 #endif
@@ -122,6 +128,8 @@ YourClassName::YourClassName(QWidget *parent)
     {
 
     loadUiTranslations();
+
+    setWindowTitle(QStringLiteral("Obrii SDR"));
 
     resize(1920, 1000);
     setMinimumSize(1180, 720);
@@ -178,10 +186,10 @@ YourClassName::YourClassName(QWidget *parent)
     digitalDecodeCheckbox->setChecked(digitalDecodeEnabled);
     dmrBackendCombo = new QComboBox(digitalWidget);
     dmrBackendCombo->addItem(uiText(QStringLiteral("dmr_backend_fobos_mbelib"),
-                                    QStringLiteral("FobosAPP + mbelib")),
+                                    QStringLiteral("Obrii SDR + mbelib")),
                              DMR_BACKEND_FOBOS_MBELIB);
     dmrBackendCombo->addItem(uiText(QStringLiteral("dmr_backend_fobos_opendmr"),
-                                    QStringLiteral("FobosAPP + OpenDMR/OP25")),
+                                    QStringLiteral("Obrii SDR + OpenDMR/OP25")),
                              DMR_BACKEND_FOBOS_OPENDMR);
     dmrBackendCombo->addItem(QStringLiteral("DSD-neo"), DMR_BACKEND_DSD_NEO);
     dmrBackendCombo->addItem(uiText(QStringLiteral("dmr_backend_gopher_future"),
@@ -301,19 +309,19 @@ YourClassName::YourClassName(QWidget *parent)
     dsdNeoProgramEdit = new QLineEdit(digitalWidget);
     dsdNeoProgramEdit->setPlaceholderText(defaultDsdNeoProgramPath());
     dsdNeoProgramEdit->setToolTip(uiText(QStringLiteral("dsd_neo_program_tooltip"),
-                                         QStringLiteral("Path to dsd-neo executable. Default release layout uses dsd-neo/dsd-neo.exe next to FobosAPP.")));
+                                         QStringLiteral("Path to dsd-neo executable. Default release layout uses dsd-neo/dsd-neo.exe next to ObriiSDR.")));
     dsdNeoInputPortSpin = new QSpinBox(digitalWidget);
     dsdNeoInputPortSpin->setRange(1024, 65535);
     dsdNeoInputPortSpin->setValue(7355);
     dsdNeoInputPortSpin->setPrefix(QStringLiteral("UDP in "));
     dsdNeoInputPortSpin->setToolTip(uiText(QStringLiteral("dsd_neo_tcp_tooltip"),
-                                           QStringLiteral("Local UDP port where dsd-neo listens for raw PCM16LE DMR input from FobosAPP.")));
+                                           QStringLiteral("Local UDP port where dsd-neo listens for raw PCM16LE DMR input from Obrii SDR.")));
     dsdNeoUdpOutputPortSpin = new QSpinBox(digitalWidget);
     dsdNeoUdpOutputPortSpin->setRange(1024, 65535);
     dsdNeoUdpOutputPortSpin->setValue(23456);
     dsdNeoUdpOutputPortSpin->setPrefix(QStringLiteral("UDP "));
     dsdNeoUdpOutputPortSpin->setToolTip(uiText(QStringLiteral("dsd_neo_udp_tooltip"),
-                                               QStringLiteral("Local UDP port where FobosAPP listens for decoded PCM audio from dsd-neo.")));
+                                               QStringLiteral("Local UDP port where Obrii SDR listens for decoded PCM audio from dsd-neo.")));
     dsdNeoStatusLabel = new QLabel(uiText(QStringLiteral("dsd_neo_idle"), QStringLiteral("DSD-neo bridge idle")), digitalWidget);
     dsdNeoStatusLabel->setWordWrap(false);
     dsdNeoStatusLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -790,11 +798,8 @@ YourClassName::YourClassName(QWidget *parent)
     colorCheckbox->hide();
 
     rebuildReceiverDeviceCombo();
-    modeBox->addItem("RF", INPUT_RF);
-    modeBox->addItem("HF1 + HF2", INPUT_HF_COMBINED);
-    modeBox->addItem("HF1", INPUT_HF1);
-    modeBox->addItem("HF2", INPUT_HF2);
-    modeBox->addItem("HF interference lab", INPUT_HF_NOISE_CANCEL);
+    rebuildReceiverModeChoices();
+    updateReceiverSpecificControls();
     
     clkBox->addItem("Internal", 0);
     clkBox->addItem("External", 1);
@@ -1106,6 +1111,10 @@ YourClassName::YourClassName(QWidget *parent)
     markTranslatable(networkButton, QStringLiteral("network"), QStringLiteral("Network"));
     appSettingsButton = new QPushButton("Settings...", this);
     markTranslatable(appSettingsButton, QStringLiteral("settings"), QStringLiteral("Settings..."));
+    dspPathButton = new QPushButton("DSP", this);
+    markTranslatable(dspPathButton, QStringLiteral("dsp_path_short"), QStringLiteral("DSP"));
+    dspPathButton->setFixedWidth(44);
+    dspPathButton->setToolTip("Open the DSP path designer");
     controlsToggleButton = new QPushButton("Cfg", this);
     markTranslatable(controlsToggleButton, QStringLiteral("settings_short"), QStringLiteral("Cfg"));
     controlsToggleButton->setCheckable(true);
@@ -2580,6 +2589,7 @@ YourClassName::YourClassName(QWidget *parent)
     
     QVBoxLayout *controlsToggleLayout = new QVBoxLayout();
     controlsToggleLayout->addStretch();
+    controlsToggleLayout->addWidget(dspPathButton);
     controlsToggleLayout->addWidget(controlsToggleButton);
 
     scaleLayout->addLayout(controlsToggleLayout, 0);
@@ -2859,6 +2869,40 @@ YourClassName::YourClassName(QWidget *parent)
     receiverSection.contentLayout->addLayout(rtlGainLayout);
     receiverSection.contentLayout->addLayout(startStopLayout);
 
+    multiVfoWidget = new MultiVfoWidget(this);
+    multiVfoWidget->setLanguage(uiLanguage == QStringLiteral("uk"));
+    multiVfoWidget->setReceiverContext(pendingSettings.centerFrequency,
+                                       pendingSettings.sampleRate,
+                                       pendingSettings.listeningFrequency,
+                                       pendingSettings.bandwidth,
+                                       pendingSettings.modulationType);
+    connect(multiVfoWidget, &MultiVfoWidget::monitorRequested, this,
+            [this](double frequencyHz, double bandwidthHz, int modulationType) {
+                if (!std::isfinite(frequencyHz) || !std::isfinite(bandwidthHz)) return;
+                if (pendingSettings.modulationType != modulationType) {
+                    if (modulationButtonGroup) {
+                        if (QAbstractButton *button = modulationButtonGroup->button(modulationType)) {
+                            const QSignalBlocker blocker(modulationButtonGroup);
+                            button->setChecked(true);
+                        }
+                    }
+                    onModulationChanged(modulationType);
+                }
+                pendingSettings.bandwidth = (std::clamp)(bandwidthHz, 10.0, 20000000.0);
+                if (bandwidthControl) {
+                    const QSignalBlocker blocker(bandwidthControl);
+                    bandwidthControl->setValueHz(pendingSettings.bandwidth);
+                }
+                updateTuningFromScale(frequencyHz, pendingSettings.centerFrequency);
+                savePersistentSettings();
+            });
+    connect(multiVfoWidget, &MultiVfoWidget::configurationChanged, this, [this]() {
+        if (persistentSettingsReady) savePersistentSettings();
+    });
+    CollapsibleSection multiVfoSection = createCollapsibleSection(
+        QStringLiteral("multi_vfo"), QStringLiteral("Multi-VFO / channelizer"), false);
+    multiVfoSection.contentLayout->addWidget(multiVfoWidget);
+
     CollapsibleSection hfCancelSection = createCollapsibleSection(QStringLiteral("hf_interference_lab_section"), QStringLiteral("HF interference lab"), false);
     hfCancelSection.contentLayout->addLayout(hfNoiseCancelLayout);
 
@@ -2914,6 +2958,27 @@ YourClassName::YourClassName(QWidget *parent)
     audioSection.contentLayout->addLayout(row2);
     audioSection.contentLayout->addWidget(audioDeviceComboBox);
 
+    audioFilterChainWidget = new AudioFilterChainWidget(this);
+    audioFilterChainWidget->setLanguage(uiLanguage == QStringLiteral("uk"));
+    connect(audioFilterChainWidget,
+            &AudioFilterChainWidget::configurationChanged,
+            this,
+            [this](const QString &json) {
+                pendingSettings.audioFilterChainJson = json;
+                if (audioProcessor) {
+                    audioProcessor->configure(audioProcessorSettings());
+                }
+                savePersistentSettings();
+                if (isNetworkClientMode()) {
+                    scheduleRemoteSettingsCommand();
+                }
+            });
+    CollapsibleSection audioFilterChainSection = createCollapsibleSection(
+        QStringLiteral("audio_filter_chain"),
+        QStringLiteral("Audio filter chain"),
+        false);
+    audioFilterChainSection.contentLayout->addWidget(audioFilterChainWidget);
+
     CollapsibleSection recordingSection = createCollapsibleSection(QStringLiteral("recording_playback"), QStringLiteral("Recording / playback"), false);
     recordingSection.contentLayout->addWidget(recordingStatusLabel);
     recordingSection.contentLayout->addLayout(recordingLayout);
@@ -2941,7 +3006,9 @@ YourClassName::YourClassName(QWidget *parent)
 
     layout->addWidget(deviceSection.widget);
     layout->addWidget(receiverSection.widget);
+    layout->addWidget(multiVfoSection.widget);
     layout->addWidget(audioSection.widget);
+    layout->addWidget(audioFilterChainSection.widget);
     layout->addWidget(hfCancelSection.widget);
     layout->addWidget(scanSection.widget);
     layout->addWidget(spectrumMeasurementSection.widget);
@@ -3424,6 +3491,7 @@ YourClassName::YourClassName(QWidget *parent)
         bool ok = false;
         const int selectedIndex = comboBox->currentData().toInt(&ok);
         pendingSettings.deviceIndex = ok ? receiverDeviceIndexFromComboValue(selectedIndex) : index;
+        rebuildReceiverModeChoices();
         if (isRtlBackendSelected()) {
             if (!isKnownRtlSampleRate(pendingSettings.sampleRate)) {
                 pendingSettings.sampleRate = RTL_TCP_SAFE_SAMPLE_RATE;
@@ -3454,6 +3522,10 @@ YourClassName::YourClassName(QWidget *parent)
             sampleBox->clear();
             populateSampleRates();
         }
+        normalizeTuning(pendingSettings, true);
+        updateReceiverSpecificControls();
+        publishSettingsToGlobals();
+        settingRange();
         qDebug() << "[FobosDevices] selected logical device" << pendingSettings.deviceIndex;
         if (persistentSettingsReady) {
             savePersistentSettings();
@@ -4851,6 +4923,42 @@ YourClassName::YourClassName(QWidget *parent)
     connect(presetManagerButton, &QPushButton::clicked, this, &YourClassName::openPresetManager);
     connect(zoomSpectrumButton, &QPushButton::clicked, this, &YourClassName::openZoomSpectrum);
     connect(appSettingsButton, &QPushButton::clicked, this, &YourClassName::openApplicationSettings);
+    connect(dspPathButton, &QPushButton::clicked, this, [this]() {
+        if (!dspFlowPanel) {
+            dspFlowPanel = new DspFlowPanel(this);
+            dspFlowPanel->setAttribute(Qt::WA_DeleteOnClose, false);
+            dspFlowPanel->setLanguage(normalizedUiLanguage(uiLanguage) == QStringLiteral("uk"));
+            QSettings settings(persistentSettingsFilePath(), QSettings::IniFormat);
+            dspFlowPanel->setConfigurationJson(settings.value(QStringLiteral("dspFlow/configuration")).toString());
+            connect(dspFlowPanel, &DspFlowPanel::configurationChanged, this, [this](const QString &json) {
+                QSettings settings(persistentSettingsFilePath(), QSettings::IniFormat);
+                settings.setValue(QStringLiteral("dspFlow/configuration"), json);
+            });
+            connect(dspFlowPanel,
+                    &DspFlowPanel::blockActivated,
+                    this,
+                    &YourClassName::openDspBlockReference);
+            connect(dspFlowPanel,
+                    &DspFlowPanel::blockCreated,
+                    this,
+                    &YourClassName::registerDspFilterBlock);
+            connect(dspFlowPanel,
+                    &DspFlowPanel::controlTriggered,
+                    this,
+                    &YourClassName::triggerDspControlBlock);
+            connect(dspFlowPanel,
+                    &DspFlowPanel::controlStateRefreshRequested,
+                    this,
+                    &YourClassName::refreshDspControlStates);
+            connect(dspFlowPanel, &DspFlowPanel::fineTuneDeltaRequested, this, [this](double deltaHz) {
+                applyListeningFrequencyDelta(deltaHz, 60);
+            });
+            refreshDspControlStates();
+        }
+        dspFlowPanel->show();
+        dspFlowPanel->raise();
+        dspFlowPanel->activateWindow();
+    });
     connect(bandwidthControl, &FrequencyControl::valueCommitted, this, [this](double) {
         onBandwidthChanged();
     });
@@ -4866,6 +4974,14 @@ YourClassName::YourClassName(QWidget *parent)
     connect(graphWidget, &MyGraphWidget::autoTuneRequested, this, &YourClassName::tuneSignalCenterAt);
     connect(waterfallWidget, &MyWaterfallWidget::autoTuneRequested, this, &YourClassName::tuneSignalCenterAt);
     connect(graphWidget, &MyGraphWidget::scienceMarkerRequested, this, &YourClassName::setSpectrumScienceMarker);
+    connect(graphWidget, &MyGraphWidget::multiVfoSelectionRequested, this,
+            [this](double lowHz, double highHz) {
+                if (!multiVfoWidget) return;
+                const int channelIndex = multiVfoWidget->addSelection(lowHz, highHz);
+                if (dspFlowPanel && channelIndex >= 0) {
+                    dspFlowPanel->addMultiVfoBranch(channelIndex);
+                }
+            });
     spectrumScienceAnalyzer.setTraceEnabled(spectrumScienceMaxHoldEnabled,
                                             spectrumScienceMinHoldEnabled,
                                             spectrumScienceAverageEnabled);
@@ -5689,9 +5805,9 @@ void YourClassName::refreshSettingsFromUi() {
     if (frequencyControl) {
         frequencyControl->commitPendingValue();
         double frequency = frequencyControl->valueHz();
-        if (pendingSettings.inputMode == INPUT_RF && frequency < 50000000.0) {
-            frequency = 50000000.0;
-        }
+        frequency = (std::clamp)(frequency,
+                                 rfMinimumCenterFrequency(pendingSettings),
+                                 rfMaximumCenterFrequency(pendingSettings));
         pendingSettings.centerFrequency = pendingSettings.inputMode == INPUT_RF ? frequency : 0.0;
     }
     if (listeningFrequencyControl) {
@@ -5721,10 +5837,20 @@ void YourClassName::refreshSettingsFromUi() {
         }
     }
     if (lnaGainSlider) {
-        pendingSettings.lnaGain = lnaGainSlider->value();
+        if (isHackRfNativeSelected()) {
+            pendingSettings.hackRfLnaGainDb =
+                (std::clamp)(lnaGainSlider->value(), 0, 40) / 8 * 8;
+        } else {
+            pendingSettings.lnaGain = lnaGainSlider->value();
+        }
     }
     if (vgaGainSlider) {
-        pendingSettings.vgaGain = vgaGainSlider->value();
+        if (isHackRfNativeSelected()) {
+            pendingSettings.hackRfVgaGainDb =
+                (std::clamp)(vgaGainSlider->value(), 0, 62) / 2 * 2;
+        } else {
+            pendingSettings.vgaGain = vgaGainSlider->value();
+        }
     }
     if (rtlAgcCheckbox) {
         pendingSettings.rtlAgc = rtlAgcCheckbox->isChecked();
@@ -5741,6 +5867,9 @@ void YourClassName::refreshSettingsFromUi() {
     }
     if (audioHighPassSlider) {
         pendingSettings.audioHighPassHz = audioHighPassSliderValueToHz(audioHighPassSlider->value());
+    }
+    if (audioFilterChainWidget) {
+        pendingSettings.audioFilterChainJson = audioFilterChainWidget->configurationJson();
     }
     if (hfNoiseCancelDepthSlider) {
         pendingSettings.hfNoiseCancelDepth =
@@ -6241,12 +6370,24 @@ bool YourClassName::applyCenterFrequencyToHardwareIfNeeded(const RadioSettings &
     }
 
     const QString reasonText = QString::fromUtf8(reason ? reason : "");
-    if (isRtlBackendSelected()) {
+    const bool directExternalRetune =
+        isRtlBackendSelected() ||
+        isSoapySdrSelected() ||
+        isBladeRfNativeSelected() ||
+        isHackRfNativeSelected();
+    if (directExternalRetune) {
+        const QString backendName = isHackRfNativeSelected()
+                                        ? QStringLiteral("HackRF")
+                                    : isBladeRfNativeSelected()
+                                        ? QStringLiteral("bladeRF")
+                                    : isSoapySdrSelected()
+                                        ? QStringLiteral("SoapySDR")
+                                        : QStringLiteral("RTL");
         const uint64_t preRetuneIqEpoch =
             processor ? processor->beginIqRetuneBarrier() : 0;
         clearLiveSpectrumSnapshot(false, preRetuneIqEpoch);
         IqBuffer::armRetuneTrace(preRetuneIqEpoch, 6, 4, 6, 6);
-        logIqBufferRetuneState("rtl-pre-retune-clear",
+        logIqBufferRetuneState("external-pre-retune-clear",
                                reasonText,
                                preRetuneIqEpoch,
                                previousSettings.centerFrequency,
@@ -6260,7 +6401,7 @@ bool YourClassName::applyCenterFrequencyToHardwareIfNeeded(const RadioSettings &
                              processor->isRunning() &&
                              processor->retuneCenterFrequency(pendingSettings.centerFrequency);
         qDebug() << "[LiveTune]" << reason
-                 << "RTL center retune"
+                 << backendName << "center retune"
                  << "previous" << previousSettings.centerFrequency
                  << "requested" << pendingSettings.centerFrequency
                  << "result" << retuned;
@@ -6278,7 +6419,7 @@ bool YourClassName::applyCenterFrequencyToHardwareIfNeeded(const RadioSettings &
             networkSpectrumFrameFftLength = 0;
             clearLiveSpectrumSnapshot(false, postRetuneIqEpoch);
             IqBuffer::armRetuneTrace(postRetuneIqEpoch);
-            logIqBufferRetuneState("rtl-post-retune-clear",
+            logIqBufferRetuneState("external-post-retune-clear",
                                    reasonText,
                                    postRetuneIqEpoch,
                                    previousSettings.centerFrequency,
@@ -6584,7 +6725,7 @@ void YourClassName::updateUiForRunState() {
     if (fobosButton) fobosButton->setEnabled(idle);
     if (modeBox) modeBox->setEnabled(true);
     if (sampleBox) sampleBox->setEnabled(true);
-    if (clkBox) clkBox->setEnabled(idle);
+    if (clkBox) clkBox->setEnabled(idle && !isHackRfNativeSelected());
     if (fftComboBox) {
         fftComboBox->setEnabled((idle || runState == RadioRunState::Running) &&
                                 !fftBinWidthModeEnabled);
@@ -6609,8 +6750,14 @@ void YourClassName::updateUiForRunState() {
     const bool gainControlsEnabled =
         idle || runState == RadioRunState::Running;
 
-    if (lnaGainSlider) lnaGainSlider->setEnabled(gainControlsEnabled);
-    if (vgaGainSlider) vgaGainSlider->setEnabled(gainControlsEnabled);
+    const bool nativeGainControlsAvailable =
+        !isExternalReceiverBackendSelected() || isHackRfNativeSelected();
+    if (lnaGainSlider) {
+        lnaGainSlider->setEnabled(gainControlsEnabled && nativeGainControlsAvailable);
+    }
+    if (vgaGainSlider) {
+        vgaGainSlider->setEnabled(gainControlsEnabled && nativeGainControlsAvailable);
+    }
     const bool rtlGainControlsVisible = isRtlBackendSelected();
     if (rtlAgcCheckbox) {
         rtlAgcCheckbox->setVisible(rtlGainControlsVisible);
@@ -7412,6 +7559,13 @@ void YourClassName::startFobosProcessing() {
     const bool soapySdrSelected = isSoapySdrSelected();
     const bool bladeRfNativeSelected = isBladeRfNativeSelected();
     const bool hackRfNativeSelected = isHackRfNativeSelected();
+    if (bladeRfNativeSelected && !BLADERF_NATIVE_BACKEND_ENABLED) {
+        qWarning() << "[bladeRF] start rejected: native backend is disabled until physical hardware validation";
+        clearLiveSpectrumSnapshot();
+        runState = RadioRunState::Idle;
+        updateUiForRunState();
+        return;
+    }
     const bool rtlBackendSelected = rtlTcpSelected || rtlSdrNativeSelected;
     const bool externalBackendSelected = rtlBackendSelected || soapySdrSelected ||
                                          bladeRfNativeSelected || hackRfNativeSelected;
@@ -8124,10 +8278,33 @@ void YourClassName::stopFobosProcessing() {
 
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
-    QCoreApplication::setApplicationName(QStringLiteral("FobosAPP"));
-    app.setWindowIcon(QIcon(QStringLiteral(":/icons/fobosapp.png")));
+    QCoreApplication::setApplicationName(QStringLiteral("ObriiSDR"));
+    QGuiApplication::setApplicationDisplayName(QStringLiteral("Obrii SDR"));
+    app.setWindowIcon(QIcon(QStringLiteral(":/icons/obriisdr.png")));
+
     installDiagnosticLogger();
     installCrashLogger();
+    qDebug() << "[Startup] loading splash screen";
+
+    QPixmap splashPixmap(QStringLiteral(":/splash/obrii.png"));
+    if (!splashPixmap.isNull()) {
+        const QScreen *screen = QGuiApplication::primaryScreen();
+        const QSize availableSize = screen ? screen->availableGeometry().size()
+                                           : QSize(1280, 720);
+        const QSize maximumSplashSize(qMin(1100, qRound(availableSize.width() * 0.78)),
+                                      qMin(620, qRound(availableSize.height() * 0.72)));
+        splashPixmap = splashPixmap.scaled(maximumSplashSize,
+                                           Qt::KeepAspectRatio,
+                                           Qt::SmoothTransformation);
+    }
+    QSplashScreen splash(splashPixmap, Qt::WindowStaysOnTopHint);
+    if (!splashPixmap.isNull()) {
+        splash.show();
+        splash.repaint();
+        app.processEvents(QEventLoop::ExcludeUserInputEvents, 25);
+    }
+
+    qDebug() << "[Startup] splash screen ready";
     logFobosApiInfo();
     logReceiverBackendRegistry();
     YourClassName window;
@@ -8138,6 +8315,10 @@ int main(int argc, char *argv[]) {
 #else
     window.show();
 #endif
+
+    if (splash.isVisible()) {
+        splash.finish(&window);
+    }
 
     qDebug() << "App started";
 #ifdef _WIN32

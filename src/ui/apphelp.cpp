@@ -2,10 +2,10 @@
 
 QString applicationHelpText(const QString &language) {
     if (language == QStringLiteral("uk")) {
-        return QString::fromUtf8(R"HELP(FobosAPP: короткий практичний довідник
+        return QString::fromUtf8(R"HELP(Obrii SDR: короткий практичний довідник
 
 Призначення
-FobosAPP - SDR-програма для Fobos SDR, Fobos Agile, RTL-SDR, rtl_tcp, експериментального нативного bladeRF RX і SoapySDR backend. Вона поєднує прийом IQ, спектр, водоспад, аудіодемодуляцію, сканування, записи, пресети, GNSS/QTH-мапу, мережевий режим і дослідні цифрові декодери.
+Obrii SDR - широкосмугова SDR-програма для Fobos SDR, Fobos Agile, RTL-SDR, rtl_tcp і експериментального SoapySDR backend. Вона поєднує прийом IQ, спектр, водоспад, аудіодемодуляцію, сканування, записи, пресети, GNSS/QTH-мапу, мережевий режим і дослідні цифрові декодери.
 
 Основна логіка частот
 - Central Frequency - центральна частота приймача, тобто центр видимої IQ-смуги.
@@ -28,7 +28,7 @@ FobosAPP - SDR-програма для Fobos SDR, Fobos Agile, RTL-SDR, rtl_tcp,
 - Fobos Standard - основний режим для стандартної прошивки.
 - Fobos Agile - підтримує швидкий firmware scan і live-переналаштування.
 - RTL-SDR native спершу використовує rtlsdr\\rtlsdr.dll і сумісний rtlsdr\\libusb-1.0.dll; DLL у корені є тільки запасним варіантом.
-- bladeRF native використовує bladerf\\bladeRF.dll у Windows-пакеті або системну libbladeRF. Це експериментальний RX-only шлях без SoapySDR.
+- Прототип нативного bladeRF RX вимкнений і прихований: тест на реальному приймачі не підтвердив навіть надійне виявлення пристрою. Код лишено тільки як основу для майбутнього відлагодження з фізичним bladeRF.
 - rtl_tcp підключається до 127.0.0.1:1234.
 - SoapySDR backend доданий як теоретична сумісність, якщо на системі є SoapySDR.dll і модулі приймача.
 - Для Fobos типовий sample rate - 50 MHz. Для RTL типовий безпечний sample rate - 2.048 MHz.
@@ -45,7 +45,9 @@ FobosAPP - SDR-програма для Fobos SDR, Fobos Agile, RTL-SDR, rtl_tcp,
 - Вкладка Аналізатор спектра у вікні Дослідження керує детектором Sample/Peak/RMS/Average/Median/Quasi-peak, VBW, перекриттям FFT 0/25/50/75%, скінченним усередненням та процентильними трасами P50/P90/P99. RBW розраховується з ширини біна та ENBW вибраного FFT-вікна.
 - Zero Span будує часову залежність рівня для частоти прослуховування, маркера A/B або поточного піку. Смуга виміру інтегрує потужність навколо частоти; нуль бере найближчий відображений бін.
 - Тригер Off дає безперервне рухоме вікно, Auto позначає перетини порога, а Normal після Готовність зберігає задану частину даних до тригера, добирає дані після нього і зупиняє трасу. Дані експортуються у CSV з часовими мітками.
-- Дослідження відкриває окреме вікно з аналізом гребінок/гармонік, статистикою сигналу, осцилограмою та сузір'ям IQ, автокореляцією і порівнянням двох КХ входів.
+)HELP") + QString::fromUtf8(R"HELP(
+
+- Дослідження відкриває окреме вікно з аналізом гребінок/гармонік, статистикою сигналу, осцилографом, constellation, eye diagram, цифровою синхронізацією, автокореляцією і порівнянням двох КХ входів. На вкладці IQ можна обрати сирий широкий IQ або відфільтрований Channel IQ; швидкість символів і фаза задають точки constellation та накладання двосимвольних eye-трас. Цифрова синхронізація оцінює зсув несучої, фазу, найкращу символьну фазу, Gardner timing error, фазовий джиттер, EVM і приблизну якість захвату; ліворуч показано сузір'я до корекції, посередині після неї. Кнопка Live-корекція передає згладжену поправку несучої у живий демодулятор, для PSK/FT8 також поправку фази, а DMR отримує безпечну підказку пріоритетної символьної фази без скидання черг і без відмови від повного пошуку кандидатів. При закритті вікна або переході на іншу вкладку корекція автоматично вимикається. На DSP-дошці осцилограф, сузір'я, окова діаграма та цифрова синхронізація мають окремі блоки параметрів і живі блоки-графіки. З'єднайте відповідну пару; графік читає свіжий IQ зі спільного буфера. Візуальні блоки, включно зі спектром і водоспадом VFO, масштабуються перетягуванням нижнього правого кута, а їхній розмір зберігається у схемі.
 - У HF interference lab кнопка Аналіз відкриває ту саму вкладку завад. Записати еталон фіксує стан «до», після чого таблиця показує зміну рівня кожного піка; аналізатор розділяє до трьох гребінок, оцінює дрейф кроку й амплітуди та показує орієнтовний клас джерела. Це діагностична підказка, а не точна ідентифікація пристрою.
 - Вкладка двох КХ входів використовує сирі HF1/HF2 та показує різницю рівнів, кореляцію, затримку, фазу на частоті прослуховування і орієнтовний потенціал придушення. У RF-режимі пара чисел є квадратурними I/Q, тому порівняння двох входів там навмисно вимкнене.
 
@@ -82,7 +84,17 @@ FobosAPP - SDR-програма для Fobos SDR, Fobos Agile, RTL-SDR, rtl_tcp,
 Аудіо і демодуляція
 - Audio вмикає локальне прослуховування.
 - Modulation обирає AM, FM/NFM/WFM, SSB, CW, DMR та інші режими.
+- Перед звичайною демодуляцією Channel IQ автоматично переносить частоту прослуховування в нуль, виконує багатоступеневу децимацію, антиаліасингову фільтрацію та polyphase FIR-перерахунок у точну частоту каналу. У загальних налаштуваннях «Спрощений аудіоканалізатор» повертає дешевший старий однопрохідний тракт для слабких пристроїв; точність фільтрації в ньому нижча. Спеціальні DMR і двовходовий HF noise cancel зберігають власні синхронізовані тракти.
 - Audio LPF/HPF у налаштуваннях фільтрує аудіо після демодуляції.
+- Ланцюг аудіофільтрів виконується зверху вниз після штатної демодуляції. Кнопка + додає частотні фільтри, FM-деемфазу, параметричний EQ, low/high shelf, підсилення, компресор/AGC, лімітер або шумовий поріг; кнопки зі стрілками змінюють порядок, а галочка тимчасово обходить окремий етап. Правий клік по назві етапу замінює його тип, зберігаючи ID, стан і власну назву.
+- Multi-VFO / каналайзер стежить за рівнем і squelch до 16 каналів у межах одного широкого спектра. Ctrl+клік на головному спектрі додає VFO навколо піка з поточною смугою, Ctrl+перетягування додає точно виділений діапазон. Мозаїка показує всі активні канали як окремі спектри, водоспади або обидва разом; подвійний клік по плитці відкриває її власні збережені межі Min/Max dBFS. Галочка Аудіо та кнопка Слухати обраний передають один канал до основного демодулятора без зміни центральної частоти приймача.
+- На DSP-дошці блок VFO channel з'єднується окремо з VFO spectrum, VFO waterfall або з обома. Ctrl-вибір автоматично створює таку гілку, якщо дошка вже відкрита; живі міні-віджети беруть лише свою ділянку спільного FFT, тому кількість вікон не множить важке широкосмугове обчислення. Подвійний клік по мініспектру або водоспаду відкриває його власні межі Min/Max dBFS; вони зберігаються окремо для кожного блока.
+- Кнопка DSP над Нал. відкриває графічний конструктор тракту. Каталог згруповано як тракт сигналу, аудіофільтри, сканування і пошук, візуалізація, вимірювання, цифрові режими, GNSS/QTH та ввід/вивід. Він охоплює приймачі й мережевий IQ, частоти, FFT, HF interference lab, усі три скани, 2D/3D водоспад, вимірювання й маркери, zoom/zero-span/research, запис і реплей, DMR/CW/SSTV/відео, hunters, GNSS serial/SDR, карту, GPIO, аудіо, мережу та передавач. Блок Точне налаштування містить живу шкалу: перетягування й колесо над нею одразу змінюють частоту прослуховування, подвійний клік перемикає тимчасовий і утримуваний офсет. Окремі блоки налаштувань цифрового аудіо й відео керують чинними декодерами, а Вихід тексту та Вихід зображення відкривають відповідні реальні панелі результату. Звичайний IQ/аудіопотік з'єднується горизонтально від помаранчевого виходу до синього входу. Фіолетові порти зверху й знизу призначені для керування: Частоти та Точне налаштування є окремими контролерами приймача, а міні-блоки СТАРТ/СТОП і ВКЛ/ВИКЛ під'єднуються перпендикулярно. Клік по зеленому СТАРТ або ВКЛ виконує дію; у робочому стані кнопка стає червоною і показує СТОП або ВИКЛ. ВКЛ/ВИКЛ приймають тільки сумісні блоки. Колесо масштабує схему, крім області живої шкали тюнера; середня кнопка рухає поле, Delete видаляє вибране. Схема автоматично зберігається, а старе прохідне підключення блока Частоти мігрує автоматично. Подвійний клік або Відкрити показує живий компактний редактор чи запускає вже наявне спеціалізоване вікно. Галочка Залишатися поверх вікон керує поведінкою компактних редакторів і вікон окремих аудіофільтрів. Дубльовані контролери двосторонньо зв'язані з основними налаштуваннями. Audio filters відкриває весь список, а окремі filter-блоки створюють і редагують реальні stage AudioFilterChain зі стабільним ID. З'єднання поки документують майбутній модульний тракт; виконуваними вже є параметри блоків, команди та аудіофільтри, але довільне перенаправлення IQ ще не ввімкнене.
+- Змінити відкриває незалежне вікно живого налаштування: можна одночасно тримати відкритими кілька фільтрів і слухати результат без кнопки застосування. На графіку ліва кнопка змінює частоту, а перетягування правою вгору/вниз регулює Q; Скинути повертає типові параметри поточного типу. Ланцюг впливає на прослуховування, Audio WAV і мережеве аудіо, але не змінює службовий PCM, що надходить цифровим декодерам.
+- У фільтрі Підсилення ліва кнопка на графіку регулює dB по вертикалі. У FM-деемфазі горизонтальне перетягування задає частоту зламу і сталу часу. Параметричний EQ змінює одну область: лівою кнопкою горизонталь задає центральну частоту, вертикаль - boost/cut у dB, а права кнопка задає Q; кілька EQ-етапів утворюють багатосмуговий еквалайзер.
+- Адаптивний notch шукає стабільний тон у заданому діапазоні; Peak/floor визначає необхідне перевищення над фоном. Noise blanker замінює короткі імпульси попереднім чистим семплом. CW-фільтр задає тон і вузьку смугу, а CTCSS/DCS suppression зрізає субтональний діапазон високочастотним фільтром.
+- Спектральне шумозниження працює блоками STFT із 50% перекриттям: Інтенсивність задає частку обробки, Макс. ослаблення обмежує придушення, Віднімання шуму - агресивність оцінки. Воно додає близько 11 ms алгоритмічної затримки при 48 kHz.
+- Користувацький FIR/EQ застосовує 129-tap FIR за намальованою характеристикою. Точки перетягуються лівою кнопкою; подвійний клік додає точку, правий клік по точці видаляє її. Різкі сусідні перепади можуть давати ringing, тому для голосу краще використовувати плавну криву.
 - Для SSB можна через правий клік поставити край USB/LSB по видимому сигналу.
 - Якщо звук не відповідає сигналу після швидких переналаштувань, натисніть Stop/Start або змініть центральну частоту ще раз. Це має бути рідкісний аварійний сценарій.
 
@@ -101,8 +113,10 @@ FobosAPP - SDR-програма для Fobos SDR, Fobos Agile, RTL-SDR, rtl_tcp,
 Пресети
 - Presets відкриває менеджер частот, аудіосмуг, Agile scan, Standard scan, Listening scan, band markers і QTH markers.
 - Стрілки вгору/вниз у менеджері пресетів змінюють порядок показу.
-- Налаштування зберігаються у профілі користувача, а не поряд із програмою, тому оновлення їх не стирає і права адміністратора не потрібні. Експорт FobosAPP.ini використовуйте для резервної копії або перенесення на інший комп'ютер.
+- Налаштування зберігаються у профілі користувача, а не поряд із програмою, тому оновлення їх не стирає і права адміністратора не потрібні. Експорт ObriiSDR.ini використовуйте для резервної копії або перенесення на інший комп'ютер.
 - Import/Export settings у загальних налаштуваннях робить резервну копію або повертає збережені налаштування.
+
+)HELP") + QString::fromUtf8(R"HELP(
 
 GNSS, GPS і QTH
 - GPS/QTH блок зберігає своє місцеположення, показує Maidenhead/QTH locator і відкриває карту.
@@ -123,7 +137,7 @@ GNSS, GPS і QTH
 Цифрові режими
 - Режим CW у Digital Audio декодує азбуку Морзе з демодульованого аудіо. Tone задає очікуваний звуковий тон, Initial speed дає початкову оцінку WPM, а Adaptive speed підлаштовує тривалість крапки за прийнятим сигналом. Alphabet перемикає міжнародну латиницю, українську телеграфну таблицю або паралельний режим: у ньому кожне завершене слово виводиться як два варіанти `EN:` і `UK:`, після чого можна обрати правильну абетку.
 - Digital Audio містить DMR-дослідний декодер. Він може визначати частину метаданих і працювати з зовнішнім voice backend, але DMR-голос поки експериментальний.
-- DMR backend обирає FobosAPP+mbelib, FobosAPP+OpenDMR/OP25 або DSD-neo; DSD-neo передає DMR PCM дискримінатора через TCP і може приймати декодоване аудіо назад через UDP.
+- DMR backend обирає Obrii SDR+mbelib, Obrii SDR+OpenDMR/OP25 або DSD-neo; DSD-neo передає DMR PCM дискримінатора через TCP і може приймати декодоване аудіо назад через UDP.
 - Lock DMR фіксує обрані параметри DMR, корисно коли на частоті є різні color code/timeslot/contact.
 - DMR hunter, FPV hunter і Digital Video hunter шукають характерні сигнали на спектрі за шириною/порогом.
 - Video містить експериментальні декодери ATV, SSTV, APT, WEFAX і LRPT. Для SSTV виберіть `USB` на КХ, `LSB` для інвертованої бічної смуги або `NFM`, якщо SSTV-аудіо передається через мікрофон FM-радіостанції.
@@ -162,10 +176,10 @@ GNSS, GPS і QTH
 )HELP");
     }
 
-    return QString::fromUtf8(R"HELP(FobosAPP: practical user guide
+    return QString::fromUtf8(R"HELP(Obrii SDR: practical user guide
 
 Purpose
-FobosAPP is an SDR application for Fobos SDR, Fobos Agile, RTL-SDR, rtl_tcp, experimental native bladeRF RX and an experimental SoapySDR backend. It combines IQ reception, spectrum, waterfall, audio demodulation, scanning, recordings, presets, GNSS/QTH mapping, network mode and experimental digital decoders.
+Obrii SDR is a wideband SDR application for Fobos SDR, Fobos Agile, RTL-SDR, rtl_tcp and an experimental SoapySDR backend. It combines IQ reception, spectrum, waterfall, audio demodulation, scanning, recordings, presets, GNSS/QTH mapping, network mode and experimental digital decoders.
 
 Frequency model
 - Central Frequency is the SDR receiver center, the middle of the visible IQ span.
@@ -188,7 +202,7 @@ Receivers
 - Fobos Standard is the main mode for the standard firmware.
 - Fobos Agile supports firmware scan and live retuning.
 - RTL-SDR native first uses rtlsdr\\rtlsdr.dll and the matching rtlsdr\\libusb-1.0.dll; root-folder DLLs are only a fallback.
-- bladeRF native uses the bundled bladerf\\bladeRF.dll runtime in the Windows beta package, or a system libbladeRF installation. It is an RX-only experimental path without SoapySDR.
+- The native bladeRF RX prototype is disabled and hidden: testing with physical hardware did not confirm reliable device detection. Its code remains only as a foundation for future debugging with a bladeRF on hand.
 - rtl_tcp connects to 127.0.0.1:1234.
 - SoapySDR is added as theoretical compatibility when SoapySDR.dll and device modules are installed.
 - The default Fobos sample rate is 50 MHz. The safe RTL default is 2.048 MHz.
@@ -205,7 +219,9 @@ Spectrum and waterfall
 - The Spectrum analyzer tab in Research controls Sample/Peak/RMS/Average/Median/Quasi-peak detection, VBW, 0/25/50/75% FFT overlap, finite averaging and P50/P90/P99 traces. RBW is calculated from bin width and the selected FFT window ENBW.
 - Zero Span plots level versus time for the listening frequency, marker A/B, or the current peak. Measurement bandwidth integrates power around the target; zero uses the nearest displayed bin.
 - Trigger Off provides a continuous rolling window, Auto marks threshold crossings, and Normal captures the configured pre-trigger portion, completes the post-trigger interval, then freezes the trace. CSV includes absolute and relative timestamps.
-- Research opens a separate window for comb/harmonic analysis, signal statistics, IQ waveform/constellation/autocorrelation, and dual-HF-input comparison.
+)HELP") + QString::fromUtf8(R"HELP(
+
+- Research opens a separate window for comb/harmonic analysis, signal statistics, oscilloscope, constellation, eye diagram, digital synchronization, autocorrelation, and dual-HF-input comparison. The IQ tab can use raw wideband IQ or filtered Channel IQ; symbol rate and phase control constellation sampling and the overlaid two-symbol eye traces. Digital synchronization estimates carrier offset, phase, the best symbol phase, Gardner timing error, phase jitter, EVM, and an approximate lock quality; the left constellation is before correction and the middle one is after correction. Live assist sends a smoothed carrier correction to the active demodulator, phase correction for PSK/FT8, and a safe preferred-symbol-phase hint to DMR without resetting decoder queues or disabling its exhaustive fallback. It turns off automatically when the window closes or another tab is selected. On the DSP board, oscilloscope, constellation, eye diagram, and digital synchronization now have separate settings blocks and live plot blocks. Connect a matching pair; the plot reads recent IQ from the shared buffer. Visual blocks, including VFO spectrum and waterfall, resize from their lower-right corner and retain their dimensions in the saved graph.
 - Analysis in HF interference lab opens the same interference tab. Capture reference stores the “before” spectrum so the peak table can report every level change; the analyzer separates up to three comb families, tracks spacing and amplitude drift, and reports a tentative source class. The source class is a diagnostic hint, not exact device identification.
 - Dual HF inputs uses raw HF1/HF2 data and reports level difference, correlation, lag, phase at the listening frequency, and estimated cancellation potential. In RF mode the pair is quadrature I/Q, so dual-input comparison is intentionally disabled.
 
@@ -242,13 +258,23 @@ Calibration
 Audio and demodulation
 - Audio enables local playback.
 - Modulation selects AM, FM/NFM/WFM, SSB, CW, DMR and other modes.
+- Before ordinary demodulation, Channel IQ automatically translates the listening frequency to zero, applies multistage decimation and anti-alias filtering, then uses a polyphase FIR resampler to produce an exact channel rate. Simplified audio channelizer in General Settings restores the lower-cost legacy one-pass path for weak devices, with reduced filtering accuracy. DMR and dual-input HF noise cancellation retain their specialized synchronized paths.
 - Audio LPF/HPF in settings filters demodulated audio.
+- Audio filter chain runs from top to bottom after the built-in demodulator. The + menu adds frequency filters, FM de-emphasis, parametric EQ, low/high shelf, gain, compressor/AGC, limiter, or noise gate stages; arrow buttons change their order and each checkbox temporarily bypasses one stage. Right-click a stage name to replace its type while preserving its ID, enabled state, and custom name.
+- Multi-VFO / channelizer watches level and squelch for up to 16 channels inside one wide spectrum. Ctrl+click on the main spectrum adds a VFO around the nearest peak with the current bandwidth; Ctrl+drag adds the exact selected range. Mosaic shows all enabled channels as separate spectra, waterfalls, or both; double-click a tile to set its own saved Min/Max dBFS range. The Audio checkbox and Monitor selected button route one channel to the proven main demodulator without retuning the receiver center.
+- On the DSP board, connect each VFO channel block to a VFO spectrum, a VFO waterfall, or both. Ctrl selection creates that branch automatically while the board is open. The live mini views extract only their range from the shared FFT, so adding windows does not duplicate the expensive wideband transform. Double-click a mini spectrum or waterfall to set its own Min/Max dBFS range; every block stores its values independently.
+- DSP above Cfg opens the graphical path designer. Its catalog is grouped into signal path, audio filters, scanning and hunting, visualization, measurement, digital modes, GNSS/QTH, and I/O/tools. It covers receivers and network IQ, tuning, FFT, HF interference processing, all three scan modes, 2D/3D waterfall, measurements and markers, zoom/zero-span/research tools, recording and replay, DMR/CW/SSTV/video, hunters, serial/SDR GNSS, the map, GPIO, audio, networking, and transmit. The Fine tune block contains a live scale: dragging or wheeling over it immediately changes listening frequency, and double-click toggles temporary versus held offset. Dedicated digital-audio and digital-video settings blocks control the existing decoders; Text output and Image output open the corresponding real result panels. Normal IQ/audio flow connects horizontally from orange outputs to blue inputs. Purple top/bottom ports carry control links: Frequencies and Fine tune are separate receiver controllers, while the START/STOP and ON/OFF mini blocks connect perpendicularly. Clicking green START or ON performs the action; while active it becomes red and reads STOP or OFF. ON/OFF only accepts compatible target blocks. The wheel zooms except over the live tuning scale, the middle button pans, and Delete removes selected items. The graph is saved automatically and old pass-through Frequency layouts are migrated. Double-click or Open shows a live compact editor or launches the existing specialized window. Stay on top controls whether compact block editors and individual audio-filter windows remain above the main window. Mirrored controls remain synchronized in both directions. Audio filters opens the full list, while individual filter blocks create and edit real AudioFilterChain stages with stable IDs. Connections still document the future modular path: block settings, commands, and audio-filter stages are live, but arbitrary IQ rerouting is not enabled yet.
+- Edit opens an independent live editor: several filter windows can stay open while you listen, with no Apply step. In the response graph, left-drag changes frequency and right-drag up/down adjusts Q; Reset restores that filter type's defaults. The chain affects playback, Audio WAV, and network audio, while the unmodified service PCM remains available to digital decoders.
+- In Gain, left-drag vertically changes dB. In FM de-emphasis, horizontal dragging sets the corner frequency and time constant. Parametric EQ changes one region: left-drag horizontally sets its center, vertically sets boost/cut in dB, and right-drag sets Q; stack several EQ stages for a multiband equalizer.
+- Adaptive notch searches a selected range for a stable tone; Peak/floor controls the required prominence. Noise blanker replaces short impulses with the preceding clean sample. The CW filter selects a tone and narrow bandwidth, while CTCSS/DCS suppression high-passes the sub-audible range.
+- Spectral denoise uses a 50%-overlapped STFT: Amount controls the processed share, Max attenuation limits suppression, and Noise subtraction controls aggressiveness. It adds about 11 ms of algorithmic latency at 48 kHz.
+- Custom FIR/EQ applies a 129-tap FIR derived from the drawn response. Left-drag points, double-click to add one, and right-click a point to remove it. Abrupt neighboring changes can ring, so smooth curves are preferable for voice.
 - In SSB modes, right-click can align the USB or LSB edge to a visible signal.
 - If audio does not match the visible signal after aggressive retuning, use Stop/Start or retune once more. This should be a rare recovery path.
 
 Scanning
 - Agile scan works only with Fobos Agile firmware and scans ranges inside the firmware.
-- Standard scan works by live-retuning the receiver center through a list. It is available for Fobos, RTL, rtl_tcp, bladeRF and Soapy when the backend supports retune.
+- Standard scan works by live-retuning the receiver center through a list. It is available for Fobos, RTL, rtl_tcp and Soapy when the backend supports retune.
 - In Standard scan, enter center frequencies in MHz. The app keeps centers at least one sample rate apart to avoid overlapping spans.
 - +/- buttons add or remove neighboring centers from the low or high side.
 - Fill range generates a center list between the start and end frequencies.
@@ -261,8 +287,10 @@ Scanning
 Presets
 - Presets opens the manager for center frequencies, listening frequencies, audio bandwidths, Agile scan, Standard scan, Listening scan, band markers and QTH markers.
 - Up/down arrows in the preset manager change display order.
-- Settings are stored in the user profile rather than beside the executable, so updates preserve them and administrator rights are not required. Export FobosAPP.ini for backup or transfer to another computer.
+- Settings are stored in the user profile rather than beside the executable, so updates preserve them and administrator rights are not required. Export ObriiSDR.ini for backup or transfer to another computer.
 - Import/Export settings in Settings creates or restores a settings backup.
+
+)HELP") + QString::fromUtf8(R"HELP(
 
 GNSS, GPS and QTH
 - GPS/QTH stores your position, shows Maidenhead/QTH locator and opens the map.
@@ -283,7 +311,7 @@ GNSS, GPS and QTH
 Digital modes
 - CW in Digital Audio decodes Morse from demodulated audio. Tone selects the expected audio pitch, Initial speed seeds the WPM estimate, and Adaptive speed tracks the received dot duration. Alphabet selects International/Latin, Ukrainian, or a parallel mode that prints every completed word as `EN:` and `UK:` variants before you switch to the correct alphabet.
 - Digital Audio contains the experimental DMR decoder. It can detect some metadata and work with an external voice backend, but DMR voice is still experimental.
-- DMR backend selects FobosAPP+mbelib, FobosAPP+OpenDMR/OP25 or DSD-neo; DSD-neo mirrors DMR discriminator PCM over TCP and can receive decoded audio back over UDP.
+- DMR backend selects Obrii SDR+mbelib, Obrii SDR+OpenDMR/OP25 or DSD-neo; DSD-neo mirrors DMR discriminator PCM over TCP and can receive decoded audio back over UDP.
 - Lock DMR fixes selected DMR parameters, useful when several color code/timeslot/contact combinations share a frequency.
 - DMR hunter, FPV hunter and Digital Video hunter look for characteristic signals by width and threshold.
 - Video contains experimental ATV, SSTV, APT, WEFAX and LRPT decoders. For SSTV select `USB` on HF, `LSB` for an inverted sideband, or `NFM` when SSTV audio is fed through an FM handheld radio microphone.

@@ -249,9 +249,9 @@ bool SpectrumIqEventRecorder::writeSigMfMetadata() const {
     global["core:datatype"] = QStringLiteral("ci8");
     global["core:sample_rate"] = recordingSampleRate;
     global["core:version"] = QStringLiteral("1.0.0");
-    global["core:recorder"] = QStringLiteral("FobosAPP");
+    global["core:recorder"] = QStringLiteral("Obrii SDR");
     global["core:dataset"] = dataInfo.fileName();
-    global["core:description"] = QStringLiteral("FobosAPP full-band IQ event recording");
+    global["core:description"] = QStringLiteral("Obrii SDR full-band IQ event recording");
 
     QJsonObject capture;
     capture["core:sample_start"] = 0;
@@ -271,7 +271,7 @@ bool SpectrumIqEventRecorder::writeSigMfMetadata() const {
 
 QJsonObject SpectrumIqEventRecorder::makeMetadataObject() const {
     QJsonObject root;
-    root["app"] = QStringLiteral("FobosAPP");
+    root["app"] = QStringLiteral("ObriiSDR");
     root["format"] = activeMode == Mode::ChannelIqS16
                          ? QStringLiteral("channel_iq_wav_s16le")
                          : QStringLiteral("full_iq_raw_s8_interleaved");

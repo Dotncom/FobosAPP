@@ -1,7 +1,13 @@
-# FobosAPP Roadmap
+# Obrii SDR Roadmap
 
 This file is the live roadmap. Historical release details belong in
 `CHANGELOG.md`; stability handoff notes belong in `docs/release_stability_handoff.md`.
+
+## Multi-VFO / Channelizer
+
+- Implemented a shared-FFT Multi-VFO manager for up to 16 in-span channels with frequency, bandwidth, modulation, squelch, live level/activity, saved ordering, and one selected audio monitor.
+- Ctrl+click and Ctrl+drag on the main spectrum create VFO channels. The standard interface provides a spectrum/waterfall/combined mosaic, while the DSP board provides independently connectable VFO channel, mini-spectrum, and mini-waterfall blocks.
+- Remaining high-cost extension: true polyphase IQ filter-bank outputs for simultaneous independent demodulators and recorders. The current implementation intentionally reuses one wide FFT and the proven single audio path instead of multiplying 50-80 MS/s DDC work.
 
 ## Current State
 
@@ -16,13 +22,13 @@ Ready or usable enough to release as the current stable baseline:
    visuals, measurement overlays, and editable presets.
 6. Low-copy waterfall row generation with the legacy palette/contrast behavior
    restored.
-7. Optional/beta receiver paths: bladeRF RX and SoapySDR. These are not
-   release-critical until tested on real hardware.
+7. Optional/beta receiver path: SoapySDR. It is not release-critical until
+   tested on more real hardware.
 8. OpenGL 3D waterfall, replay visualization, and the optimized CPU FFTW path.
 
 Experimental and not release-grade:
 
-1. DMR voice. `FobosAPP + mbelib` is the current practical baseline, but voice
+1. DMR voice. `Obrii SDR + mbelib` is the current practical baseline, but voice
    quality and metadata stability are still lab-level.
 2. DSD-neo and GopherTrunk bridges. Useful for comparison, not finished
    backends.
@@ -51,10 +57,10 @@ Before every public upload:
 3. Check Android source sync. Upload Android artifacts only when rebuilt and
    tested.
 4. Verify Windows and Raspberry archives contain no:
-   `FobosAPP.ini`, diagnostic logs, real IQ/audio recordings, GNSS raw logs,
+   `ObriiSDR.ini`, diagnostic logs, real IQ/audio recordings, GNSS raw logs,
    GNSS reports, screenshots, private tokens, API keys, local tool folders, or
    temporary downloads.
-5. Keep the per-user `FobosAPP.ini` and any legacy `release/bin/FobosAPP.ini`
+5. Keep the per-user `ObriiSDR.ini` and any legacy `release/bin/FobosAPP.ini`
    local only. They may contain QTH coordinates, map API keys, DMR keys, ports,
    and personal presets.
 6. Verify `translations.json` parses.
@@ -64,8 +70,8 @@ Before every public upload:
 
 Current release recommendation:
 
-1. `4.8.3` is the current release baseline.
-2. Vulkan VkFFT remains experimental in 4.8.3. Continue validating
+1. `5.0.0` is the current release baseline.
+2. Vulkan VkFFT remains experimental in 5.0.0. Continue validating
    Auto/CPU/GPU modes on discrete NVIDIA/AMD hardware and Linux/Raspberry
    before making it the next release default.
 3. Do not publish Android unless rebuilt and smoke-tested on its development
@@ -132,11 +138,21 @@ Implemented in the current development tree:
 6. Zero-span timeline with rising/falling level trigger, auto/normal modes,
    pre/post-trigger capture, single-shot arm, and CSV export.
 7. Research views for comb/harmonic families, long-term statistics, IQ/DC/
-   imbalance/image estimates, autocorrelation, and dual-HF correlation,
-   coherence, phase, gain, delay, and cancellation potential.
+   imbalance/image estimates, oscilloscope, constellation, eye diagram,
+   autocorrelation, and dual-HF correlation, coherence, phase, gain, delay,
+   and cancellation potential.
 8. IQ buffer epoch/sequence/queue counters, measured arrival rate, clipping,
    invalid-sample indication, extended recording metadata, CSV reports, and
    SigMF metadata for full-IQ event recordings.
+9. Digital Synchronization Lab over filtered Channel IQ: PSK/FSK carrier
+   offset estimation, optional carrier/phase correction, automatic symbol-
+   phase search, Gardner timing-error trace, phase jitter, EVM, lock estimate,
+   and before/after constellation comparison. Its explicitly enabled Live
+   assist applies smoothed carrier correction to the active demodulator,
+   phase correction to PSK/FT8, and a non-resetting preferred timing candidate
+   to DMR while retaining exhaustive fallback search. It automatically
+   disengages when leaving the lab. A true feedback clock-recovery loop remains
+   decoder-specific future work.
 
 Still requires physical validation or a later dependency decision:
 
@@ -213,12 +229,14 @@ Implemented or started:
 1. Native RTL-SDR runtime loading on desktop.
 2. RTL-TCP path for lightweight remote RTL tests.
 3. Optional SoapySDR runtime path, mostly unverified.
-4. Native bladeRF RX beta, unverified without real hardware.
+4. Native bladeRF RX prototype is disabled and hidden. A community hardware
+   test failed at device detection and produced multiple errors; resume only
+   when a physical bladeRF is available for direct debugging.
 
 Next:
 
 1. Keep RTL-SDR good enough for testing and community fallback.
-2. Keep SoapySDR/bladeRF clearly marked beta until tested.
+2. Keep SoapySDR clearly marked beta until tested; keep bladeRF unavailable.
 3. Avoid making generic backend abstraction slower than the Fobos-specific path.
 4. Future multi-receiver mode:
    two Fobos receivers, local plus remote Fobos, or Fobos plus RTL/Soapy;
@@ -258,7 +276,7 @@ Next:
 
 ## Future Transceiver Mode
 
-Long-term idea: use FobosAPP as the receive/control side of a homebuilt
+Long-term idea: use Obrii SDR as the receive/control side of a homebuilt
 transceiver system. Fobos itself is RX-only; TX must be a separate controlled
 subsystem.
 

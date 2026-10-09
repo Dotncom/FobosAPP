@@ -20,7 +20,7 @@ be resumed later without rediscovering the same failure modes.
 
 - SDR-based GNSS acquisition is still a workbench. It has synthetic/replay
   tools and IQ monitoring, but no repeatable real-world lock yet.
-- DMR voice is usable only as an experimental path. `FobosAPP + mbelib` is the
+- DMR voice is usable only as an experimental path. `Obrii SDR + mbelib` is the
   most practical current baseline; DSD-neo and GopherTrunk bridges need more
   work on framing, timing, and privacy handling.
 - ARC4/AES DMR privacy UI and key management exist, but decrypted voice is not

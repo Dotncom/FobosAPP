@@ -62,7 +62,7 @@ $ConfigureArgs = @(
 $BuildArgs = @(
     "--build", $BuildPath,
     "--config", $Config,
-    "--target", "FobosAPP"
+    "--target", "ObriiSDR"
 )
 
 function ConvertTo-CmdArgList {
@@ -90,6 +90,12 @@ $CmdLines = @(
     "exit /b %errorlevel%"
 )
 Set-Content -LiteralPath $CmdPath -Value $CmdLines -Encoding ASCII
+
+# Some launchers provide both PATH and Path. MSBuild treats those as duplicate
+# dictionary keys when starting CL.exe, so normalize the process environment.
+$ProcessPath = $env:PATH
+Remove-Item Env:Path -ErrorAction SilentlyContinue
+$env:Path = $ProcessPath
 
 Push-Location $Workspace
 try {

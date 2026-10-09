@@ -5,6 +5,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QStringList>
 #include <QStandardPaths>
 
 QString persistentSettingsFilePath() {
@@ -14,7 +15,7 @@ QString persistentSettingsFilePath() {
         if (configDirectory.isEmpty()) {
             configDirectory = QDir(
                 QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation))
-                                  .filePath(QStringLiteral("FobosAPP"));
+                                  .filePath(QStringLiteral("ObriiSDR"));
         }
         if (configDirectory.isEmpty()) {
             configDirectory = QCoreApplication::applicationDirPath();
@@ -26,15 +27,28 @@ QString persistentSettingsFilePath() {
                        << configDirectory;
         }
 
-        const QString userPath = directory.filePath(QStringLiteral("FobosAPP.ini"));
-        const QString legacyPath = QDir(QCoreApplication::applicationDirPath())
-                                       .filePath(QStringLiteral("FobosAPP.ini"));
-        if (!QFileInfo::exists(userPath) && QFileInfo::exists(legacyPath) &&
-            QFileInfo(userPath).absoluteFilePath() != QFileInfo(legacyPath).absoluteFilePath()) {
-            if (QFile::copy(legacyPath, userPath)) {
-                qInfo() << "[Settings] migrated settings to per-user storage"
-                        << userPath;
-            } else {
+        const QString userPath = directory.filePath(QStringLiteral("ObriiSDR.ini"));
+        if (!QFileInfo::exists(userPath)) {
+            const QString genericConfig =
+                QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation);
+            const QStringList legacyCandidates = {
+                QDir(genericConfig).filePath(QStringLiteral("FobosAPP/FobosAPP.ini")),
+                QDir(QCoreApplication::applicationDirPath())
+                    .filePath(QStringLiteral("ObriiSDR.ini")),
+                QDir(QCoreApplication::applicationDirPath())
+                    .filePath(QStringLiteral("FobosAPP.ini"))
+            };
+            for (const QString &legacyPath : legacyCandidates) {
+                if (!QFileInfo::exists(legacyPath) ||
+                    QFileInfo(userPath).absoluteFilePath() ==
+                        QFileInfo(legacyPath).absoluteFilePath()) {
+                    continue;
+                }
+                if (QFile::copy(legacyPath, userPath)) {
+                    qInfo() << "[Settings] migrated settings from"
+                            << legacyPath << "to" << userPath;
+                    break;
+                }
                 qWarning() << "[Settings] could not migrate legacy settings"
                            << legacyPath << "to" << userPath;
             }

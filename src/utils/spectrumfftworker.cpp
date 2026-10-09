@@ -1,13 +1,34 @@
 #include "spectrumfftworker.h"
 
+#include "diagnosticlogging.h"
 #include "fft.h"
 
+#include <QElapsedTimer>
+#include <QDebug>
 #include <algorithm>
 #include <cmath>
 #include <exception>
 #include <limits>
 #include <new>
 #include <utility>
+
+namespace {
+std::size_t maxRowsPerFftBatch(int fftLength) {
+    if (fftLength <= 32768) {
+        return 32;
+    }
+    if (fftLength <= 65536) {
+        return 16;
+    }
+    if (fftLength <= 131072) {
+        return 8;
+    }
+    if (fftLength <= 262144) {
+        return 4;
+    }
+    return 1;
+}
+}
 
 SpectrumFftWorker::SpectrumFftWorker()
     : workerThread(&SpectrumFftWorker::run, this) {
@@ -78,6 +99,8 @@ void SpectrumFftWorker::resetHfNoiseCancelState() {
 
 void SpectrumFftWorker::run() {
     FFTResult fft(true);
+    QElapsedTimer profileLogTimer;
+    profileLogTimer.start();
 
     for (;;) {
         RadioSettings settings;
@@ -128,6 +151,10 @@ void SpectrumFftWorker::run() {
         frame.requestId = requestId;
         frame.generation = requestGeneration;
         frame.settings = settings;
+        QElapsedTimer requestTimer;
+        requestTimer.start();
+        std::uint64_t skippedRows = 0;
+        std::size_t requestedRows = 0;
 
         try {
             fft.setBackendPreference(backendPreference);
@@ -166,7 +193,8 @@ void SpectrumFftWorker::run() {
                                       overlapPercent == lastProducedOverlapPercent;
 
             std::vector<std::uint64_t> frameEnds;
-            constexpr std::size_t MaxRowsPerBatch = 32;
+            const std::size_t maxRowsPerBatch =
+                maxRowsPerFftBatch(settings.fftLength);
             if (sameTimeline &&
                 iqStats.totalFloatCount > lastProducedEndFloatCount &&
                 hopFloats > 0) {
@@ -180,11 +208,13 @@ void SpectrumFftWorker::run() {
                 if (nextEnd <= iqStats.totalFloatCount) {
                     const std::uint64_t availableRows =
                         (iqStats.totalFloatCount - nextEnd) / hopFloats + 1ULL;
-                    if (availableRows > MaxRowsPerBatch) {
-                        nextEnd += (availableRows - MaxRowsPerBatch) * hopFloats;
+                    if (availableRows > maxRowsPerBatch) {
+                        skippedRows = availableRows - maxRowsPerBatch;
+                        nextEnd += skippedRows * hopFloats;
                     }
                     for (std::uint64_t end = nextEnd;
-                         end <= iqStats.totalFloatCount && frameEnds.size() < MaxRowsPerBatch;
+                         end <= iqStats.totalFloatCount &&
+                         frameEnds.size() < maxRowsPerBatch;
                          end += hopFloats) {
                         frameEnds.push_back(end);
                         if (std::numeric_limits<std::uint64_t>::max() - end < hopFloats) {
@@ -198,6 +228,7 @@ void SpectrumFftWorker::run() {
                 iqStats.totalFloatCount >= fftFloats) {
                 frameEnds.push_back(iqStats.totalFloatCount);
             }
+            requestedRows = frameEnds.size();
 
             std::vector<float> rowFrequencies;
             for (const std::uint64_t frameEnd : frameEnds) {
@@ -240,6 +271,17 @@ void SpectrumFftWorker::run() {
             frame.error = QString::fromLatin1(error.what());
         } catch (...) {
             frame.error = QStringLiteral("unknown exception");
+        }
+
+        if (fobosVerboseLoggingEnabled() && profileLogTimer.elapsed() >= 1000) {
+            qInfo() << "[FFT worker]"
+                    << "length" << settings.fftLength
+                    << "batch" << batchWaterfallRows
+                    << "rows" << requestedRows
+                    << "skippedStaleRows" << skippedRows
+                    << "elapsedMs" << requestTimer.nsecsElapsed() / 1000000.0
+                    << "valid" << frame.valid;
+            profileLogTimer.restart();
         }
 
         {

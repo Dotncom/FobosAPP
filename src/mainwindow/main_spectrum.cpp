@@ -1,4 +1,6 @@
 #include "main.h"
+#include "multivfowidget.h"
+#include "dspflowpanel.h"
 #include "appconstants.h"
 #include "appruntimeutils.h"
 #include "diagnosticlogging.h"
@@ -1413,6 +1415,20 @@ void YourClassName::updateSpectrum() {
                                     displayTargetBins,
                                     displayLevelMin,
                                     preparedDisplayFrame);
+        if (multiVfoWidget) {
+            multiVfoWidget->setReceiverContext(displayCenterFrequency,
+                                               spectrumSettings.sampleRate,
+                                               pendingSettings.listeningFrequency,
+                                               pendingSettings.bandwidth,
+                                               pendingSettings.modulationType);
+            multiVfoWidget->updateSpectrum(displayFrequencies,
+                                           visualMagnitudes);
+            if (dspFlowPanel && dspFlowPanel->isVisible()) {
+                dspFlowPanel->updateMultiVfoSpectrum(multiVfoWidget->configurationJson(),
+                                                     displayFrequencies,
+                                                     visualMagnitudes);
+            }
+        }
         const std::vector<float> scienceFrequencies =
             !displayScanSegments.isEmpty()
                 ? actualFrequenciesFromScanSegments(preparedDisplayFrame.frequencies,

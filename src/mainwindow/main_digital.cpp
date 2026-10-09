@@ -42,8 +42,7 @@ void YourClassName::processSstvAudioFrame(const QByteArray &pcmData) {
     if (!videoProcessor ||
         !videoProcessorThread ||
         !videoDecodeEnabled ||
-        !videoDock ||
-        !videoDock->isVisible() ||
+        !isAnyVideoOutputVisible() ||
         !videoDecodeCheckbox ||
         !videoDecodeCheckbox->isChecked() ||
         pendingSettings.modulationType != MOD_SSTV ||
@@ -69,8 +68,7 @@ void YourClassName::processAptAudioFrame(const QByteArray &pcmData) {
     if (!videoProcessor ||
         !videoProcessorThread ||
         !videoDecodeEnabled ||
-        !videoDock ||
-        !videoDock->isVisible() ||
+        !isAnyVideoOutputVisible() ||
         !videoDecodeCheckbox ||
         !videoDecodeCheckbox->isChecked() ||
         pendingSettings.modulationType != MOD_APT ||
@@ -96,8 +94,7 @@ void YourClassName::processWefaxAudioFrame(const QByteArray &pcmData) {
     if (!videoProcessor ||
         !videoProcessorThread ||
         !videoDecodeEnabled ||
-        !videoDock ||
-        !videoDock->isVisible() ||
+        !isAnyVideoOutputVisible() ||
         !videoDecodeCheckbox ||
         !videoDecodeCheckbox->isChecked() ||
         pendingSettings.modulationType != MOD_WEFAX ||
@@ -121,14 +118,26 @@ bool YourClassName::isVideoDecodeActive() const {
         networkController &&
         networkController->isControlReady();
     return videoDecodeEnabled &&
-           videoDock &&
-           videoDock->isVisible() &&
+           isAnyVideoOutputVisible() &&
            videoDecodeCheckbox &&
            videoDecodeCheckbox->isChecked() &&
            (pendingSettings.modulationType == MOD_ATV ||
             pendingSettings.modulationType == MOD_LRPT) &&
            (!videoTestPatternCheckbox || !videoTestPatternCheckbox->isChecked()) &&
            !suppressServerLocalOutput;
+}
+
+bool YourClassName::isAnyVideoOutputVisible() const {
+    if (videoDock && videoDock->isVisible()) {
+        return true;
+    }
+    for (auto it = dspBlockEditors.constBegin(); it != dspBlockEditors.constEnd(); ++it) {
+        if (it.key().startsWith(QStringLiteral("digital_image_output")) &&
+            it.value() && it.value()->isVisible()) {
+            return true;
+        }
+    }
+    return false;
 }
 
 void YourClassName::processVideoIqFrame(const QByteArray &iqData, double sampleRate, int sampleCount) {
@@ -277,8 +286,7 @@ void YourClassName::updateVideoProcessorMode() {
         networkController &&
         networkController->isControlReady();
     const bool sstvEnabled =
-        videoDock &&
-        videoDock->isVisible() &&
+        isAnyVideoOutputVisible() &&
         pendingSettings.modulationType == MOD_SSTV &&
         (sstvTest ||
          (videoDecodeEnabled &&
@@ -286,8 +294,7 @@ void YourClassName::updateVideoProcessorMode() {
           videoDecodeCheckbox->isChecked())) &&
         !suppressServerLocalOutput;
     const bool aptEnabled =
-        videoDock &&
-        videoDock->isVisible() &&
+        isAnyVideoOutputVisible() &&
         pendingSettings.modulationType == MOD_APT &&
         (aptTest ||
          (videoDecodeEnabled &&
@@ -295,8 +302,7 @@ void YourClassName::updateVideoProcessorMode() {
           videoDecodeCheckbox->isChecked())) &&
         !suppressServerLocalOutput;
     const bool wefaxEnabled =
-        videoDock &&
-        videoDock->isVisible() &&
+        isAnyVideoOutputVisible() &&
         pendingSettings.modulationType == MOD_WEFAX &&
         (wefaxTest ||
          (videoDecodeEnabled &&
@@ -304,8 +310,7 @@ void YourClassName::updateVideoProcessorMode() {
           videoDecodeCheckbox->isChecked())) &&
         !suppressServerLocalOutput;
     const bool lrptEnabled =
-        videoDock &&
-        videoDock->isVisible() &&
+        isAnyVideoOutputVisible() &&
         pendingSettings.modulationType == MOD_LRPT &&
         (lrptTest ||
          (videoDecodeEnabled &&

@@ -1,4 +1,5 @@
 #include "main.h"
+#include "multivfowidget.h"
 #include "appconstants.h"
 #include "appsettingsutils.h"
 #include "diagnosticlogging.h"
@@ -166,6 +167,16 @@ void YourClassName::loadPersistentSettings() {
         settings.value("receiver/fftWindowType", pendingSettings.fftWindowType).toInt());
     pendingSettings.lnaGain = (std::clamp)(settings.value("receiver/lnaGain", pendingSettings.lnaGain).toInt(), 1, 3);
     pendingSettings.vgaGain = (std::clamp)(settings.value("receiver/vgaGain", pendingSettings.vgaGain).toInt(), 0, 31);
+    pendingSettings.hackRfLnaGainDb =
+        (std::clamp)(settings.value("receiver/hackRfLnaGainDb",
+                                    pendingSettings.hackRfLnaGainDb).toInt(),
+                     0,
+                     40) / 8 * 8;
+    pendingSettings.hackRfVgaGainDb =
+        (std::clamp)(settings.value("receiver/hackRfVgaGainDb",
+                                    pendingSettings.hackRfVgaGainDb).toInt(),
+                     0,
+                     62) / 2 * 2;
     pendingSettings.rtlAgc = settings.value("receiver/rtlAgc", pendingSettings.rtlAgc).toBool();
     pendingSettings.rtlTunerGainTenthsDb =
         (std::clamp)(settings.value("receiver/rtlTunerGainTenthsDb",
@@ -175,6 +186,16 @@ void YourClassName::loadPersistentSettings() {
     pendingSettings.audioDeviceId = (std::max)(0, settings.value("receiver/audioDeviceId", pendingSettings.audioDeviceId).toInt());
     pendingSettings.audioLowPassHz = clampAudioLowPassHz(settings.value("audio/lowPassHz", pendingSettings.audioLowPassHz).toDouble());
     pendingSettings.audioHighPassHz = clampAudioHighPassHz(settings.value("audio/highPassHz", pendingSettings.audioHighPassHz).toDouble());
+    pendingSettings.audioFilterChainJson =
+        settings.value("audio/filterChainJson", pendingSettings.audioFilterChainJson).toString();
+    pendingSettings.simplifiedAudioChannelizer =
+        settings.value("audio/simplifiedChannelizer",
+                       pendingSettings.simplifiedAudioChannelizer).toBool();
+    if (multiVfoWidget) {
+        multiVfoWidget->setConfigurationJson(
+            settings.value(QStringLiteral("multiVfo/configuration"), QStringLiteral("{\"version\":1,\"enabled\":false,\"channels\":[]}"))
+                .toString());
+    }
     pendingSettings.hfNoiseCancelDepth = clampHfNoiseCancelDepth(settings.value("hfNoiseCancel/depth", pendingSettings.hfNoiseCancelDepth).toDouble());
     pendingSettings.hfNoiseCancelRefGainDb =
         clampHfNoiseCancelRefGainDb(settings.value("hfNoiseCancel/refGainDb", pendingSettings.hfNoiseCancelRefGainDb).toDouble());
@@ -1317,10 +1338,15 @@ void YourClassName::savePersistentSettings() {
     settings.setValue("receiver/fftWindowType", normalizedFftWindowType(settingsToSave.fftWindowType));
     settings.setValue("receiver/lnaGain", settingsToSave.lnaGain);
     settings.setValue("receiver/vgaGain", settingsToSave.vgaGain);
+    settings.setValue("receiver/hackRfLnaGainDb", settingsToSave.hackRfLnaGainDb);
+    settings.setValue("receiver/hackRfVgaGainDb", settingsToSave.hackRfVgaGainDb);
     settings.setValue("receiver/rtlAgc", settingsToSave.rtlAgc);
     settings.setValue("receiver/rtlTunerGainTenthsDb", settingsToSave.rtlTunerGainTenthsDb);
     settings.setValue("receiver/audioDeviceId", settingsToSave.audioDeviceId);
     settings.setValue("receiver/audioEnabled", settingsToSave.audioEnabled);
+    if (multiVfoWidget) {
+        settings.setValue(QStringLiteral("multiVfo/configuration"), multiVfoWidget->configurationJson());
+    }
     settings.setValue("receiver/gpoValue", static_cast<int>(settingsToSave.gpoValue));
     if (savedDmrCenterOffset) {
         qDebug() << "[Settings] DMR center offset from listening frequency while saving"
@@ -1632,6 +1658,9 @@ void YourClassName::savePersistentSettings() {
     }
     settings.setValue("audio/lowPassHz", pendingSettings.audioLowPassHz);
     settings.setValue("audio/highPassHz", pendingSettings.audioHighPassHz);
+    settings.setValue("audio/filterChainJson", pendingSettings.audioFilterChainJson);
+    settings.setValue("audio/simplifiedChannelizer",
+                      pendingSettings.simplifiedAudioChannelizer);
     settings.setValue("hfNoiseCancel/depth", pendingSettings.hfNoiseCancelDepth);
     settings.setValue("hfNoiseCancel/refGainDb", pendingSettings.hfNoiseCancelRefGainDb);
     settings.setValue("hfNoiseCancel/refDelayNs", pendingSettings.hfNoiseCancelRefDelayNs);

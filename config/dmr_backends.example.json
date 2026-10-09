@@ -10,14 +10,14 @@
   "backends": [
     {
       "id": "fobos-mbelib",
-      "label": "FobosAPP + mbelib",
+      "label": "Obrii SDR + mbelib",
       "type": "internal",
       "enabled": true,
       "preferredVoiceBackendId": "fobos.dmr.voice.mbelib"
     },
     {
       "id": "fobos-opendmr",
-      "label": "FobosAPP + OpenDMR/OP25",
+      "label": "Obrii SDR + OpenDMR/OP25",
       "type": "internal",
       "enabled": false,
       "preferredVoiceBackendId": "fobos.dmr.voice.opendmr"
@@ -95,7 +95,7 @@
         "-audio-udp",
         "127.0.0.1:23456"
       ],
-      "notes": "Lab-only integration target. FobosAPP should send full 132-dibit DMR bursts with a monotonic baseIdx, not extracted AMBE payloads."
+      "notes": "Lab-only integration target. Obrii SDR should send full 132-dibit DMR bursts with a monotonic baseIdx, not extracted AMBE payloads."
     }
   ]
 }

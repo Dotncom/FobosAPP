@@ -51,7 +51,9 @@ double channelizerOutputRate(const RadioSettings &settings) {
     const double targetRate = channelizerTargetRate(settings);
     const int decimationFactor =
         (std::max)(1, static_cast<int>(std::floor(settings.sampleRate / targetRate)));
-    return settings.sampleRate / static_cast<double>(decimationFactor);
+    const double coarseRate =
+        settings.sampleRate / static_cast<double>(decimationFactor);
+    return (std::min)(targetRate, coarseRate);
 }
 
 double channelizerCutoff(const RadioSettings &settings, double outputRate) {

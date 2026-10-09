@@ -72,6 +72,7 @@ public:
                      float slicerRatio = 0.625f,
                      bool adaptiveSlicer = true,
                      int ambeLayout = DMR_DEFAULT_AMBE_LAYOUT);
+    void setLiveTimingHint(bool enabled, double phaseFraction, double confidence);
     Result processPcmFrame(const QByteArray &pcmData, int sampleRate, double rfFrequencyHz = 0.0);
 
     struct SyncPattern {
@@ -418,6 +419,9 @@ private:
     float labSlicerRatio = 0.625f;
     bool labAdaptiveSlicer = true;
     int labAmbeLayout = DMR_DEFAULT_AMBE_LAYOUT;
+    bool liveTimingHintEnabled = false;
+    double liveTimingPhaseFraction = 0.5;
+    double liveTimingConfidence = 0.0;
 };
 
 #endif // DMRDECODER_H

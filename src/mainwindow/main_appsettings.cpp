@@ -1,4 +1,5 @@
 #include "main.h"
+#include "multivfowidget.h"
 
 #include "appconstants.h"
 #include "apphelp.h"
@@ -132,7 +133,7 @@ void YourClassName::openApplicationHelp() {
     QWidget *parentWidget = QApplication::activeWindow();
     QDialog dialog(parentWidget ? parentWidget : static_cast<QWidget*>(this));
     dialog.setWindowTitle(uiText(QStringLiteral("program_help_title"),
-                                 QStringLiteral("FobosAPP feature guide")));
+                                 QStringLiteral("Obrii SDR feature guide")));
     dialog.resize(760, 640);
 
     QVBoxLayout *rootLayout = new QVBoxLayout(&dialog);
@@ -266,7 +267,7 @@ void YourClassName::openApplicationSettings() {
         &dialog);
     helpButton->setToolTip(uiText(
         QStringLiteral("program_help_tooltip"),
-        QStringLiteral("Open a practical guide to FobosAPP controls, scanning, recordings, GNSS/QTH, network mode and mouse shortcuts.")));
+        QStringLiteral("Open a practical guide to Obrii SDR controls, scanning, recordings, GNSS/QTH, network mode and mouse shortcuts.")));
 
     QPushButton *fobosDetailsButton = new QPushButton(
         uiText(QStringLiteral("show_fobos_details"), QStringLiteral("Show Fobos Details")),
@@ -331,7 +332,7 @@ void YourClassName::openApplicationSettings() {
     QVBoxLayout *settingsBackupLayout = new QVBoxLayout(settingsBackupBox);
     QLabel *settingsBackupHint = new QLabel(
         uiText(QStringLiteral("settings_backup_hint"),
-               QStringLiteral("Settings are stored in your user profile and survive application updates. Export FobosAPP.ini for backup or transfer to another computer.")),
+               QStringLiteral("Settings are stored in your user profile and survive application updates. Export ObriiSDR.ini for backup or transfer to another computer.")),
         settingsBackupBox);
     settingsBackupHint->setWordWrap(true);
     QHBoxLayout *settingsBackupButtons = new QHBoxLayout();
@@ -400,6 +401,13 @@ void YourClassName::openApplicationSettings() {
     extendedRecordingMetadataOption->setToolTip(uiText(
         QStringLiteral("extended_recording_metadata_tooltip"),
         QStringLiteral("Add versioned scientific metadata, calibration, FFT/RBW, spectrum markers and measurements to recording metadata. Location, device serials, keys and API tokens are excluded.")));
+    QCheckBox *simplifiedAudioChannelizerOption = new QCheckBox(
+        uiText(QStringLiteral("simplified_audio_channelizer"),
+               QStringLiteral("Simplified audio channelizer")),
+        quickOptionsBox);
+    simplifiedAudioChannelizerOption->setToolTip(uiText(
+        QStringLiteral("simplified_audio_channelizer_tooltip"),
+        QStringLiteral("Use the lower-cost legacy one-pass channelizer for weak CPUs. It reduces filtering accuracy but preserves live audio at high sample rates.")));
     audioOption->setChecked(audioCheckbox && audioCheckbox->isChecked());
     syncOption->setChecked(syncCheckbox && syncCheckbox->isChecked());
     syncOption->setEnabled(false);
@@ -417,6 +425,7 @@ void YourClassName::openApplicationSettings() {
     waterfallFpsOption->setChecked(showWaterfallFps);
     extendedSpectrumInfoOption->setChecked(showExtendedSpectrumInfo);
     extendedRecordingMetadataOption->setChecked(extendedRecordingMetadataEnabled);
+    simplifiedAudioChannelizerOption->setChecked(pendingSettings.simplifiedAudioChannelizer);
     quickOptionsLayout->addWidget(audioOption, 0, 0);
     quickOptionsLayout->addWidget(syncOption, 0, 1);
     quickOptionsLayout->addWidget(spectrum2Option, 1, 0);
@@ -430,8 +439,9 @@ void YourClassName::openApplicationSettings() {
     quickOptionsLayout->addWidget(spectrumFpsOption, 4, 0);
     quickOptionsLayout->addWidget(waterfallFpsOption, 4, 1);
     quickOptionsLayout->addWidget(extendedSpectrumInfoOption, 4, 2);
-    quickOptionsLayout->addWidget(extendedRecordingMetadataOption, 5, 0, 1, 3);
-    quickOptionsLayout->addWidget(alternativeInterfaceOption, 6, 0, 1, 3);
+    quickOptionsLayout->addWidget(simplifiedAudioChannelizerOption, 5, 0, 1, 3);
+    quickOptionsLayout->addWidget(extendedRecordingMetadataOption, 6, 0, 1, 3);
+    quickOptionsLayout->addWidget(alternativeInterfaceOption, 7, 0, 1, 3);
     rootLayout->addWidget(quickOptionsBox);
 
     auto applyLanguage = [this, languageCombo]() {
@@ -641,6 +651,18 @@ void YourClassName::openApplicationSettings() {
         extendedRecordingMetadataEnabled = checked;
         savePersistentSettings();
     });
+    connect(simplifiedAudioChannelizerOption, &QCheckBox::toggled, &dialog, [this](bool checked) {
+        pendingSettings.simplifiedAudioChannelizer = checked;
+        if (audioProcessor) {
+            audioProcessor->configure(audioProcessorSettings());
+        }
+        savePersistentSettings();
+        if (isNetworkClientMode()) {
+            scheduleRemoteSettingsCommand();
+        } else if (networkMode == NetworkMode::Server) {
+            sendServerStateToClients();
+        }
+    });
 
     QDialogButtonBox *buttonBox = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
     if (QPushButton *closeButton = buttonBox->button(QDialogButtonBox::Close)) {
@@ -668,7 +690,7 @@ void YourClassName::exportSettingsBackup() {
     }
 
     const QString defaultName =
-        QStringLiteral("FobosAPP-settings-%1.ini")
+        QStringLiteral("ObriiSDR-settings-%1.ini")
             .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-HHmmss")));
     const QString defaultPath = QDir(sourceInfo.absolutePath()).absoluteFilePath(defaultName);
     const QString targetPath = QFileDialog::getSaveFileName(
@@ -721,7 +743,7 @@ void YourClassName::importSettingsBackup() {
                               uiText(QStringLiteral("settings_import_confirm_title"),
                                      QStringLiteral("Import settings?")),
                               uiText(QStringLiteral("settings_import_confirm"),
-                                     QStringLiteral("Importing settings will replace the active per-user FobosAPP.ini. A timestamped backup of the current file will be created first.")),
+                                     QStringLiteral("Importing settings will replace the active per-user ObriiSDR.ini. A timestamped backup of the current file will be created first.")),
                               QMessageBox::Yes | QMessageBox::No,
                               QMessageBox::No);
     if (answer != QMessageBox::Yes) {
@@ -738,7 +760,7 @@ void YourClassName::importSettingsBackup() {
     QString backupPath;
     if (QFileInfo::exists(currentPath)) {
         backupPath = QDir(currentInfo.absolutePath()).absoluteFilePath(
-            QStringLiteral("FobosAPP-settings-before-import-%1.ini")
+            QStringLiteral("ObriiSDR-settings-before-import-%1.ini")
                 .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-HHmmss"))));
         if (!QFile::copy(currentPath, backupPath)) {
             QMessageBox::warning(this,

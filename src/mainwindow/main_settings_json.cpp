@@ -45,10 +45,14 @@ QJsonObject YourClassName::settingsToJson() const {
     settings["fftWindowType"] = normalizedFftWindowType(pendingSettings.fftWindowType);
     settings["lnaGain"] = pendingSettings.lnaGain;
     settings["vgaGain"] = pendingSettings.vgaGain;
+    settings["hackRfLnaGainDb"] = pendingSettings.hackRfLnaGainDb;
+    settings["hackRfVgaGainDb"] = pendingSettings.hackRfVgaGainDb;
     settings["rtlAgc"] = pendingSettings.rtlAgc;
     settings["rtlTunerGainTenthsDb"] = pendingSettings.rtlTunerGainTenthsDb;
     settings["audioLowPassHz"] = pendingSettings.audioLowPassHz;
     settings["audioHighPassHz"] = pendingSettings.audioHighPassHz;
+    settings["audioFilterChainJson"] = pendingSettings.audioFilterChainJson;
+    settings["simplifiedAudioChannelizer"] = pendingSettings.simplifiedAudioChannelizer;
     settings["hfNoiseCancelDepth"] = pendingSettings.hfNoiseCancelDepth;
     settings["hfNoiseCancelRefGainDb"] = pendingSettings.hfNoiseCancelRefGainDb;
     settings["hfNoiseCancelRefDelayNs"] = pendingSettings.hfNoiseCancelRefDelayNs;
@@ -226,6 +230,9 @@ void YourClassName::applySettingsFromJson(const QJsonObject &settingsJson, bool 
     auto readBool = [&settingsJson](const char *key, bool currentValue) {
         return settingsJson.contains(key) ? settingsJson.value(key).toBool(currentValue) : currentValue;
     };
+    auto readString = [&settingsJson](const char *key, const QString &currentValue) {
+        return settingsJson.contains(key) ? settingsJson.value(key).toString(currentValue) : currentValue;
+    };
 
     pendingSettings.deviceIndex = readInt("deviceIndex", pendingSettings.deviceIndex);
     pendingSettings.clockSource = readInt("clockSource", pendingSettings.clockSource);
@@ -259,11 +266,20 @@ void YourClassName::applySettingsFromJson(const QJsonObject &settingsJson, bool 
         readInt("fftWindowType", pendingSettings.fftWindowType));
     pendingSettings.lnaGain = readInt("lnaGain", pendingSettings.lnaGain);
     pendingSettings.vgaGain = readInt("vgaGain", pendingSettings.vgaGain);
+    pendingSettings.hackRfLnaGainDb =
+        (std::clamp)(readInt("hackRfLnaGainDb", pendingSettings.hackRfLnaGainDb), 0, 40) / 8 * 8;
+    pendingSettings.hackRfVgaGainDb =
+        (std::clamp)(readInt("hackRfVgaGainDb", pendingSettings.hackRfVgaGainDb), 0, 62) / 2 * 2;
     pendingSettings.rtlAgc = readBool("rtlAgc", pendingSettings.rtlAgc);
     pendingSettings.rtlTunerGainTenthsDb =
         (std::clamp)(readInt("rtlTunerGainTenthsDb", pendingSettings.rtlTunerGainTenthsDb), 0, 496);
     pendingSettings.audioLowPassHz = clampAudioLowPassHz(readDouble("audioLowPassHz", pendingSettings.audioLowPassHz));
     pendingSettings.audioHighPassHz = clampAudioHighPassHz(readDouble("audioHighPassHz", pendingSettings.audioHighPassHz));
+    pendingSettings.audioFilterChainJson = readString("audioFilterChainJson",
+                                                      pendingSettings.audioFilterChainJson);
+    pendingSettings.simplifiedAudioChannelizer =
+        readBool("simplifiedAudioChannelizer",
+                 pendingSettings.simplifiedAudioChannelizer);
     pendingSettings.hfNoiseCancelDepth = clampHfNoiseCancelDepth(readDouble("hfNoiseCancelDepth", pendingSettings.hfNoiseCancelDepth));
     pendingSettings.hfNoiseCancelRefGainDb =
         clampHfNoiseCancelRefGainDb(readDouble("hfNoiseCancelRefGainDb", pendingSettings.hfNoiseCancelRefGainDb));

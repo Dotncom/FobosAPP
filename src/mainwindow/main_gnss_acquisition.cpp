@@ -494,7 +494,7 @@ void YourClassName::logGnssRawContext() {
     }
 
     const QString timestamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss_zzz"));
-    const QString fileName = QStringLiteral("FobosAPP_%1_gnss_iq.wav").arg(timestamp);
+    const QString fileName = QStringLiteral("ObriiSDR_%1_gnss_iq.wav").arg(timestamp);
     const QString wavPath = recordingsDir.filePath(fileName);
     QFile wavFile(wavPath);
     if (!wavFile.open(QIODevice::WriteOnly)) {
@@ -525,7 +525,7 @@ void YourClassName::logGnssRawContext() {
     wavFile.close();
 
     QJsonObject metadata;
-    metadata["app"] = QStringLiteral("FobosAPP");
+    metadata["app"] = QStringLiteral("ObriiSDR");
     metadata["mode"] = QStringLiteral("gnss_iq_snapshot");
     metadata["gnssSystemId"] = gnssSystemId;
     metadata["fileName"] = fileName;

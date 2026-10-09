@@ -1097,7 +1097,7 @@ void DmrDecoder::flushDmrDibitDump() {
     }
 
     const QString dumpPath =
-        QCoreApplication::applicationDirPath() + QStringLiteral("/FobosAPP_dmr_dibit_dump.log");
+        QCoreApplication::applicationDirPath() + QStringLiteral("/ObriiSDR_dmr_dibit_dump.log");
     QFile dumpFile(dumpPath);
     if (dumpFile.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
         QTextStream out(&dumpFile);
@@ -1354,6 +1354,17 @@ void DmrDecoder::setLabHints(bool enabled,
                  << "adaptiveSlicer" << labAdaptiveSlicer
                  << "ambeLayout" << dmrAmbeLayoutName(labAmbeLayout);
     }
+}
+
+void DmrDecoder::setLiveTimingHint(bool enabled,
+                                   double phaseFraction,
+                                   double confidence) {
+    liveTimingHintEnabled = enabled && std::isfinite(phaseFraction) &&
+                            std::isfinite(confidence) && confidence >= 0.35;
+    liveTimingPhaseFraction =
+        liveTimingHintEnabled ? (std::clamp)(phaseFraction, 0.0, 1.0) : 0.5;
+    liveTimingConfidence =
+        liveTimingHintEnabled ? (std::clamp)(confidence, 0.0, 1.0) : 0.0;
 }
 
 DmrDecoder::Result DmrDecoder::processPcmFrame(const QByteArray &pcmData, int sampleRate, double rfFrequencyHz) {
@@ -2743,21 +2754,24 @@ DmrDecoder::CachInfo DmrDecoder::decodeCachBeforeSync(const SyncHit &hit, bool a
         return corrected < correctedLower ? 1 : 0;
     };
 
-    std::array<int, 5> timingOffsets = {
-        samplesPerSymbol / 2,
-        (std::max)(0, samplesPerSymbol / 2 - 1),
-        (std::min)(samplesPerSymbol - 1, samplesPerSymbol / 2 + 1),
-        (std::max)(0, samplesPerSymbol / 2 - 2),
-        (std::min)(samplesPerSymbol - 1, samplesPerSymbol / 2 + 2)
+    std::vector<int> timingOffsets;
+    const int centerTimingOffset = samplesPerSymbol / 2;
+    const auto addTimingOffset = [&](int value) {
+        value = (std::clamp)(value, 0, (std::max)(0, samplesPerSymbol - 1));
+        if (std::find(timingOffsets.begin(), timingOffsets.end(), value) == timingOffsets.end()) {
+            timingOffsets.push_back(value);
+        }
     };
-    if (!allowTimingSearch) {
-        timingOffsets = {
-            samplesPerSymbol / 2,
-            samplesPerSymbol / 2,
-            samplesPerSymbol / 2,
-            samplesPerSymbol / 2,
-            samplesPerSymbol / 2
-        };
+    if (allowTimingSearch && liveTimingHintEnabled) {
+        addTimingOffset(static_cast<int>(std::lround(
+            liveTimingPhaseFraction * (std::max)(0, samplesPerSymbol - 1))));
+    }
+    addTimingOffset(centerTimingOffset);
+    if (allowTimingSearch) {
+        for (int distance = 1; distance <= 2; ++distance) {
+            addTimingOffset(centerTimingOffset - distance);
+            addTimingOffset(centerTimingOffset + distance);
+        }
     }
 
     const std::array<float, 3> slicerRatios = {0.625f, 0.55f, 0.70f};
@@ -2878,6 +2892,11 @@ DmrDecoder::SlotTypeInfo DmrDecoder::decodeSlotTypeAroundSync(const SyncHit &hit
         }
     };
     const int centerTimingOffset = samplesPerSymbol / 2;
+    const int preferredTimingOffset = liveTimingHintEnabled
+        ? static_cast<int>(std::lround(
+              liveTimingPhaseFraction * (std::max)(0, samplesPerSymbol - 1)))
+        : centerTimingOffset;
+    addTimingOffset(preferredTimingOffset);
     addTimingOffset(centerTimingOffset);
     for (int distance = 1; distance <= samplesPerSymbol / 2; ++distance) {
         addTimingOffset(centerTimingOffset - distance);
@@ -2888,7 +2907,7 @@ DmrDecoder::SlotTypeInfo DmrDecoder::decodeSlotTypeAroundSync(const SyncHit &hit
 
     for (int timingOffset : timingOffsets) {
         const int relativeTimingOffset = timingOffset - samplesPerSymbol / 2;
-        const int timingDistance = std::abs(relativeTimingOffset);
+        const int timingDistance = std::abs(timingOffset - preferredTimingOffset);
         for (int slicerIndex = 0; slicerIndex < static_cast<int>(slicerRatios.size()); ++slicerIndex) {
             const float slicerRatio = slicerRatios[static_cast<std::size_t>(slicerIndex)];
             for (bool etsiMap : mapVariants) {
@@ -4520,10 +4539,15 @@ void DmrDecoder::queueVoicePayloadFrames(const PendingEmb &pending,
     const int minTimingOffset = -(std::max)(1, samplesPerSymbol / 2);
     const int maxTimingOffset =
         (std::max)(1, samplesPerSymbol - 1 - samplesPerSymbol / 2);
+    const int livePreferredTimingOffset = (std::clamp)(
+        static_cast<int>(std::lround(
+            (liveTimingPhaseFraction - 0.5) * (std::max)(1, samplesPerSymbol - 1))),
+        minTimingOffset,
+        maxTimingOffset);
     const int preferredTimingOffset =
         labManualTimingEnabled
             ? (std::clamp)(labManualTimingOffset, minTimingOffset, maxTimingOffset)
-            : timingOffset;
+            : (liveTimingHintEnabled ? livePreferredTimingOffset : timingOffset);
     const float preferredSlicerRatio =
         (std::clamp)(labSlicerRatio, 0.45f, 0.80f);
     int voiceAudioConfidence = 0;
@@ -4541,6 +4565,9 @@ void DmrDecoder::queueVoicePayloadFrames(const PendingEmb &pending,
     };
     addTimingCandidate(preferredTimingOffset);
     if (!labManualTimingEnabled) {
+        addTimingCandidate(timingOffset);
+        addTimingCandidate(preferredTimingOffset - 1);
+        addTimingCandidate(preferredTimingOffset + 1);
         addTimingCandidate(timingOffset - 1);
         addTimingCandidate(timingOffset + 1);
         addTimingCandidate(timingOffset - 2);
@@ -4936,7 +4963,7 @@ void DmrDecoder::queueVoicePayloadFrames(const PendingEmb &pending,
         if (dmrDibitDumpSequence == 1) {
             qDebug() << "[DMR dump] buffering voice dibit dump"
                      << (QCoreApplication::applicationDirPath() +
-                         QStringLiteral("/FobosAPP_dmr_dibit_dump.log"))
+                         QStringLiteral("/ObriiSDR_dmr_dibit_dump.log"))
                      << "session" << dmrDibitDumpSession
                      << "limit" << dmrDibitDumpRemaining + 1;
         }
@@ -5361,6 +5388,11 @@ DmrDecoder::EmbInfo DmrDecoder::decodeVoiceEmbAt(const PendingEmb &pending) cons
         }
     };
     const int centerTimingOffset = samplesPerSymbol / 2;
+    const int preferredTimingOffset = liveTimingHintEnabled
+        ? static_cast<int>(std::lround(
+              liveTimingPhaseFraction * (std::max)(0, samplesPerSymbol - 1)))
+        : centerTimingOffset;
+    addTimingOffset(preferredTimingOffset);
     addTimingOffset(centerTimingOffset);
     for (int distance = 1; distance <= samplesPerSymbol / 2; ++distance) {
         addTimingOffset(centerTimingOffset - distance);
@@ -5372,7 +5404,7 @@ DmrDecoder::EmbInfo DmrDecoder::decodeVoiceEmbAt(const PendingEmb &pending) cons
         const int polarityPenalty = candidateInverted == pending.inverted ? 0 : 1;
         for (int timingOffset : timingOffsets) {
             const int relativeTimingOffset = timingOffset - samplesPerSymbol / 2;
-            const int timingDistance = std::abs(relativeTimingOffset);
+            const int timingDistance = std::abs(timingOffset - preferredTimingOffset);
             for (float slicerRatio : slicerRatios) {
                 bool embRawBits[16] = {};
                 bool inRange = true;

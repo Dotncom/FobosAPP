@@ -233,7 +233,7 @@ void RecordingManager::writeWaveHeader(int sampleRate, int channels, int bitsPer
 
 QJsonObject RecordingManager::makeMetadataObject() const {
     QJsonObject root;
-    root["app"] = QStringLiteral("FobosAPP");
+    root["app"] = QStringLiteral("ObriiSDR");
     root["version"] = 2;
     root["mode"] = activeMode == Mode::ChannelIqWav ? QStringLiteral("channel_iq") : QStringLiteral("audio");
     root["recordedAtUtc"] = recordingStartedAtUtc.toString(Qt::ISODateWithMs);
@@ -325,7 +325,7 @@ QString RecordingManager::makeRecordingPath(const QString &suffix) const {
     const QString timestamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss_zzz"));
     const QString safeSuffix = suffix.startsWith('_') ? suffix.mid(1) : suffix;
     return QDir(QCoreApplication::applicationDirPath())
-        .filePath(QStringLiteral("recordings/FobosAPP_%1_%2").arg(timestamp, safeSuffix));
+        .filePath(QStringLiteral("recordings/ObriiSDR_%1_%2").arg(timestamp, safeSuffix));
 }
 
 void RecordingManager::updateStatus(const QString &status) {

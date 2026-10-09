@@ -1,4 +1,4 @@
-# FobosAPP IQ Path Contract
+# Obrii SDR IQ Path Contract
 
 This note defines the current IQ-path contract and the rules that should be
 preserved before any cleanup or optimization. It is intentionally focused on the
@@ -7,7 +7,7 @@ cleaned up separately.
 
 ## Design Goal
 
-FobosAPP is optimized first for the Fobos receiver, where RF input can produce
+Obrii SDR is optimized first for the Fobos receiver, where RF input can produce
 very large complex-IQ streams. At 50 MS/s with interleaved 32-bit float IQ, the
 internal stream is about 400 MB/s before any extra copies. At 80 MS/s, it is
 about 640 MB/s. Any additional full-stream copy, conversion, Qt signal hop, or
@@ -64,7 +64,7 @@ audio, DMR bursts, and any future decoder that needs continuity.
 These rules should be treated as part of the program contract:
 
 1. Fobos native reading is the primary optimized path.
-   - Generic backends must adapt into the FobosAPP IQ model, not force the Fobos
+   - Generic backends must adapt into the Obrii SDR IQ model, not force the Fobos
      path through a slower universal abstraction.
 2. No UI work in the receiver callback.
    - The callback may publish IQ, update cheap counters, and emit optional

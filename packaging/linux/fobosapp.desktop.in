@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
-Name=FobosAPP
-Comment=RigExpert Fobos SDR receiver
-Exec=FobosAPP
-Icon=fobosapp
+Name=Obrii SDR
+Comment=Wideband SDR receiver and research workstation
+Exec=ObriiSDR
+Icon=obriisdr
 Terminal=false
 Categories=AudioVideo;HamRadio;Science;

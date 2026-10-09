@@ -9,7 +9,7 @@ int rtlSdrNativeComboValue(int nativeIndex) {
 }
 
 bool isRtlSdrNativeComboValue(int value) {
-    return value <= RTLSDR_NATIVE_DEVICE_INDEX_BASE && value > RTLSDR_NATIVE_DEVICE_INDEX_BASE - 10000;
+    return value <= RTLSDR_NATIVE_DEVICE_INDEX_BASE && value > SOAPY_SDR_DEVICE_INDEX;
 }
 
 int rtlSdrNativeIndexFromComboValue(int value) {
@@ -45,7 +45,7 @@ int bladeRfNativeComboValue(int nativeIndex) {
 }
 
 bool isBladeRfNativeComboValue(int value) {
-    return value <= BLADERF_NATIVE_DEVICE_INDEX_BASE && value > BLADERF_NATIVE_DEVICE_INDEX_BASE - 10000;
+    return value <= BLADERF_NATIVE_DEVICE_INDEX_BASE && value > HACKRF_NATIVE_DEVICE_INDEX_BASE;
 }
 
 int bladeRfNativeIndexFromComboValue(int value) {
@@ -57,7 +57,7 @@ int hackRfNativeComboValue(int nativeIndex) {
 }
 
 bool isHackRfNativeComboValue(int value) {
-    return value <= HACKRF_NATIVE_DEVICE_INDEX_BASE && value > HACKRF_NATIVE_DEVICE_INDEX_BASE - 10000;
+    return value <= HACKRF_NATIVE_DEVICE_INDEX_BASE && value > HACKRF_NATIVE_DEVICE_INDEX_BASE - 1000;
 }
 
 int hackRfNativeIndexFromComboValue(int value) {

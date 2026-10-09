@@ -598,6 +598,8 @@ void AudioProcessor::joinWorkerThreads() {
 }
 
 void AudioProcessor::resetDemodulatorState() {
+    audioIqChannelizer.reset();
+    audioChannelizedIq.clear();
     ncoPhase = 0.0;
     audioResamplePhase = 0.0;
     amLowPassState = std::complex<float>(0.0f, 0.0f);
@@ -612,6 +614,7 @@ void AudioProcessor::resetDemodulatorState() {
     demodAudioLowPassState2 = 0.0f;
     demodAudioLowPassState3 = 0.0f;
     demodAudioHighPassState = 0.0f;
+    audioFilterChain.reset();
     samCarrierPhase = 0.0;
     samCarrierFrequency = 0.0;
     sidebandFilterPhase = 0.0;
@@ -720,7 +723,11 @@ void AudioProcessor::processDmrIqDemodulatorBlock(const std::vector<float>& iqBl
         return;
     }
 
-    const double fShift = settings.listeningFrequency - settings.centerFrequency;
+    const double liveCarrierOffset = settings.liveDigitalSyncEnabled
+                                         ? settings.liveDigitalSyncCarrierOffsetHz
+                                         : 0.0;
+    const double fShift = settings.listeningFrequency - settings.centerFrequency +
+                          liveCarrierOffset;
     const double phaseIncrement = -TWO_PI * fShift / rfInputRate;
     const float channelLowPassAlpha = static_cast<float>((std::clamp)(
         1.0 - std::exp(-TWO_PI *
@@ -953,8 +960,8 @@ void AudioProcessor::processDemodulatorBlock(const std::vector<float>& iqBlock,
     dmrBasebandSamples.clear();
     dmrBasebandSampleRate = 0;
 
-    const double rfInputRate = settings.sampleRate;
-    const double audioTimingRate = rfInputRate;
+    double rfInputRate = settings.sampleRate;
+    double audioTimingRate = rfInputRate;
 
     if (iqBlock.size() < 2 || rfInputRate <= 0.0 || audioTimingRate <= 0.0) {
         return;
@@ -970,12 +977,60 @@ void AudioProcessor::processDemodulatorBlock(const std::vector<float>& iqBlock,
         return;
     }
 
-    const int inputMode = settings.inputMode;
-    const size_t iqSamples = iqBlock.size() / 2;
-    const double fShift = settings.listeningFrequency - settings.centerFrequency;
+    const int sourceInputMode = settings.inputMode;
+    int inputMode = sourceInputMode;
+    const std::vector<float> *demodIq = &iqBlock;
+    bool channelizedInput = false;
+    if (sourceInputMode != INPUT_HF_NOISE_CANCEL &&
+        !settings.simplifiedAudioChannelizer) {
+        RadioSettings channelSettings = settings;
+        channelSettings.modulationType = demodulationType;
+        if (settings.liveDigitalSyncEnabled &&
+            std::isfinite(settings.liveDigitalSyncCarrierOffsetHz)) {
+            channelSettings.listeningFrequency +=
+                settings.liveDigitalSyncCarrierOffsetHz;
+        }
+        const IqChannelizer::Result channelResult =
+            audioIqChannelizer.processFloatIq(iqBlock.data(),
+                                              iqBlock.size(),
+                                              channelSettings,
+                                              audioChannelizedIq,
+                                              false);
+        if (!channelResult.valid || audioChannelizedIq.size() < 2U) {
+            return;
+        }
+        if (settings.liveDigitalSyncEnabled &&
+            (demodulationType == MOD_PSK || demodulationType == MOD_FT8) &&
+            std::isfinite(settings.liveDigitalSyncPhaseRadians)) {
+            const float rotationI = static_cast<float>(
+                std::cos(-settings.liveDigitalSyncPhaseRadians));
+            const float rotationQ = static_cast<float>(
+                std::sin(-settings.liveDigitalSyncPhaseRadians));
+            for (std::size_t index = 0; index + 1U < audioChannelizedIq.size(); index += 2U) {
+                const float inputI = audioChannelizedIq[index];
+                const float inputQ = audioChannelizedIq[index + 1U];
+                audioChannelizedIq[index] = inputI * rotationI - inputQ * rotationQ;
+                audioChannelizedIq[index + 1U] = inputI * rotationQ + inputQ * rotationI;
+            }
+        }
+        demodIq = &audioChannelizedIq;
+        rfInputRate = channelResult.outputRate;
+        audioTimingRate = rfInputRate;
+        inputMode = INPUT_RF;
+        channelizedInput = true;
+    }
+
+    const size_t iqSamples = demodIq->size() / 2;
+    const double fShift = channelizedInput
+                              ? 0.0
+                              : settings.listeningFrequency - settings.centerFrequency;
     const double phaseIncrement = -TWO_PI * fShift / rfInputRate;
     const double bandwidth = settings.bandwidth;
-    const int decimationFactor = channelDecimationFactor(rfInputRate, demodulationType, bandwidth);
+    const int decimationFactor = channelizedInput
+                                     ? 1
+                                     : channelDecimationFactor(rfInputRate,
+                                                               demodulationType,
+                                                               bandwidth);
     const double rfChannelRate = rfInputRate / decimationFactor;
     const double audioTimingChannelRate = audioTimingRate / decimationFactor;
     const double outputStep = AUDIO_OUTPUT_RATE / audioTimingChannelRate;
@@ -1056,7 +1111,7 @@ void AudioProcessor::processDemodulatorBlock(const std::vector<float>& iqBlock,
     const bool adaptiveNoiseCancel = inputMode == INPUT_HF_NOISE_CANCEL;
     const bool hfAudioBlankerEnabled =
         settings.hfAudioBlankerEnabled &&
-        isDirectInputMode(inputMode) &&
+        isDirectInputMode(sourceInputMode) &&
         !digitalAudioMode;
     const float hfAudioBlankerThreshold = static_cast<float>(
         (std::clamp)(settings.hfAudioBlankerThreshold, 2.0, 20.0));
@@ -1101,8 +1156,8 @@ void AudioProcessor::processDemodulatorBlock(const std::vector<float>& iqBlock,
     constexpr float adaptiveEpsilon = 1.0e-8f;
 
     for (size_t n = 0; n < iqSamples; ++n) {
-        float iSample = iqBlock[2 * n];
-        float qSample = iqBlock[2 * n + 1];
+        float iSample = (*demodIq)[2 * n];
+        float qSample = (*demodIq)[2 * n + 1];
         if (!std::isfinite(iSample)) {
             iSample = 0.0f;
         }
@@ -1422,6 +1477,9 @@ void AudioProcessor::SDRThread() {
     double activeBandwidth = activeSettings.bandwidth;
     double activeAudioLowPassHz = activeSettings.audioLowPassHz;
     double activeAudioHighPassHz = activeSettings.audioHighPassHz;
+    QString activeAudioFilterChainJson = activeSettings.audioFilterChainJson;
+    audioFilterChain.configure(activeAudioFilterChainJson, AUDIO_OUTPUT_RATE);
+    bool activeSimplifiedAudioChannelizer = activeSettings.simplifiedAudioChannelizer;
     bool activeHfAudioBlankerEnabled = activeSettings.hfAudioBlankerEnabled;
     double activeHfAudioBlankerThreshold = activeSettings.hfAudioBlankerThreshold;
     int activeDmrBasebandSampleRate =
@@ -1449,6 +1507,7 @@ void AudioProcessor::SDRThread() {
             std::abs(activeBandwidth - settings.bandwidth) > 1.0 ||
             std::abs(activeAudioLowPassHz - settings.audioLowPassHz) > 1.0 ||
             std::abs(activeAudioHighPassHz - settings.audioHighPassHz) > 1.0 ||
+             activeSimplifiedAudioChannelizer != settings.simplifiedAudioChannelizer ||
             activeHfAudioBlankerEnabled != settings.hfAudioBlankerEnabled ||
             std::abs(activeHfAudioBlankerThreshold - settings.hfAudioBlankerThreshold) > 0.01 ||
             activeDmrChannelSampleRate != settings.dmrChannelSampleRate ||
@@ -1463,12 +1522,18 @@ void AudioProcessor::SDRThread() {
             activeBandwidth = settings.bandwidth;
             activeAudioLowPassHz = settings.audioLowPassHz;
             activeAudioHighPassHz = settings.audioHighPassHz;
+            activeSimplifiedAudioChannelizer = settings.simplifiedAudioChannelizer;
             activeHfAudioBlankerEnabled = settings.hfAudioBlankerEnabled;
             activeHfAudioBlankerThreshold = settings.hfAudioBlankerThreshold;
             activeDmrChannelSampleRate = settings.dmrChannelSampleRate;
             activeDmrBasebandSampleRate =
                 normalizedDmrBasebandSampleRate(settings.dmrBasebandSampleRate);
             resetDemodulatorState();
+        }
+
+        if (activeAudioFilterChainJson != settings.audioFilterChainJson) {
+            activeAudioFilterChainJson = settings.audioFilterChainJson;
+            audioFilterChain.configure(activeAudioFilterChainJson, AUDIO_OUTPUT_RATE);
         }
 
         std::uint64_t iqBlockSequence = 0;
@@ -1518,6 +1583,8 @@ void AudioProcessor::SDRThread() {
             const bool unhealthy = droppedBlocks > 0 || healthSequenceGaps > 0 || producedRatio < 0.90;
             if (unhealthy || fobosVerboseLoggingEnabled()) {
                 qWarning() << "[Audio health]"
+                           << "channelizer"
+                           << (settings.simplifiedAudioChannelizer ? "simplified" : "multistage")
                            << "realtimeRatio" << producedRatio
                            << "configuredRate" << settings.sampleRate
                            << "estimatedRate" << iqStats.sampleRateEstimate
@@ -1575,6 +1642,8 @@ void AudioProcessor::SDRThread() {
         if (settings.modulationType == MOD_DMR) {
             continue;
         }
+
+        audioFilterChain.process(audioSamples);
 
         {
             std::lock_guard<std::mutex> lock(audioMutex);

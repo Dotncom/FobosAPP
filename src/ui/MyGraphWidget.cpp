@@ -663,6 +663,7 @@ void MyGraphWidget::mousePressEvent(QMouseEvent *event) {
             event->accept();
             return;
         }
+        multiVfoSelectionActive = event->modifiers().testFlag(Qt::ControlModifier);
         bandwidthMeasurementActive = true;
         bandwidthMeasurementVisible = true;
         bandwidthMeasureStartPos = event->pos();
@@ -694,13 +695,19 @@ void MyGraphWidget::mouseReleaseEvent(QMouseEvent *event) {
         bandwidthMeasurementActive = false;
         if (std::abs(bandwidthMeasureEndPos.x() - bandwidthMeasureStartPos.x()) < 4) {
             bandwidthMeasurementVisible = false;
+            if (multiVfoSelectionActive) {
+                const double frequency = signalCenterNearFrequency(frequencyAtX(event->x()));
+                emit multiVfoSelectionRequested(frequency, frequency);
+            }
         } else {
             double lowHz = 0.0;
             double highHz = 0.0;
             if (bandwidthSelection(lowHz, highHz)) {
-                emit bandwidthSelectionChanged(lowHz, highHz);
+                if (multiVfoSelectionActive) emit multiVfoSelectionRequested(lowHz, highHz);
+                else emit bandwidthSelectionChanged(lowHz, highHz);
             }
         }
+        multiVfoSelectionActive = false;
         update();
         event->accept();
         return;

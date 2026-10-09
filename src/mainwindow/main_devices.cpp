@@ -56,27 +56,47 @@ void YourClassName::buildLocalReceiverDeviceChoices(QStringList &labels, QVector
     labels << QStringLiteral("RTL-SDR via rtl_tcp (127.0.0.1:1234)");
     values << RTL_TCP_DEVICE_INDEX;
 
-    const QVector<BladeRfDeviceInfo> bladeRfDevices = enumerateBladeRfDevices();
-    if (bladeRfDevices.isEmpty()) {
-        labels << QStringLiteral("bladeRF native auto (bladeRF.dll)");
-        values << bladeRfNativeComboValue(0);
-    } else {
-        for (const BladeRfDeviceInfo &bladeInfo : bladeRfDevices) {
-            labels << bladeInfo.label;
-            values << bladeRfNativeComboValue(bladeInfo.nativeIndex);
+    if (BLADERF_NATIVE_BACKEND_ENABLED) {
+        const QVector<BladeRfDeviceInfo> bladeRfDevices = enumerateBladeRfDevices();
+        if (bladeRfDevices.isEmpty()) {
+            labels << QStringLiteral("bladeRF native auto (bladeRF.dll)");
+            values << bladeRfNativeComboValue(0);
+        } else {
+            for (const BladeRfDeviceInfo &bladeInfo : bladeRfDevices) {
+                labels << bladeInfo.label;
+                values << bladeRfNativeComboValue(bladeInfo.nativeIndex);
+            }
         }
     }
 
-    const QVector<HackRfDeviceInfo> hackRfDevices = enumerateHackRfDevices();
+    HackRfRuntimeStatus hackRfStatus;
+    const QVector<HackRfDeviceInfo> hackRfDevices = enumerateHackRfDevices(&hackRfStatus);
     if (hackRfDevices.isEmpty()) {
-        labels << QStringLiteral("HackRF native auto (hackrf.dll)");
+        labels << (hackRfStatus.libraryAvailable
+                       ? QStringLiteral("HackRF native auto (no device detected)")
+                       : QStringLiteral("HackRF native auto (runtime unavailable)"));
         values << hackRfNativeComboValue(0);
     } else {
         for (const HackRfDeviceInfo &hackRfInfo : hackRfDevices) {
             labels << hackRfInfo.label;
             values << hackRfNativeComboValue(hackRfInfo.nativeIndex);
+            qDebug().noquote() << QStringLiteral("[HackRF] enumerated index=%1 serial=%2 label=%3")
+                                     .arg(hackRfInfo.nativeIndex)
+                                     .arg(hackRfInfo.serial.isEmpty() ? QStringLiteral("-")
+                                                                      : hackRfInfo.serial,
+                                          hackRfInfo.label);
         }
     }
+    qDebug().noquote() << QStringLiteral("[HackRF] runtime=%1 path=%2 devices=%3 modernList=%4 error=%5")
+                             .arg(hackRfStatus.libraryAvailable ? QStringLiteral("ready")
+                                                               : QStringLiteral("unavailable"),
+                                  hackRfStatus.loadedPath.isEmpty() ? QStringLiteral("-")
+                                                                    : hackRfStatus.loadedPath)
+                             .arg(hackRfStatus.deviceCount)
+                             .arg(hackRfStatus.modernDeviceListAvailable ? QStringLiteral("yes")
+                                                                        : QStringLiteral("no"),
+                                  hackRfStatus.errorMessage.isEmpty() ? QStringLiteral("-")
+                                                                      : hackRfStatus.errorMessage);
 
     labels << QStringLiteral("SoapySDR auto (SoapySDR.dll)");
     values << SOAPY_SDR_DEVICE_INDEX;
@@ -185,8 +205,10 @@ QJsonArray YourClassName::receiverDeviceListToJson() const {
     values << rtlSdrNativeComboValue(0);
     labels << QStringLiteral("RTL-SDR via rtl_tcp (server 127.0.0.1:1234)");
     values << RTL_TCP_DEVICE_INDEX;
-    labels << QStringLiteral("bladeRF native auto (server)");
-    values << bladeRfNativeComboValue(0);
+    if (BLADERF_NATIVE_BACKEND_ENABLED) {
+        labels << QStringLiteral("bladeRF native auto (server)");
+        values << bladeRfNativeComboValue(0);
+    }
     labels << QStringLiteral("HackRF native auto (server)");
     values << hackRfNativeComboValue(0);
     labels << QStringLiteral("SoapySDR auto (server)");
@@ -683,6 +705,8 @@ ReceiverStreamDescriptor YourClassName::makeHackRfNativeStreamDescriptor(bool qu
     stream.centerFrequencyHz = pendingSettings.centerFrequency;
     stream.frequencyCalibrationOffsetHz = effectiveFrequencyCalibrationOffsetHz(pendingSettings.centerFrequency);
     stream.hackRfNativeDeviceIndex = selectedHackRfNativeIndex();
+    stream.hackRfLnaGainDb = (std::clamp)(pendingSettings.hackRfLnaGainDb, 0, 40) / 8 * 8;
+    stream.hackRfVgaGainDb = (std::clamp)(pendingSettings.hackRfVgaGainDb, 0, 62) / 2 * 2;
     stream.syncReader = false;
     stream.queueAudioBlocks = queueAudioBlocks;
     stream.publishIqSnapshot = publishIqSnapshot;

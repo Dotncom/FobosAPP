@@ -38,7 +38,9 @@ void applyRadioMetadata(const QByteArray &metadata, PlaybackManager::WavInfo &in
     }
 
     const QJsonObject root = document.object();
-    if (root.value(QStringLiteral("app")).toString() != QStringLiteral("FobosAPP")) {
+    const QString appName = root.value(QStringLiteral("app")).toString();
+    if (appName != QStringLiteral("ObriiSDR") &&
+        appName != QStringLiteral("FobosAPP")) {
         return;
     }
 

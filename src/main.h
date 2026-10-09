@@ -16,6 +16,8 @@
 #include <QSpinBox>
 #include <QGroupBox>
 #include <QMap>
+#include <QHash>
+#include <QPointer>
 #include <memory>
 #include <QScrollArea>
 #include <QCheckBox>
@@ -94,6 +96,9 @@ class ZeroSpanDialog;
 class ResearchAnalysisDialog;
 class ZoomSpectrumDialog;
 class TransmitDialog;
+class AudioFilterChainWidget;
+class DspFlowPanel;
+class MultiVfoWidget;
 
 extern fobos_dev_t *device;
 extern float* dataq;
@@ -257,6 +262,8 @@ private:
     bool isRtlBackendSelected() const;
     bool isExternalReceiverBackendSelected() const;
     bool normalizeRtlSdrSettings();
+    void rebuildReceiverModeChoices();
+    void updateReceiverSpecificControls();
     ReceiverStreamDescriptor makeRtlTcpStreamDescriptor(bool queueAudioBlocks,
                                                         bool publishIqSnapshot,
                                                         bool emitIqFrames) const;
@@ -378,6 +385,14 @@ private:
     void openZoomSpectrum();
     void openTransmitDialog();
     void openApplicationSettings();
+    bool isAnyVideoOutputVisible() const;
+    void openDspBlockReference(const QString &type, const QString &id);
+    void registerDspFilterBlock(const QString &type, const QString &id);
+    void triggerDspControlBlock(const QString &controlType,
+                                const QString &controlId,
+                                const QString &targetType,
+                                const QString &targetId);
+    void refreshDspControlStates();
     void openApplicationHelp();
     void exportSettingsBackup();
     void importSettingsBackup();
@@ -660,6 +675,7 @@ private:
     QPushButton *zoomSpectrumButton = nullptr;
     QPushButton *transmitButton = nullptr;
     QPushButton *appSettingsButton = nullptr;
+    QPushButton *dspPathButton = nullptr;
     QPushButton *controlsToggleButton = nullptr;
     QPushButton *digitalToggleButton = nullptr;
     QPushButton *videoToggleButton = nullptr;
@@ -917,6 +933,10 @@ private:
 
     DataProcessor *processor = nullptr;
     AudioProcessor *audioProcessor = nullptr;
+    AudioFilterChainWidget *audioFilterChainWidget = nullptr;
+    DspFlowPanel *dspFlowPanel = nullptr;
+    MultiVfoWidget *multiVfoWidget = nullptr;
+    QHash<QString, QPointer<QDialog>> dspBlockEditors;
     DigitalDecoder *digitalDecoder = nullptr;
     DsdNeoBridge *dsdNeoBridge = nullptr;
     GopherTrunkBridge *gopherTrunkBridge = nullptr;

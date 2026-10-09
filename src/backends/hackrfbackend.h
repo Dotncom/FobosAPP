@@ -9,6 +9,15 @@
 struct HackRfDeviceInfo {
     int nativeIndex = 0;
     QString label;
+    QString serial;
+};
+
+struct HackRfRuntimeStatus {
+    bool libraryAvailable = false;
+    bool modernDeviceListAvailable = false;
+    QString loadedPath;
+    QString errorMessage;
+    int deviceCount = 0;
 };
 
 struct HackRfTransfer {
@@ -24,7 +33,7 @@ using HackRfRxCallback = int (*)(HackRfTransfer *transfer);
 
 bool hackRfLibraryAvailable(QString *loadedPath = nullptr, QString *errorMessage = nullptr);
 QString hackRfLastErrorMessage();
-QVector<HackRfDeviceInfo> enumerateHackRfDevices();
+QVector<HackRfDeviceInfo> enumerateHackRfDevices(HackRfRuntimeStatus *status = nullptr);
 
 int openHackRfDeviceSafely(void **dev, int nativeIndex);
 int closeHackRfDeviceSafely(void *dev);

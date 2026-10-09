@@ -84,6 +84,24 @@ std::vector<float> reduced(const std::vector<float> &values, std::size_t limit) 
     return result;
 }
 
+std::complex<double> interpolatedComplex(const std::vector<float> &interleaved,
+                                         double position) {
+    const std::size_t sampleCount = interleaved.size() / 2U;
+    if (sampleCount == 0U) return {0.0, 0.0};
+    if (position <= 0.0) return {interleaved[0], interleaved[1]};
+    const double maximum = static_cast<double>(sampleCount - 1U);
+    if (position >= maximum) {
+        return {interleaved[2U * (sampleCount - 1U)],
+                interleaved[2U * (sampleCount - 1U) + 1U]};
+    }
+    const std::size_t left = static_cast<std::size_t>(position);
+    const double fraction = position - static_cast<double>(left);
+    const std::complex<double> a(interleaved[2U * left], interleaved[2U * left + 1U]);
+    const std::complex<double> b(interleaved[2U * (left + 1U)],
+                                 interleaved[2U * (left + 1U) + 1U]);
+    return a + (b - a) * fraction;
+}
+
 void fftRadix2(std::vector<std::complex<float>> &values) {
     const std::size_t count = values.size();
     if (count < 2 || (count & (count - 1U)) != 0U) return;
@@ -112,7 +130,8 @@ void fftRadix2(std::vector<std::complex<float>> &values) {
 
 class ResearchPlotWidgetImpl : public QWidget {
 public:
-    enum Mode { Interference, Statistics, Iq, Dual };
+    enum Mode { Interference, Statistics, Iq, Synchronization, Dual };
+    enum IqView { CombinedIq = 0, OscilloscopeIq = 1, ConstellationIq = 2, EyeIq = 3 };
 
     explicit ResearchPlotWidgetImpl(Mode mode, QWidget *parent = nullptr)
         : QWidget(parent), mode(mode) {
@@ -163,10 +182,41 @@ public:
 
     void setIq(const std::vector<float> &iData,
                const std::vector<float> &qData,
-               const std::vector<float> &autocorrelation) {
+               const std::vector<float> &autocorrelation,
+               const std::vector<float> &constellationI,
+               const std::vector<float> &constellationQ,
+               const std::vector<float> &eyeI,
+               const std::vector<float> &eyeQ,
+               int eyePoints,
+               int viewMode) {
         first = reduced(iData, 1024);
         second = reduced(qData, 1024);
         third = autocorrelation;
+        iqScatterFirst = reduced(constellationI, 3000);
+        iqScatterSecond = reduced(constellationQ, 3000);
+        iqEyeFirst = eyeI;
+        iqEyeSecond = eyeQ;
+        iqEyePoints = eyePoints;
+        iqView = (std::clamp)(viewMode,
+                              static_cast<int>(CombinedIq),
+                              static_cast<int>(EyeIq));
+        update();
+    }
+
+    void setSynchronization(const std::vector<float> &beforeI,
+                            const std::vector<float> &beforeQ,
+                            const std::vector<float> &afterI,
+                            const std::vector<float> &afterQ,
+                            const std::vector<float> &phaseMetric,
+                            const std::vector<float> &timingError,
+                            int selectedPhaseBin) {
+        syncBeforeI = reduced(beforeI, 3000);
+        syncBeforeQ = reduced(beforeQ, 3000);
+        syncAfterI = reduced(afterI, 3000);
+        syncAfterQ = reduced(afterQ, 3000);
+        syncPhaseMetric = phaseMetric;
+        syncTimingError = reduced(timingError, 2048);
+        syncSelectedPhaseBin = selectedPhaseBin;
         update();
     }
 
@@ -203,6 +253,8 @@ protected:
             drawStatistics(painter, area);
         } else if (mode == Iq) {
             drawIq(painter, area);
+        } else if (mode == Synchronization) {
+            drawSynchronization(painter, area);
         } else if (mode == Dual) {
             drawDual(painter, area);
         } else {
@@ -329,7 +381,109 @@ private:
                          labelThird);
     }
 
+    void drawConstellation(QPainter &painter, const QRectF &area) {
+        const std::vector<float> &scatterI = iqScatterFirst.empty() ? first : iqScatterFirst;
+        const std::vector<float> &scatterQ = iqScatterSecond.empty() ? second : iqScatterSecond;
+        const auto range = finiteRange(scatterI, scatterQ);
+        const float absolute = std::max(std::abs(range.first), std::abs(range.second));
+        const float scale = absolute > 1.0e-9f ? absolute : 1.0f;
+        const double side = std::min(area.width(), area.height());
+        const QRectF square(area.center().x() - side * 0.5,
+                            area.center().y() - side * 0.5,
+                            side,
+                            side);
+        painter.setPen(QPen(QColor(82, 90, 100), 1));
+        painter.drawEllipse(square.center(), square.width() * 0.24, square.height() * 0.24);
+        painter.drawEllipse(square.center(), square.width() * 0.48, square.height() * 0.48);
+        painter.drawLine(QPointF(square.left(), square.center().y()),
+                         QPointF(square.right(), square.center().y()));
+        painter.drawLine(QPointF(square.center().x(), square.top()),
+                         QPointF(square.center().x(), square.bottom()));
+        painter.setPen(QPen(QColor(125, 235, 160, 165), 2));
+        const std::size_t count = std::min(scatterI.size(), scatterQ.size());
+        for (std::size_t i = 0; i < count; ++i) {
+            const double x = square.center().x() +
+                             scatterI[i] / scale * square.width() * 0.48;
+            const double y = square.center().y() -
+                             scatterQ[i] / scale * square.height() * 0.48;
+            painter.drawPoint(QPointF(x, y));
+        }
+        painter.setPen(QColor(175, 182, 190));
+        painter.drawText(square.adjusted(5, 5, -5, -5),
+                         Qt::AlignLeft | Qt::AlignTop,
+                         QStringLiteral("Q"));
+        painter.drawText(square.adjusted(5, 5, -5, -5),
+                         Qt::AlignRight | Qt::AlignBottom,
+                         QStringLiteral("I"));
+    }
+
+    void drawEye(QPainter &painter, const QRectF &area) {
+        if (iqEyePoints < 2 ||
+            iqEyeFirst.size() < static_cast<std::size_t>(iqEyePoints)) {
+            painter.setPen(QColor(175, 182, 190));
+            painter.drawText(area, Qt::AlignCenter, QStringLiteral("Eye: no complete traces"));
+            return;
+        }
+        const auto range = finiteRange(iqEyeFirst, iqEyeSecond);
+        const float maximum = std::max(std::abs(range.first), std::abs(range.second));
+        const float scale = maximum > 1.0e-9f ? maximum : 1.0f;
+        painter.setPen(QPen(QColor(90, 98, 108), 1));
+        painter.drawLine(QPointF(area.left(), area.center().y()),
+                         QPointF(area.right(), area.center().y()));
+        painter.drawLine(QPointF(area.center().x(), area.top()),
+                         QPointF(area.center().x(), area.bottom()));
+        auto drawTraces = [&](const std::vector<float> &values, const QColor &color) {
+            const std::size_t traceCount =
+                values.size() / static_cast<std::size_t>(iqEyePoints);
+            painter.setPen(QPen(color, 1.15));
+            for (std::size_t trace = 0; trace < traceCount; ++trace) {
+                QPainterPath path;
+                for (int point = 0; point < iqEyePoints; ++point) {
+                    const float value =
+                        values[trace * static_cast<std::size_t>(iqEyePoints) +
+                               static_cast<std::size_t>(point)];
+                    const double x = area.left() +
+                                     area.width() * point /
+                                         static_cast<double>(iqEyePoints - 1);
+                    const double y = area.center().y() -
+                                     value / scale * area.height() * 0.46;
+                    if (point == 0) path.moveTo(x, y);
+                    else path.lineTo(x, y);
+                }
+                painter.drawPath(path);
+            }
+        };
+        drawTraces(iqEyeFirst, QColor(70, 220, 255, 72));
+        drawTraces(iqEyeSecond, QColor(255, 185, 65, 58));
+        painter.setPen(QColor(175, 182, 190));
+        painter.drawText(area.adjusted(5, 5, -5, -5),
+                         Qt::AlignLeft | Qt::AlignTop,
+                         QStringLiteral("2 symbols"));
+    }
+
     void drawIq(QPainter &painter, const QRectF &area) {
+        if (iqView == OscilloscopeIq) {
+            const auto range = finiteRange(first, second);
+            drawVector(painter, area, first, QColor(70, 220, 255), range.first, range.second);
+            drawVector(painter, area, second, QColor(255, 185, 65), range.first, range.second);
+            painter.setPen(QColor(175, 182, 190));
+            painter.drawText(area.adjusted(5, 5, -5, -5),
+                             Qt::AlignLeft | Qt::AlignTop,
+                             QStringLiteral("I"));
+            painter.drawText(area.adjusted(5, 5, -5, -5),
+                             Qt::AlignRight | Qt::AlignTop,
+                             QStringLiteral("Q"));
+            return;
+        }
+        if (iqView == ConstellationIq) {
+            drawConstellation(painter, area);
+            return;
+        }
+        if (iqView == EyeIq) {
+            drawEye(painter, area);
+            return;
+        }
+
         const QRectF timeArea(area.left(), area.top(), area.width() * 0.58, area.height());
         const QRectF scatterArea(area.left() + area.width() * 0.62,
                                  area.top(),
@@ -338,26 +492,91 @@ private:
         const auto range = finiteRange(first, second);
         drawVector(painter, timeArea, first, QColor(70, 220, 255), range.first, range.second);
         drawVector(painter, timeArea, second, QColor(255, 185, 65), range.first, range.second);
-        const float absolute = std::max(std::abs(range.first), std::abs(range.second));
-        const float scale = absolute > 1.0e-9f ? absolute : 1.0f;
-        painter.setPen(QPen(QColor(125, 235, 160, 150), 2));
-        const std::size_t count = std::min(first.size(), second.size());
-        for (std::size_t i = 0; i < count; i += std::max<std::size_t>(1, count / 1500)) {
-            const double x = scatterArea.center().x() + first[i] / scale * scatterArea.width() * 0.48;
-            const double y = scatterArea.center().y() - second[i] / scale * scatterArea.height() * 0.48;
-            painter.drawPoint(QPointF(x, y));
-        }
-        painter.setPen(QColor(175, 182, 190));
-        painter.drawEllipse(scatterArea.center(), scatterArea.width() * 0.48, scatterArea.height() * 0.48);
-        painter.drawLine(QPointF(scatterArea.left(), scatterArea.center().y()),
-                         QPointF(scatterArea.right(), scatterArea.center().y()));
-        painter.drawLine(QPointF(scatterArea.center().x(), scatterArea.top()),
-                         QPointF(scatterArea.center().x(), scatterArea.bottom()));
+        drawConstellation(painter, scatterArea);
         if (!third.empty()) {
             const QRectF autoArea(timeArea.left(), timeArea.bottom() - timeArea.height() * 0.26,
                                   timeArea.width(), timeArea.height() * 0.26);
             drawVector(painter, autoArea, third, QColor(215, 90, 255), -1.0f, 1.0f);
         }
+    }
+
+    static void drawScatter(QPainter &painter,
+                            const QRectF &area,
+                            const std::vector<float> &iValues,
+                            const std::vector<float> &qValues,
+                            const QColor &color,
+                            const QString &title) {
+        const std::size_t count = std::min(iValues.size(), qValues.size());
+        if (count == 0U) {
+            painter.setPen(QColor(175, 182, 190));
+            painter.drawText(area, Qt::AlignCenter, title);
+            return;
+        }
+        float scale = 1.0e-9f;
+        for (std::size_t index = 0; index < count; ++index) {
+            if (!std::isfinite(iValues[index]) || !std::isfinite(qValues[index])) continue;
+            scale = std::max(scale, std::abs(iValues[index]));
+            scale = std::max(scale, std::abs(qValues[index]));
+        }
+        const double side = std::min(area.width(), area.height());
+        const QRectF square(area.center().x() - side * 0.5,
+                            area.center().y() - side * 0.5,
+                            side,
+                            side);
+        painter.setPen(QPen(QColor(82, 90, 100), 1));
+        painter.drawEllipse(square.center(), square.width() * 0.24, square.height() * 0.24);
+        painter.drawEllipse(square.center(), square.width() * 0.48, square.height() * 0.48);
+        painter.drawLine(QPointF(square.left(), square.center().y()),
+                         QPointF(square.right(), square.center().y()));
+        painter.drawLine(QPointF(square.center().x(), square.top()),
+                         QPointF(square.center().x(), square.bottom()));
+        painter.setPen(QPen(color, 2));
+        for (std::size_t index = 0; index < count; ++index) {
+            const double x = square.center().x() + iValues[index] / scale * square.width() * 0.47;
+            const double y = square.center().y() - qValues[index] / scale * square.height() * 0.47;
+            painter.drawPoint(QPointF(x, y));
+        }
+        painter.setPen(QColor(205, 211, 218));
+        painter.drawText(square.adjusted(5, 5, -5, -5), Qt::AlignLeft | Qt::AlignTop, title);
+    }
+
+    void drawSynchronization(QPainter &painter, const QRectF &area) {
+        const double gap = 10.0;
+        const double scatterWidth = (area.width() - gap * 2.0) * 0.31;
+        const QRectF beforeArea(area.left(), area.top(), scatterWidth, area.height());
+        const QRectF afterArea(beforeArea.right() + gap, area.top(), scatterWidth, area.height());
+        const QRectF phaseArea(afterArea.right() + gap,
+                               area.top(),
+                               area.right() - afterArea.right() - gap,
+                               area.height() * 0.46);
+        const QRectF errorArea(phaseArea.left(),
+                               area.top() + area.height() * 0.56,
+                               phaseArea.width(),
+                               area.height() * 0.44);
+        drawScatter(painter, beforeArea, syncBeforeI, syncBeforeQ,
+                    QColor(255, 185, 65, 175), labelFirst);
+        drawScatter(painter, afterArea, syncAfterI, syncAfterQ,
+                    QColor(125, 235, 160, 185), labelSecond);
+        const auto metricRange = finiteRange(syncPhaseMetric);
+        drawVector(painter, phaseArea, syncPhaseMetric, QColor(70, 220, 255),
+                   metricRange.first, metricRange.second);
+        if (syncSelectedPhaseBin >= 0 &&
+            syncSelectedPhaseBin < static_cast<int>(syncPhaseMetric.size()) &&
+            syncPhaseMetric.size() > 1U) {
+            const double x = phaseArea.left() + phaseArea.width() * syncSelectedPhaseBin /
+                                                   static_cast<double>(syncPhaseMetric.size() - 1U);
+            painter.setPen(QPen(QColor(255, 95, 80), 1.5));
+            painter.drawLine(QPointF(x, phaseArea.top()), QPointF(x, phaseArea.bottom()));
+        }
+        const auto errorRange = finiteRange(syncTimingError);
+        const float errorMagnitude = std::max(std::abs(errorRange.first), std::abs(errorRange.second));
+        drawVector(painter, errorArea, syncTimingError, QColor(215, 90, 255),
+                   -std::max(1.0e-6f, errorMagnitude), std::max(1.0e-6f, errorMagnitude));
+        painter.setPen(QColor(205, 211, 218));
+        painter.drawText(phaseArea.adjusted(5, 5, -5, -5),
+                         Qt::AlignLeft | Qt::AlignTop, labelThird);
+        painter.drawText(errorArea.adjusted(5, 5, -5, -5),
+                         Qt::AlignLeft | Qt::AlignTop, QStringLiteral("Gardner error"));
     }
 
     void drawDual(QPainter &painter, const QRectF &area) {
@@ -391,6 +610,19 @@ private:
     std::vector<float> third;
     std::vector<float> fourth;
     std::vector<float> fifth;
+    std::vector<float> iqScatterFirst;
+    std::vector<float> iqScatterSecond;
+    std::vector<float> iqEyeFirst;
+    std::vector<float> iqEyeSecond;
+    int iqEyePoints = 0;
+    int iqView = CombinedIq;
+    std::vector<float> syncBeforeI;
+    std::vector<float> syncBeforeQ;
+    std::vector<float> syncAfterI;
+    std::vector<float> syncAfterQ;
+    std::vector<float> syncPhaseMetric;
+    std::vector<float> syncTimingError;
+    int syncSelectedPhaseBin = -1;
     std::vector<int> markers;
     std::vector<float> heatmapValues;
     int heatmapWidth = 0;
@@ -411,12 +643,14 @@ ResearchAnalysisDialog::ResearchAnalysisDialog(Translator translator,
                                                ContextProvider contextProvider,
                                                SpectrumSettingsProvider settingsProvider,
                                                SpectrumSettingsApplier settingsApplier,
+                                               LiveSyncApplier liveSyncApplier,
                                                QWidget *parent)
     : QDialog(parent),
       translator(std::move(translator)),
       contextProvider(std::move(contextProvider)),
       spectrumSettingsProvider(std::move(settingsProvider)),
-      spectrumSettingsApplier(std::move(settingsApplier)) {
+      spectrumSettingsApplier(std::move(settingsApplier)),
+      liveSyncApplier(std::move(liveSyncApplier)) {
     setWindowTitle(trText(QStringLiteral("research_tools_title"), QStringLiteral("Research tools")));
     resize(980, 680);
     setAttribute(Qt::WA_DeleteOnClose, false);
@@ -494,14 +728,57 @@ ResearchAnalysisDialog::ResearchAnalysisDialog(Translator translator,
     QVBoxLayout *iqLayout = new QVBoxLayout(iqPage);
     QGridLayout *iqControls = new QGridLayout();
     iqFreezeCheckbox = new QCheckBox(trText(QStringLiteral("freeze"), QStringLiteral("Freeze")), iqPage);
+    iqSourceCombo = new QComboBox(iqPage);
+    iqSourceCombo->addItem(
+        trText(QStringLiteral("research_iq_source_raw"), QStringLiteral("Raw IQ")), 0);
+    iqSourceCombo->addItem(
+        trText(QStringLiteral("research_iq_source_channel"), QStringLiteral("Channel IQ")), 1);
+    iqSourceCombo->setCurrentIndex(1);
+    iqViewCombo = new QComboBox(iqPage);
+    iqViewCombo->addItem(
+        trText(QStringLiteral("research_iq_view_combined"), QStringLiteral("Combined")), 0);
+    iqViewCombo->addItem(
+        trText(QStringLiteral("research_iq_view_scope"), QStringLiteral("Oscilloscope")), 1);
+    iqViewCombo->addItem(
+        trText(QStringLiteral("research_iq_view_constellation"), QStringLiteral("Constellation")), 2);
+    iqViewCombo->addItem(
+        trText(QStringLiteral("research_iq_view_eye"), QStringLiteral("Eye diagram")), 3);
     iqSampleCountSpin = new QSpinBox(iqPage);
     iqSampleCountSpin->setRange(1024, 262144);
     iqSampleCountSpin->setSingleStep(1024);
-    iqSampleCountSpin->setValue(16384);
+    iqSampleCountSpin->setValue(131072);
+    iqSymbolRateSpin = new QDoubleSpinBox(iqPage);
+    iqSymbolRateSpin->setDecimals(1);
+    iqSymbolRateSpin->setRange(10.0, 1000000.0);
+    iqSymbolRateSpin->setValue(4800.0);
+    iqSymbolRateSpin->setSuffix(QStringLiteral(" Bd"));
+    iqPhaseSpin = new QSpinBox(iqPage);
+    iqPhaseSpin->setRange(0, 99);
+    iqPhaseSpin->setValue(50);
+    iqPhaseSpin->setSuffix(QStringLiteral(" %"));
+    iqTraceCountSpin = new QSpinBox(iqPage);
+    iqTraceCountSpin->setRange(2, 128);
+    iqTraceCountSpin->setValue(32);
     iqControls->addWidget(iqFreezeCheckbox, 0, 0);
-    iqControls->addWidget(new QLabel(trText(QStringLiteral("research_iq_samples"), QStringLiteral("Samples:")), iqPage), 0, 1);
-    iqControls->addWidget(iqSampleCountSpin, 0, 2);
-    iqControls->setColumnStretch(3, 1);
+    iqControls->addWidget(new QLabel(
+        trText(QStringLiteral("research_iq_source"), QStringLiteral("Source:")), iqPage), 0, 1);
+    iqControls->addWidget(iqSourceCombo, 0, 2);
+    iqControls->addWidget(new QLabel(
+        trText(QStringLiteral("research_iq_view"), QStringLiteral("View:")), iqPage), 0, 3);
+    iqControls->addWidget(iqViewCombo, 0, 4);
+    iqControls->addWidget(new QLabel(
+        trText(QStringLiteral("research_iq_samples"), QStringLiteral("Samples:")), iqPage), 1, 0);
+    iqControls->addWidget(iqSampleCountSpin, 1, 1);
+    iqControls->addWidget(new QLabel(
+        trText(QStringLiteral("research_symbol_rate"), QStringLiteral("Symbol rate:")), iqPage), 1, 2);
+    iqControls->addWidget(iqSymbolRateSpin, 1, 3);
+    iqControls->addWidget(new QLabel(
+        trText(QStringLiteral("research_eye_phase"), QStringLiteral("Phase:")), iqPage), 1, 4);
+    iqControls->addWidget(iqPhaseSpin, 1, 5);
+    iqControls->addWidget(new QLabel(
+        trText(QStringLiteral("research_eye_traces"), QStringLiteral("Traces:")), iqPage), 1, 6);
+    iqControls->addWidget(iqTraceCountSpin, 1, 7);
+    iqControls->setColumnStretch(8, 1);
     iqLayout->addLayout(iqControls);
     iqStatus = new QLabel(iqPage);
     iqStatus->setWordWrap(true);
@@ -509,6 +786,67 @@ ResearchAnalysisDialog::ResearchAnalysisDialog(Translator translator,
     iqPlot = new ResearchPlotWidget(ResearchPlotWidgetImpl::Iq, iqPage);
     iqLayout->addWidget(iqPlot, 1);
     tabs->addTab(iqPage, trText(QStringLiteral("research_iq_tab"), QStringLiteral("IQ analysis")));
+
+    QWidget *syncPage = new QWidget(tabs);
+    QVBoxLayout *syncLayout = new QVBoxLayout(syncPage);
+    QGridLayout *syncControls = new QGridLayout();
+    syncFreezeCheckbox = new QCheckBox(
+        trText(QStringLiteral("freeze"), QStringLiteral("Freeze")), syncPage);
+    syncModulationCombo = new QComboBox(syncPage);
+    syncModulationCombo->addItem(
+        trText(QStringLiteral("auto"), QStringLiteral("Auto")), 0);
+    syncModulationCombo->addItem(QStringLiteral("BPSK"), 2);
+    syncModulationCombo->addItem(QStringLiteral("QPSK"), 4);
+    syncModulationCombo->addItem(QStringLiteral("8PSK"), 8);
+    syncModulationCombo->addItem(QStringLiteral("FSK / FM"), 1);
+    syncSampleCountSpin = new QSpinBox(syncPage);
+    syncSampleCountSpin->setRange(16384, 1048576);
+    syncSampleCountSpin->setSingleStep(16384);
+    syncSampleCountSpin->setValue(262144);
+    syncSymbolRateSpin = new QDoubleSpinBox(syncPage);
+    syncSymbolRateSpin->setDecimals(1);
+    syncSymbolRateSpin->setRange(10.0, 1000000.0);
+    syncSymbolRateSpin->setValue(4800.0);
+    syncSymbolRateSpin->setSuffix(QStringLiteral(" Bd"));
+    syncPhaseBinsSpin = new QSpinBox(syncPage);
+    syncPhaseBinsSpin->setRange(8, 256);
+    syncPhaseBinsSpin->setValue(64);
+    syncCarrierCorrectionCheckbox = new QCheckBox(
+        trText(QStringLiteral("research_sync_carrier_correction"),
+               QStringLiteral("Correct carrier")), syncPage);
+    syncCarrierCorrectionCheckbox->setChecked(true);
+    syncPhaseCorrectionCheckbox = new QCheckBox(
+        trText(QStringLiteral("research_sync_phase_correction"),
+               QStringLiteral("Correct phase")), syncPage);
+    syncPhaseCorrectionCheckbox->setChecked(true);
+    syncLiveButton = new QPushButton(syncPage);
+    syncLiveButton->setCheckable(true);
+    syncControls->addWidget(syncFreezeCheckbox, 0, 0);
+    syncControls->addWidget(new QLabel(
+        trText(QStringLiteral("research_sync_signal"), QStringLiteral("Signal:")), syncPage), 0, 1);
+    syncControls->addWidget(syncModulationCombo, 0, 2);
+    syncControls->addWidget(new QLabel(
+        trText(QStringLiteral("research_symbol_rate"), QStringLiteral("Symbol rate:")), syncPage), 0, 3);
+    syncControls->addWidget(syncSymbolRateSpin, 0, 4);
+    syncControls->addWidget(new QLabel(
+        trText(QStringLiteral("research_iq_samples"), QStringLiteral("Samples:")), syncPage), 1, 0);
+    syncControls->addWidget(syncSampleCountSpin, 1, 1);
+    syncControls->addWidget(new QLabel(
+        trText(QStringLiteral("research_sync_phase_bins"), QStringLiteral("Phase bins:")), syncPage), 1, 2);
+    syncControls->addWidget(syncPhaseBinsSpin, 1, 3);
+    syncControls->addWidget(syncCarrierCorrectionCheckbox, 1, 4);
+    syncControls->addWidget(syncPhaseCorrectionCheckbox, 1, 5);
+    syncControls->addWidget(syncLiveButton, 0, 5);
+    syncControls->setColumnStretch(6, 1);
+    syncLayout->addLayout(syncControls);
+    syncStatus = new QLabel(syncPage);
+    syncStatus->setWordWrap(true);
+    syncLayout->addWidget(syncStatus);
+    syncPlot = new ResearchPlotWidget(ResearchPlotWidgetImpl::Synchronization, syncPage);
+    syncLayout->addWidget(syncPlot, 1);
+    tabs->addTab(syncPage,
+                 trText(QStringLiteral("research_sync_tab"),
+                        QStringLiteral("Digital synchronization")));
 
     QWidget *dualPage = new QWidget(tabs);
     QVBoxLayout *dualLayout = new QVBoxLayout(dualPage);
@@ -609,6 +947,26 @@ ResearchAnalysisDialog::ResearchAnalysisDialog(Translator translator,
     connect(percentile90Checkbox, &QCheckBox::toggled, this, [this](bool) { applySpectrumSettings(); });
     connect(percentile99Checkbox, &QCheckBox::toggled, this, [this](bool) { applySpectrumSettings(); });
     connect(amplitudeUnitCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) { applySpectrumSettings(); });
+    connect(syncLiveButton, &QPushButton::toggled, this, [this](bool enabled) {
+        syncLiveHasEstimate = false;
+        syncLiveCarrierHz = 0.0;
+        syncLivePhaseRadians = 0.0;
+        if (!enabled && this->liveSyncApplier) {
+            this->liveSyncApplier(false, 0.0, 0.0, 0.5, 0.0);
+        }
+        updateLiveSyncButton();
+    });
+    connect(this, &QDialog::finished, this, [this](int) {
+        if (syncLiveButton && syncLiveButton->isChecked()) {
+            syncLiveButton->setChecked(false);
+        }
+    });
+    connect(tabs, &QTabWidget::currentChanged, this, [this](int index) {
+        if (index != static_cast<int>(SynchronizationTab) &&
+            syncLiveButton && syncLiveButton->isChecked()) {
+            syncLiveButton->setChecked(false);
+        }
+    });
 
     iqTimer = new QTimer(this);
     iqTimer->setInterval(120);
@@ -637,6 +995,9 @@ void ResearchAnalysisDialog::rebuildTexts() {
     interferenceStatus->setText(trText(QStringLiteral("research_waiting_spectrum"), QStringLiteral("Waiting for spectrum data")));
     statisticsStatus->setText(trText(QStringLiteral("research_waiting_statistics"), QStringLiteral("Waiting for signal statistics")));
     iqStatus->setText(trText(QStringLiteral("research_waiting_iq"), QStringLiteral("Waiting for IQ data")));
+    syncStatus->setText(trText(QStringLiteral("research_sync_waiting"),
+                               QStringLiteral("Waiting for channel IQ data")));
+    updateLiveSyncButton();
     dualStatus->setText(trText(QStringLiteral("research_dual_hint"), QStringLiteral("Select HF combined or HF interference lab to compare HF1 and HF2.")));
     statisticsPlot->setLabels(
         trText(QStringLiteral("research_level_history"), QStringLiteral("Level history")),
@@ -646,6 +1007,23 @@ void ResearchAnalysisDialog::rebuildTexts() {
         trText(QStringLiteral("research_dual_spectra"), QStringLiteral("HF1 / HF2 / difference")),
         trText(QStringLiteral("research_cross_correlation"), QStringLiteral("Cross-correlation")),
         trText(QStringLiteral("research_coherence"), QStringLiteral("Coherence")));
+    syncPlot->setLabels(
+        trText(QStringLiteral("research_sync_before"), QStringLiteral("Before synchronization")),
+        trText(QStringLiteral("research_sync_after"), QStringLiteral("After synchronization")),
+        trText(QStringLiteral("research_sync_phase_metric"), QStringLiteral("Symbol-phase quality")));
+}
+
+void ResearchAnalysisDialog::updateLiveSyncButton() {
+    if (!syncLiveButton) return;
+    syncLiveButton->setText(
+        syncLiveButton->isChecked()
+            ? trText(QStringLiteral("research_sync_live_on"),
+                     QStringLiteral("Live assist: ON"))
+            : trText(QStringLiteral("research_sync_live_off"),
+                     QStringLiteral("Live assist: OFF")));
+    syncLiveButton->setToolTip(
+        trText(QStringLiteral("research_sync_live_tooltip"),
+               QStringLiteral("Apply smoothed carrier correction to the live demodulator. PSK/FT8 also receive phase correction; symbol timing remains a diagnostic metric until a decoder-specific clock-recovery loop is enabled.")));
 }
 
 void ResearchAnalysisDialog::applySpectrumSettings() {
@@ -683,6 +1061,15 @@ void ResearchAnalysisDialog::selectTab(Tab tab) {
     show();
     raise();
     activateWindow();
+}
+
+void ResearchAnalysisDialog::setIqView(int viewMode) {
+    if (!iqViewCombo) return;
+    const int index = iqViewCombo->findData((std::clamp)(viewMode, 0, 3));
+    if (index >= 0) {
+        iqViewCombo->setCurrentIndex(index);
+    }
+    selectTab(IqTab);
 }
 
 void ResearchAnalysisDialog::appendSpectrumFrame(const std::vector<float> &frequencies,
@@ -984,11 +1371,15 @@ void ResearchAnalysisDialog::updateStatistics(const std::vector<float> &levels,
 void ResearchAnalysisDialog::refreshIqSnapshot() {
     if (!isVisible() || !tabs) return;
     const int activeTab = tabs->currentIndex();
-    if (activeTab != IqTab && activeTab != DualInputTab) return;
+    if (activeTab != IqTab && activeTab != SynchronizationTab &&
+        activeTab != DualInputTab) return;
     if ((activeTab == IqTab && iqFreezeCheckbox->isChecked()) ||
+        (activeTab == SynchronizationTab && syncFreezeCheckbox->isChecked()) ||
         (activeTab == DualInputTab && dualFreezeCheckbox->isChecked())) return;
 
-    const int requestedSamples = iqSampleCountSpin->value();
+    const int requestedSamples = activeTab == SynchronizationTab
+                                     ? syncSampleCountSpin->value()
+                                     : iqSampleCountSpin->value();
     std::vector<float> raw;
     if (!IqBuffer::snapshotRecent(raw, static_cast<std::size_t>(requestedSamples) * 2U) || raw.size() < 8) {
         return;
@@ -1010,7 +1401,53 @@ void ResearchAnalysisDialog::refreshIqSnapshot() {
     lastIqEpoch = bufferStats.epoch;
     lastIqTotalFloatCount = bufferStats.totalFloatCount;
     lastIqStatsTimeMs = statsNowMs;
-    const std::size_t sampleCount = raw.size() / 2U;
+    const std::vector<float> *analysisRaw = &raw;
+    double analysisSampleRate = context.sampleRateHz;
+    bool channelized = false;
+    QString iqSourceName =
+        trText(QStringLiteral("research_iq_source_raw"), QStringLiteral("Raw IQ"));
+    const bool requestChannel = activeTab == SynchronizationTab ||
+                                (iqSourceCombo && iqSourceCombo->currentData().toInt() == 1);
+    if (requestChannel &&
+        context.sampleRateHz > 0.0) {
+        RadioSettings channelSettings;
+        channelSettings.sampleRate = context.sampleRateHz;
+        channelSettings.centerFrequency = context.centerFrequencyHz;
+        channelSettings.listeningFrequency = context.listeningFrequencyHz;
+        channelSettings.inputMode = context.inputMode;
+        channelSettings.modulationType = context.modulationType;
+        channelSettings.bandwidth = context.bandwidthHz;
+        const std::uint64_t totalComplexSamples = bufferStats.totalFloatCount / 2U;
+        const std::uint64_t snapshotComplexSamples = raw.size() / 2U;
+        const std::uint64_t firstComplexSample =
+            totalComplexSamples > snapshotComplexSamples
+                ? totalComplexSamples - snapshotComplexSamples
+                : 0U;
+        const double shiftHz =
+            context.listeningFrequencyHz - context.centerFrequencyHz;
+        const double initialPhase =
+            -kTwoPi * shiftHz / context.sampleRateHz *
+            static_cast<double>(firstComplexSample);
+        iqAnalysisChannelizer.reset(initialPhase);
+        const IqChannelizer::Result channelResult =
+            iqAnalysisChannelizer.processFloatIq(raw.data(),
+                                                 raw.size(),
+                                                 channelSettings,
+                                                 iqChannelizedSnapshot,
+                                                 false);
+        if (channelResult.valid && iqChannelizedSnapshot.size() >= 8U) {
+            analysisRaw = &iqChannelizedSnapshot;
+            analysisSampleRate = channelResult.outputRate;
+            channelized = true;
+            iqSourceName =
+                trText(QStringLiteral("research_iq_source_channel"),
+                       QStringLiteral("Channel IQ"));
+        }
+    }
+    const std::size_t sampleCount = analysisRaw->size() / 2U;
+    if (sampleCount < 4U) {
+        return;
+    }
     std::vector<float> first(sampleCount);
     std::vector<float> second(sampleCount);
     double meanFirst = 0.0;
@@ -1018,8 +1455,8 @@ void ResearchAnalysisDialog::refreshIqSnapshot() {
     std::size_t nonFiniteCount = 0;
     std::size_t clippedCount = 0;
     for (std::size_t i = 0; i < sampleCount; ++i) {
-        const float rawFirst = raw[2U * i];
-        const float rawSecond = raw[2U * i + 1U];
+        const float rawFirst = (*analysisRaw)[2U * i];
+        const float rawSecond = (*analysisRaw)[2U * i + 1U];
         if (!std::isfinite(rawFirst) || !std::isfinite(rawSecond)) ++nonFiniteCount;
         if (std::isfinite(rawFirst) && std::isfinite(rawSecond) &&
             (std::abs(rawFirst) >= 0.999f || std::abs(rawSecond) >= 0.999f)) ++clippedCount;
@@ -1046,6 +1483,344 @@ void ResearchAnalysisDialog::refreshIqSnapshot() {
     const double rmsFirst = std::sqrt(std::max(0.0, powerFirst));
     const double rmsSecond = std::sqrt(std::max(0.0, powerSecond));
     const double correlation = covariance / std::sqrt(std::max(1.0e-20, powerFirst * powerSecond));
+
+    if (activeTab == SynchronizationTab) {
+        if (!channelized || isDirectInputMode(context.inputMode)) {
+            syncStatus->setText(
+                trText(QStringLiteral("research_sync_channel_unavailable"),
+                       QStringLiteral("Digital synchronization requires quadrature Channel IQ in an RF input mode.")));
+            syncPlot->setSynchronization({}, {}, {}, {}, {}, {}, -1);
+            return;
+        }
+        const double symbolRate = syncSymbolRateSpin ? syncSymbolRateSpin->value() : 4800.0;
+        const double samplesPerSymbol = symbolRate > 0.0 ? analysisSampleRate / symbolRate : 0.0;
+        if (samplesPerSymbol < 2.0 || sampleCount < 16U) {
+            syncStatus->setText(
+                trText(QStringLiteral("research_sync_rate_invalid"),
+                       QStringLiteral("Need at least 2 channel samples per symbol. Lower the symbol rate or widen the channel.")));
+            syncPlot->setSynchronization({}, {}, {}, {}, {}, {}, -1);
+            return;
+        }
+
+        std::vector<std::complex<double>> centered(sampleCount);
+        std::vector<float> centeredInterleaved(sampleCount * 2U);
+        double totalPower = 0.0;
+        for (std::size_t index = 0; index < sampleCount; ++index) {
+            centered[index] = {first[index] - meanFirst, second[index] - meanSecond};
+            centeredInterleaved[2U * index] = static_cast<float>(centered[index].real());
+            centeredInterleaved[2U * index + 1U] = static_cast<float>(centered[index].imag());
+            totalPower += std::norm(centered[index]);
+        }
+        totalPower /= static_cast<double>(sampleCount);
+
+        struct CarrierEstimate {
+            int order = 1;
+            double frequencyHz = 0.0;
+            double coherence = 0.0;
+        };
+        auto estimateCarrier = [&](int order,
+                                   const std::vector<std::complex<double>> &samples) {
+            CarrierEstimate estimate;
+            estimate.order = order;
+            std::complex<double> accumulator(0.0, 0.0);
+            int count = 0;
+            for (std::size_t index = 1; index < samples.size(); ++index) {
+                std::complex<double> step = samples[index] * std::conj(samples[index - 1U]);
+                const double magnitude = std::abs(step);
+                if (!(magnitude > 1.0e-15) || !std::isfinite(magnitude)) continue;
+                step /= magnitude;
+                accumulator += std::pow(step, order);
+                ++count;
+            }
+            if (count > 0) {
+                estimate.frequencyHz = std::arg(accumulator) * analysisSampleRate /
+                                       (kTwoPi * static_cast<double>(order));
+                estimate.coherence = std::abs(accumulator) / static_cast<double>(count);
+            }
+            return estimate;
+        };
+
+        const int requestedOrder = syncModulationCombo
+                                       ? syncModulationCombo->currentData().toInt()
+                                       : 0;
+        CarrierEstimate carrier;
+        if (requestedOrder > 0) {
+            carrier = estimateCarrier(requestedOrder, centered);
+        } else if (context.modulationType == MOD_DMR ||
+                   context.modulationType == MOD_FSK ||
+                   context.modulationType == MOD_RTTY) {
+            carrier = estimateCarrier(1, centered);
+        } else {
+            double bestScore = -1.0;
+            for (const int order : {2, 4, 8}) {
+                const CarrierEstimate candidate = estimateCarrier(order, centered);
+                const double complexityPenalty = 0.012 * std::log2(static_cast<double>(order));
+                const double score = candidate.coherence - complexityPenalty;
+                if (score > bestScore) {
+                    bestScore = score;
+                    carrier = candidate;
+                }
+            }
+        }
+
+        const bool correctCarrier = syncCarrierCorrectionCheckbox &&
+                                    syncCarrierCorrectionCheckbox->isChecked();
+        std::vector<std::complex<double>> carrierCorrected(sampleCount);
+        const double carrierStep = correctCarrier
+                                       ? -kTwoPi * carrier.frequencyHz / analysisSampleRate
+                                       : 0.0;
+        std::complex<double> oscillator(1.0, 0.0);
+        const std::complex<double> oscillatorStep(std::cos(carrierStep), std::sin(carrierStep));
+        for (std::size_t index = 0; index < sampleCount; ++index) {
+            carrierCorrected[index] = centered[index] * oscillator;
+            oscillator *= oscillatorStep;
+            if ((index & 4095U) == 4095U) {
+                const double magnitude = std::abs(oscillator);
+                if (magnitude > 0.0) oscillator /= magnitude;
+            }
+        }
+        std::vector<float> carrierInterleaved(sampleCount * 2U);
+        for (std::size_t index = 0; index < sampleCount; ++index) {
+            carrierInterleaved[2U * index] = static_cast<float>(carrierCorrected[index].real());
+            carrierInterleaved[2U * index + 1U] = static_cast<float>(carrierCorrected[index].imag());
+        }
+
+        const int phaseBins = syncPhaseBinsSpin ? syncPhaseBinsSpin->value() : 64;
+        std::vector<float> phaseMetric(static_cast<std::size_t>(phaseBins), 0.0f);
+        int selectedPhaseBin = 0;
+        double selectedMetric = -1.0;
+        for (int phaseBin = 0; phaseBin < phaseBins; ++phaseBin) {
+            const double phaseSamples = samplesPerSymbol * phaseBin / phaseBins;
+            std::complex<double> angularSum(0.0, 0.0);
+            double magnitudeSum = 0.0;
+            double powerSum = 0.0;
+            double localDerivativePower = 0.0;
+            int count = 0;
+            for (double position = phaseSamples + samplesPerSymbol;
+                 position + samplesPerSymbol < static_cast<double>(sampleCount) && count < 4096;
+                 position += samplesPerSymbol) {
+                const std::complex<double> value = interpolatedComplex(carrierInterleaved, position);
+                const double magnitude = std::abs(value);
+                if (!(magnitude > 1.0e-12) || !std::isfinite(magnitude)) continue;
+                magnitudeSum += magnitude;
+                powerSum += std::norm(value);
+                if (carrier.order > 1) {
+                    angularSum += std::pow(value / magnitude, carrier.order);
+                }
+                const std::complex<double> early = interpolatedComplex(
+                    carrierInterleaved, position - samplesPerSymbol * 0.25);
+                const std::complex<double> late = interpolatedComplex(
+                    carrierInterleaved, position + samplesPerSymbol * 0.25);
+                localDerivativePower += std::norm(late - early);
+                ++count;
+            }
+            if (count == 0) continue;
+            const double radialConsistency = magnitudeSum * magnitudeSum /
+                                             (static_cast<double>(count) *
+                                              std::max(1.0e-20, powerSum));
+            const double flatness = 1.0 / (1.0 + localDerivativePower /
+                                                   std::max(1.0e-20, powerSum));
+            const double angularConcentration = carrier.order > 1
+                                                    ? std::abs(angularSum) / count
+                                                    : 0.0;
+            const double metric = carrier.order > 1
+                                      ? 0.65 * angularConcentration +
+                                            0.20 * radialConsistency + 0.15 * flatness
+                                      : 0.70 * flatness + 0.30 * radialConsistency;
+            phaseMetric[static_cast<std::size_t>(phaseBin)] = static_cast<float>(metric);
+            if (metric > selectedMetric) {
+                selectedMetric = metric;
+                selectedPhaseBin = phaseBin;
+            }
+        }
+
+        const double selectedPhaseSamples = samplesPerSymbol * selectedPhaseBin / phaseBins;
+        std::vector<std::complex<double>> symbolBefore;
+        std::vector<std::complex<double>> symbolAfterCarrier;
+        for (double position = selectedPhaseSamples + samplesPerSymbol;
+             position + samplesPerSymbol < static_cast<double>(sampleCount) &&
+             symbolBefore.size() < 3000U;
+             position += samplesPerSymbol) {
+            symbolBefore.push_back(interpolatedComplex(centeredInterleaved, position));
+            symbolAfterCarrier.push_back(interpolatedComplex(carrierInterleaved, position));
+        }
+
+        double phaseCorrection = 0.0;
+        if (carrier.order > 1 && !symbolAfterCarrier.empty()) {
+            std::complex<double> phaseAccumulator(0.0, 0.0);
+            for (const std::complex<double> &value : symbolAfterCarrier) {
+                const double magnitude = std::abs(value);
+                if (magnitude > 1.0e-12) {
+                    phaseAccumulator += std::pow(value / magnitude, carrier.order);
+                }
+            }
+            phaseCorrection = std::arg(phaseAccumulator) / carrier.order;
+        }
+        const bool correctPhase = syncPhaseCorrectionCheckbox &&
+                                  syncPhaseCorrectionCheckbox->isChecked() &&
+                                  carrier.order > 1;
+        const std::complex<double> phaseRotation = std::polar(
+            1.0, correctPhase ? -phaseCorrection : 0.0);
+        std::vector<std::complex<double>> correctedSamples(sampleCount);
+        for (std::size_t index = 0; index < sampleCount; ++index) {
+            correctedSamples[index] = carrierCorrected[index] * phaseRotation;
+        }
+        std::vector<float> correctedInterleaved(sampleCount * 2U);
+        for (std::size_t index = 0; index < sampleCount; ++index) {
+            correctedInterleaved[2U * index] = static_cast<float>(correctedSamples[index].real());
+            correctedInterleaved[2U * index + 1U] = static_cast<float>(correctedSamples[index].imag());
+        }
+
+        std::vector<float> beforeI;
+        std::vector<float> beforeQ;
+        std::vector<float> afterI;
+        std::vector<float> afterQ;
+        std::vector<float> timingError;
+        beforeI.reserve(symbolBefore.size());
+        beforeQ.reserve(symbolBefore.size());
+        afterI.reserve(symbolBefore.size());
+        afterQ.reserve(symbolBefore.size());
+        timingError.reserve(symbolBefore.size());
+        double timingErrorSum = 0.0;
+        double timingErrorPower = 0.0;
+        double phaseJitterPower = 0.0;
+        double evmErrorPower = 0.0;
+        double evmReferencePower = 0.0;
+        int metricCount = 0;
+        double idealRadius = 0.0;
+        for (std::size_t symbol = 0; symbol < symbolBefore.size(); ++symbol) {
+            const double position = selectedPhaseSamples + samplesPerSymbol +
+                                    symbol * samplesPerSymbol;
+            idealRadius += std::abs(interpolatedComplex(correctedInterleaved, position));
+        }
+        if (!symbolBefore.empty()) {
+            idealRadius /= static_cast<double>(symbolBefore.size());
+        }
+        for (std::size_t symbol = 0; symbol < symbolBefore.size(); ++symbol) {
+            const double position = selectedPhaseSamples + samplesPerSymbol +
+                                    symbol * samplesPerSymbol;
+            const std::complex<double> corrected = interpolatedComplex(correctedInterleaved, position);
+            beforeI.push_back(static_cast<float>(symbolBefore[symbol].real()));
+            beforeQ.push_back(static_cast<float>(symbolBefore[symbol].imag()));
+            afterI.push_back(static_cast<float>(corrected.real()));
+            afterQ.push_back(static_cast<float>(corrected.imag()));
+            const std::complex<double> early = interpolatedComplex(
+                correctedInterleaved, position - samplesPerSymbol * 0.5);
+            const std::complex<double> late = interpolatedComplex(
+                correctedInterleaved, position + samplesPerSymbol * 0.5);
+            const double error = std::real((late - early) * std::conj(corrected)) /
+                                 std::max(1.0e-20, totalPower);
+            timingError.push_back(static_cast<float>(error));
+            timingErrorSum += error;
+            timingErrorPower += error * error;
+            if (carrier.order > 1) {
+                const double angle = std::arg(corrected);
+                const double idealStep = kTwoPi / carrier.order;
+                const double idealAngle = std::round(angle / idealStep) * idealStep;
+                const std::complex<double> ideal = std::polar(idealRadius, idealAngle);
+                evmErrorPower += std::norm(corrected - ideal);
+                evmReferencePower += std::norm(ideal);
+                const double decisionPhase = std::remainder(angle - idealAngle, idealStep);
+                phaseJitterPower += decisionPhase * decisionPhase;
+            }
+            ++metricCount;
+        }
+
+        const CarrierEstimate residualCarrier = estimateCarrier(carrier.order, correctedSamples);
+        const double timingMean = metricCount > 0 ? timingErrorSum / metricCount : 0.0;
+        const double timingRms = metricCount > 0
+                                     ? std::sqrt(timingErrorPower / metricCount)
+                                     : 0.0;
+        const double phaseJitterDegrees = metricCount > 0 && carrier.order > 1
+                                              ? std::sqrt(phaseJitterPower / metricCount) *
+                                                    180.0 / 3.14159265358979323846
+                                              : 0.0;
+        const double evmPercent = evmReferencePower > 1.0e-20
+                                      ? 100.0 * std::sqrt(evmErrorPower / evmReferencePower)
+                                      : 0.0;
+        const double lockPercent = 100.0 * std::clamp(
+            carrier.coherence * std::max(0.0, selectedMetric), 0.0, 1.0);
+        const QString detectedMode = carrier.order == 1
+                                         ? QStringLiteral("FSK / FM")
+                                         : QStringLiteral("%1PSK").arg(carrier.order);
+        QString liveState = trText(QStringLiteral("research_sync_live_inactive"),
+                                   QStringLiteral("live correction off"));
+        if (syncLiveButton && syncLiveButton->isChecked()) {
+            const bool estimateValid = metricCount >= 8 &&
+                                       std::isfinite(carrier.frequencyHz) &&
+                                       std::isfinite(phaseCorrection) &&
+                                       carrier.coherence >= 0.08 &&
+                                       std::abs(carrier.frequencyHz) <= analysisSampleRate * 0.20;
+            if (estimateValid) {
+                constexpr double liveAlpha = 0.18;
+                if (!syncLiveHasEstimate) {
+                    syncLiveCarrierHz = carrier.frequencyHz;
+                    syncLivePhaseRadians = phaseCorrection;
+                    syncLiveHasEstimate = true;
+                } else {
+                    syncLiveCarrierHz += liveAlpha *
+                                         (carrier.frequencyHz - syncLiveCarrierHz);
+                    const std::complex<double> previousPhase =
+                        std::polar(1.0, syncLivePhaseRadians);
+                    const std::complex<double> measuredPhase =
+                        std::polar(1.0, phaseCorrection);
+                    const std::complex<double> smoothedPhase =
+                        previousPhase * (1.0 - liveAlpha) + measuredPhase * liveAlpha;
+                    if (std::abs(smoothedPhase) > 1.0e-12) {
+                        syncLivePhaseRadians = std::arg(smoothedPhase);
+                    }
+                }
+                const double appliedCarrier = correctCarrier ? syncLiveCarrierHz : 0.0;
+                const double appliedPhase = correctPhase ? syncLivePhaseRadians : 0.0;
+                const double timingPhase = static_cast<double>(selectedPhaseBin) /
+                                           static_cast<double>(phaseBins);
+                if (liveSyncApplier) {
+                    liveSyncApplier(true,
+                                    appliedCarrier,
+                                    appliedPhase,
+                                    timingPhase,
+                                    lockPercent / 100.0);
+                }
+                liveState = trText(QStringLiteral("research_sync_live_applied"),
+                                   QStringLiteral("live carrier %1, phase %2 deg; timing monitored"))
+                                .arg(frequencyText(appliedCarrier))
+                                .arg(appliedPhase * 180.0 /
+                                         3.14159265358979323846,
+                                     0,
+                                     'f',
+                                     1);
+            } else {
+                liveState = trText(QStringLiteral("research_sync_live_holding"),
+                                   QStringLiteral("live holding the last stable estimate"));
+            }
+        }
+        const QString statusText =
+            trText(QStringLiteral("research_sync_status"),
+                   QStringLiteral("%1 | channel rate %2 | %3 samples/symbol | carrier %4 (coherence %5) | residual %6 | phase %7 deg | timing phase %8% | Gardner mean/RMS %9 / %10 | phase jitter %11 deg | EVM %12% | lock %13% | symbols %14"))
+                .arg(detectedMode)
+                .arg(frequencyText(analysisSampleRate))
+                .arg(samplesPerSymbol, 0, 'f', 2)
+                .arg(frequencyText(carrier.frequencyHz))
+                .arg(carrier.coherence, 0, 'f', 3)
+                .arg(frequencyText(residualCarrier.frequencyHz))
+                .arg(phaseCorrection * 180.0 / 3.14159265358979323846, 0, 'f', 1)
+                .arg(100.0 * selectedPhaseBin / phaseBins, 0, 'f', 1)
+                .arg(timingMean, 0, 'f', 4)
+                .arg(timingRms, 0, 'f', 4)
+                .arg(phaseJitterDegrees, 0, 'f', 2)
+                .arg(evmPercent, 0, 'f', 2)
+                .arg(lockPercent, 0, 'f', 1)
+                .arg(metricCount);
+        syncStatus->setText(statusText + QStringLiteral(" | ") + liveState);
+        syncPlot->setSynchronization(beforeI,
+                                     beforeQ,
+                                     afterI,
+                                     afterQ,
+                                     phaseMetric,
+                                     timingError,
+                                     selectedPhaseBin);
+        return;
+    }
 
     if (activeTab == IqTab) {
         std::vector<float> autocorrelation(129, 0.0f);
@@ -1079,19 +1854,103 @@ void ResearchAnalysisDialog::refreshIqSnapshot() {
         const double meanPhaseStep = phaseCount > 0 ? phaseStepSum / phaseCount : 0.0;
         const double phaseStd = phaseCount > 0
             ? std::sqrt(std::max(0.0, phaseStepSquared / phaseCount - meanPhaseStep * meanPhaseStep)) : 0.0;
-        const double instantFrequency = context.sampleRateHz > 0.0
-            ? meanPhaseStep * context.sampleRateHz / kTwoPi : 0.0;
-        const double instantFrequencyStd = context.sampleRateHz > 0.0
-            ? phaseStd * context.sampleRateHz / kTwoPi : 0.0;
+        const double instantFrequency = analysisSampleRate > 0.0
+            ? meanPhaseStep * analysisSampleRate / kTwoPi : 0.0;
+        const double instantFrequencyStd = analysisSampleRate > 0.0
+            ? phaseStd * analysisSampleRate / kTwoPi : 0.0;
         const double pseudo = std::abs(pseudoPower);
         const double imageRatio = complexPower > pseudo + 1.0e-20
             ? 10.0 * std::log10((complexPower + pseudo) / (complexPower - pseudo))
             : 99.0;
+        std::vector<float> centeredFirst(sampleCount);
+        std::vector<float> centeredSecond(sampleCount);
+        for (std::size_t i = 0; i < sampleCount; ++i) {
+            centeredFirst[i] = static_cast<float>(first[i] - meanFirst);
+            centeredSecond[i] = static_cast<float>(second[i] - meanSecond);
+        }
+
+        const double symbolRate = iqSymbolRateSpin
+                                      ? iqSymbolRateSpin->value()
+                                      : 4800.0;
+        const double samplesPerSymbol =
+            symbolRate > 0.0 ? analysisSampleRate / symbolRate : 0.0;
+        const double phaseFraction = iqPhaseSpin
+                                         ? iqPhaseSpin->value() / 100.0
+                                         : 0.5;
+        auto interpolated = [](const std::vector<float> &values, double position) {
+            if (values.empty()) return 0.0f;
+            if (position <= 0.0) return values.front();
+            const double maximum = static_cast<double>(values.size() - 1U);
+            if (position >= maximum) return values.back();
+            const std::size_t left = static_cast<std::size_t>(position);
+            const float fraction = static_cast<float>(
+                position - static_cast<double>(left));
+            return values[left] +
+                   (values[left + 1U] - values[left]) * fraction;
+        };
+
+        std::vector<float> constellationFirst;
+        std::vector<float> constellationSecond;
+        if (samplesPerSymbol >= 2.0) {
+            const double phaseSamples = phaseFraction * samplesPerSymbol;
+            for (double position = phaseSamples;
+                 position + 1.0 < static_cast<double>(sampleCount) &&
+                 constellationFirst.size() < 3000U;
+                 position += samplesPerSymbol) {
+                constellationFirst.push_back(interpolated(centeredFirst, position));
+                constellationSecond.push_back(interpolated(centeredSecond, position));
+            }
+        }
+        if (constellationFirst.empty()) {
+            const std::size_t stride =
+                (std::max<std::size_t>)(1U, sampleCount / 2000U);
+            for (std::size_t i = 0; i < sampleCount; i += stride) {
+                constellationFirst.push_back(centeredFirst[i]);
+                constellationSecond.push_back(centeredSecond[i]);
+            }
+        }
+
+        constexpr int eyePoints = 192;
+        std::vector<float> eyeFirst;
+        std::vector<float> eyeSecond;
+        int eyeTraceCount = 0;
+        if (samplesPerSymbol >= 2.0) {
+            const int requestedTraces = iqTraceCountSpin
+                                            ? iqTraceCountSpin->value()
+                                            : 32;
+            const double eyeLengthSamples = 2.0 * samplesPerSymbol;
+            const double firstTraceStart = phaseFraction * samplesPerSymbol;
+            for (int trace = 0; trace < requestedTraces; ++trace) {
+                const double traceStart =
+                    firstTraceStart + static_cast<double>(trace) * samplesPerSymbol;
+                if (traceStart + eyeLengthSamples + 1.0 >=
+                    static_cast<double>(sampleCount)) {
+                    break;
+                }
+                for (int point = 0; point < eyePoints; ++point) {
+                    const double position =
+                        traceStart + eyeLengthSamples * point /
+                                         static_cast<double>(eyePoints - 1);
+                    eyeFirst.push_back(interpolated(centeredFirst, position));
+                    eyeSecond.push_back(interpolated(centeredSecond, position));
+                }
+                ++eyeTraceCount;
+            }
+        }
+
+        const int viewMode = iqViewCombo ? iqViewCombo->currentData().toInt() : 0;
+        const QString viewName = iqViewCombo
+                                     ? iqViewCombo->currentText()
+                                     : QStringLiteral("Combined");
         iqStatus->setText(
             trText(QStringLiteral("research_iq_status"),
-                    QStringLiteral("%1 | samples %2 | DC I/Q %3 / %4 | RMS I/Q %5 / %6 | imbalance %7 dB | correlation %8 | frequency %9 +/- %10 | image estimate %11 dB | arrival %12 MS/s | epoch/seq %13/%14 | queue %15 | clip %16% | invalid %17%"))
-                .arg(context.inputMode == INPUT_RF ? QStringLiteral("I/Q") : QStringLiteral("HF1/HF2"))
+                    QStringLiteral("%1 / %2 | rate %3 | samples %4 | %5 samples/symbol | eye traces %6 | DC I/Q %7 / %8 | RMS I/Q %9 / %10 | imbalance %11 dB | correlation %12 | frequency %13 +/- %14 | image estimate %15 dB | arrival %16 MS/s | epoch/seq %17/%18 | queue %19 | clip %20% | invalid %21%"))
+                .arg(iqSourceName)
+                .arg(viewName)
+                .arg(frequencyText(analysisSampleRate))
                 .arg(sampleCount)
+                .arg(samplesPerSymbol, 0, 'f', 2)
+                .arg(eyeTraceCount)
                 .arg(meanFirst, 0, 'g', 5)
                 .arg(meanSecond, 0, 'g', 5)
                 .arg(rmsFirst, 0, 'g', 5)
@@ -1107,7 +1966,15 @@ void ResearchAnalysisDialog::refreshIqSnapshot() {
                 .arg(bufferStats.queuedBlocks)
                 .arg(100.0 * clippedCount / (std::max<std::size_t>)(1, sampleCount), 0, 'f', 3)
                 .arg(100.0 * nonFiniteCount / (std::max<std::size_t>)(1, sampleCount), 0, 'f', 4));
-        iqPlot->setIq(first, second, autocorrelation);
+        iqPlot->setIq(first,
+                      second,
+                      autocorrelation,
+                      constellationFirst,
+                      constellationSecond,
+                      eyeFirst,
+                      eyeSecond,
+                      eyePoints,
+                      viewMode);
         return;
     }
 

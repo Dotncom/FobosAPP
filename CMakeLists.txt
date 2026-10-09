@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(FobosAPP VERSION 4.8.3)
+project(ObriiSDR VERSION 5.0.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -121,6 +121,7 @@ set(SOURCES
     src/mainwindow/main_digital.cpp
     src/mainwindow/main_dmr.cpp
     src/mainwindow/main_dmr_privacy.cpp
+    src/mainwindow/main_dspflow.cpp
     src/mainwindow/main_gnss.cpp
     src/mainwindow/main_gnss_acquisition.cpp
     src/mainwindow/main_gnss_acquisition_tests.cpp
@@ -188,6 +189,8 @@ set(SOURCES
     src/ui/frequencycontrol.h
     src/ui/finetunewidget.cpp
     src/ui/finetunewidget.h
+    src/ui/multivfowidget.cpp
+    src/ui/multivfowidget.h
     src/backends/fobosbackend.cpp
     src/backends/fobosbackend.h
     src/digital/fpvhunterdetector.cpp
@@ -235,6 +238,8 @@ set(SOURCES
     third_party/ft8_lib/ft8/text.c
     src/audio/playbackmanager.cpp
     src/audio/playbackmanager.h
+    src/audio/audiofilterchain.cpp
+    src/audio/audiofilterchain.h
     src/presets/presethelpers.cpp
     src/presets/presethelpers.h
     src/presets/presetmanager.cpp
@@ -258,6 +263,12 @@ set(SOURCES
     src/utils/samplefileutils.h
     src/ui/spectrumhuntercontrols.cpp
     src/ui/spectrumhuntercontrols.h
+    src/ui/audiofilterchainwidget.cpp
+    src/ui/audiofilterchainwidget.h
+    src/ui/dspflowpanel.cpp
+    src/ui/dspflowpanel.h
+    src/ui/dspresearchwidget.cpp
+    src/ui/dspresearchwidget.h
     src/digital/videoprocessor.cpp
     src/digital/videoprocessor.h
     src/digital/videowidget.cpp
@@ -299,15 +310,15 @@ if(WIN32)
     list(APPEND SOURCES packaging/windows/fobosapp.rc)
 endif()
 
-add_executable(FobosAPP ${SOURCES})
+add_executable(ObriiSDR ${SOURCES})
 
 if(MSVC)
-    target_compile_options(FobosAPP PRIVATE /utf-8)
+    target_compile_options(ObriiSDR PRIVATE /utf-8)
 endif()
 
-target_compile_definitions(FobosAPP PRIVATE FOBOSAPP_VERSION="${PROJECT_VERSION}")
+target_compile_definitions(ObriiSDR PRIVATE FOBOSAPP_VERSION="${PROJECT_VERSION}")
 
-target_include_directories(FobosAPP PRIVATE
+target_include_directories(ObriiSDR PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/audio
     ${CMAKE_SOURCE_DIR}/src/backends
@@ -329,7 +340,7 @@ target_include_directories(FobosAPP PRIVATE
     ${FFTW_INCLUDE_DIR}
 )
 
-target_link_libraries(FobosAPP PRIVATE
+target_link_libraries(ObriiSDR PRIVATE
     ${FOBOS_STANDARD_LIBRARY}
     ${FOBOS_AGILE_LIBRARY}
     ${FFTW_FLOAT_LIBRARY}
@@ -340,11 +351,11 @@ target_link_libraries(FobosAPP PRIVATE
 )
 
 if(FOBOS_HAS_VKFFT)
-    target_include_directories(FobosAPP PRIVATE
+    target_include_directories(ObriiSDR PRIVATE
         "${CMAKE_SOURCE_DIR}/third_party/VkFFT/vkFFT"
         "${Vulkan_INCLUDE_DIR}/glslang/Include"
     )
-    target_compile_definitions(FobosAPP PRIVATE
+    target_compile_definitions(ObriiSDR PRIVATE
         FOBOSAPP_HAS_VKFFT=1
         VKFFT_BACKEND=0
         VK_API_VERSION=11
@@ -352,15 +363,15 @@ if(FOBOS_HAS_VKFFT)
     set_source_files_properties(src/core/gpufftbackend.cpp PROPERTIES
         COMPILE_DEFINITIONS "_CRT_SECURE_NO_WARNINGS"
     )
-    target_link_libraries(FobosAPP PRIVATE
+    target_link_libraries(ObriiSDR PRIVATE
         Vulkan::Vulkan
         Vulkan::glslang
         Vulkan::SPIRV-Tools
         ${VKFFT_SPIRV_TOOLS_OPT_LIBRARY}
     )
     if(MSVC)
-        target_link_options(FobosAPP PRIVATE "/DELAYLOAD:vulkan-1.dll")
-        target_link_libraries(FobosAPP PRIVATE delayimp)
+        target_link_options(ObriiSDR PRIVATE "/DELAYLOAD:vulkan-1.dll")
+        target_link_libraries(ObriiSDR PRIVATE delayimp)
     endif()
 endif()
 
@@ -444,44 +455,44 @@ if(FOBOS_BUILD_CW_SELFTEST)
 endif()
 
 if(WIN32)
-    target_compile_definitions(FobosAPP PRIVATE FOBOSAPP_HAS_FFTW_THREADS=1)
+    target_compile_definitions(ObriiSDR PRIVATE FOBOSAPP_HAS_FFTW_THREADS=1)
 elseif(FFTW_FLOAT_THREADS_LIBRARY)
-    target_link_libraries(FobosAPP PRIVATE ${FFTW_FLOAT_THREADS_LIBRARY})
-    target_compile_definitions(FobosAPP PRIVATE FOBOSAPP_HAS_FFTW_THREADS=1)
+    target_link_libraries(ObriiSDR PRIVATE ${FFTW_FLOAT_THREADS_LIBRARY})
+    target_compile_definitions(ObriiSDR PRIVATE FOBOSAPP_HAS_FFTW_THREADS=1)
 else()
     message(STATUS "FFTW threads library not found; large FFT plans will remain single-threaded.")
 endif()
 
 if(FOBOS_HAS_MBELIB_NEO)
-    target_link_libraries(FobosAPP PRIVATE mbe_neo::mbe_static)
-    target_compile_definitions(FobosAPP PRIVATE FOBOSAPP_HAS_MBELIB_NEO=1)
+    target_link_libraries(ObriiSDR PRIVATE mbe_neo::mbe_static)
+    target_compile_definitions(ObriiSDR PRIVATE FOBOSAPP_HAS_MBELIB_NEO=1)
 endif()
 
 if(WIN32)
-    target_link_libraries(FobosAPP PRIVATE winmm opengl32 winhttp)
+    target_link_libraries(ObriiSDR PRIVATE winmm opengl32 winhttp)
 else()
-    target_link_libraries(FobosAPP PRIVATE OpenGL::GL Threads::Threads)
+    target_link_libraries(ObriiSDR PRIVATE OpenGL::GL Threads::Threads)
 endif()
 
 if(Qt5Multimedia_FOUND)
-    target_link_libraries(FobosAPP PRIVATE Qt5::Multimedia)
-    target_compile_definitions(FobosAPP PRIVATE FOBOSAPP_HAS_QT_MULTIMEDIA=1)
+    target_link_libraries(ObriiSDR PRIVATE Qt5::Multimedia)
+    target_compile_definitions(ObriiSDR PRIVATE FOBOSAPP_HAS_QT_MULTIMEDIA=1)
     if(NOT WIN32)
-        target_compile_definitions(FobosAPP PRIVATE FOBOSAPP_HAS_QT_AUDIO=1)
+        target_compile_definitions(ObriiSDR PRIVATE FOBOSAPP_HAS_QT_AUDIO=1)
     endif()
 elseif(NOT WIN32)
     message(WARNING "Qt5 Multimedia was not found. Linux audio playback will be disabled until the Qt Multimedia development package is installed.")
 endif()
 
-install(TARGETS FobosAPP RUNTIME DESTINATION bin)
+install(TARGETS ObriiSDR RUNTIME DESTINATION bin)
 
 if(UNIX AND NOT APPLE)
     install(FILES packaging/linux/99-fobos-sdr.rules
-            DESTINATION share/FobosAPP/udev)
+            DESTINATION share/ObriiSDR/udev)
     install(FILES packaging/icons/fobosapp.png
-            RENAME fobosapp.png
+            RENAME obriisdr.png
             DESTINATION share/icons/hicolor/256x256/apps)
     install(FILES packaging/linux/fobosapp.desktop.in
-            RENAME FobosAPP.desktop
+            RENAME ObriiSDR.desktop
             DESTINATION share/applications)
 endif()

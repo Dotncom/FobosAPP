@@ -224,11 +224,15 @@ struct RadioSettings {
     int fftWindowType = FFT_WINDOW_RECTANGULAR;
     int lnaGain = 1;
     int vgaGain = 3;
+    int hackRfLnaGainDb = 16;
+    int hackRfVgaGainDb = 20;
     bool rtlAgc = true;
     int rtlTunerGainTenthsDb = 166;
     int audioDeviceId = 0;
     double audioLowPassHz = 0.0;
     double audioHighPassHz = 0.0;
+    QString audioFilterChainJson = QStringLiteral("[]");
+    bool simplifiedAudioChannelizer = false;
     double hfNoiseCancelDepth = 1.0;
     double hfNoiseCancelRefGainDb = 0.0;
     double hfNoiseCancelRefDelayNs = 0.0;
@@ -238,6 +242,11 @@ struct RadioSettings {
     double hfAudioBlankerThreshold = 8.0;
     bool audioEnabled = true;
     bool syncEnabled = false;
+    bool liveDigitalSyncEnabled = false;
+    double liveDigitalSyncCarrierOffsetHz = 0.0;
+    double liveDigitalSyncPhaseRadians = 0.0;
+    double liveDigitalSyncTimingPhase = 0.5;
+    double liveDigitalSyncConfidence = 0.0;
     double cwDecoderToneHz = 700.0;
     int cwDecoderWpm = 18;
     bool cwDecoderAdaptiveSpeed = true;

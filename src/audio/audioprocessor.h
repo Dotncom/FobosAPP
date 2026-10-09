@@ -29,6 +29,8 @@
 #include <mmsystem.h>
 #endif
 #include "radiosettings.h"
+#include "audiofilterchain.h"
+#include "iqchannelizer.h"
 
 class AudioProcessor : public QObject {
     Q_OBJECT
@@ -130,6 +132,9 @@ private:
     float demodAudioLowPassState2 = 0.0f;
     float demodAudioLowPassState3 = 0.0f;
     float demodAudioHighPassState = 0.0f;
+    AudioFilterChain audioFilterChain;
+    IqChannelizer audioIqChannelizer;
+    std::vector<float> audioChannelizedIq;
     double samCarrierPhase = 0.0;
     double samCarrierFrequency = 0.0;
     double sidebandFilterPhase = 0.0;

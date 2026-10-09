@@ -161,10 +161,12 @@ void YourClassName::panSpectrumView(int deltaPixels, int widthPixels) {
         overallMin = globalFrequency - globalSampleRate / 2.0;
         overallMax = globalFrequency + globalSampleRate / 2.0;
     } else if (globalMode == INPUT_RF) {
-        overallMin = (std::max)(RF_MIN_LISTENING_FREQUENCY,
+        const double receiverMinimum = rfMinimumListeningFrequency(pendingSettings);
+        overallMin = (std::max)(receiverMinimum,
                                 globalFrequency - globalSampleRate / 2.0);
-        overallMax = (std::max)(overallMin,
-                                globalFrequency + globalSampleRate / 2.0);
+        overallMax = (std::clamp)(globalFrequency + globalSampleRate / 2.0,
+                                  overallMin,
+                                  rfMaximumFrequency(pendingSettings));
     }
 
     const double visibleSpan = maxFrequency - minFrequency;

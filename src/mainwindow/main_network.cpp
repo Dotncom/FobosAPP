@@ -161,6 +161,8 @@ void YourClassName::applyAuthoritativeNetworkState(const QJsonObject &command) {
         std::abs(previousSettings.bandwidth - pendingSettings.bandwidth) > 0.5 ||
         std::abs(previousSettings.audioLowPassHz - pendingSettings.audioLowPassHz) > 0.5 ||
         std::abs(previousSettings.audioHighPassHz - pendingSettings.audioHighPassHz) > 0.5 ||
+        previousSettings.audioFilterChainJson != pendingSettings.audioFilterChainJson ||
+        previousSettings.simplifiedAudioChannelizer != pendingSettings.simplifiedAudioChannelizer ||
         previousSettings.audioEnabled != pendingSettings.audioEnabled;
     if (demodSettingsChanged) {
         updateDigitalDecoderMode();
@@ -466,7 +468,9 @@ void YourClassName::applyLiveRemoteSettings(const RadioSettings &previousSetting
         previousSettings.sstvDemodulationMode != pendingSettings.sstvDemodulationMode ||
         std::abs(previousSettings.bandwidth - pendingSettings.bandwidth) > 0.5 ||
         std::abs(previousSettings.audioLowPassHz - pendingSettings.audioLowPassHz) > 0.5 ||
-        std::abs(previousSettings.audioHighPassHz - pendingSettings.audioHighPassHz) > 0.5;
+        std::abs(previousSettings.audioHighPassHz - pendingSettings.audioHighPassHz) > 0.5 ||
+        previousSettings.audioFilterChainJson != pendingSettings.audioFilterChainJson ||
+        previousSettings.simplifiedAudioChannelizer != pendingSettings.simplifiedAudioChannelizer;
     if (demodSettingsChanged) {
         qDebug() << "[Network] applying live demod settings"
                  << "modulation" << pendingSettings.modulationType

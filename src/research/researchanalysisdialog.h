@@ -1,6 +1,7 @@
 #ifndef RESEARCHANALYSISDIALOG_H
 #define RESEARCHANALYSISDIALOG_H
 
+#include "iqchannelizer.h"
 #include "spectrumscienceanalyzer.h"
 
 #include <QDialog>
@@ -28,6 +29,8 @@ struct ResearchRadioContext {
     double centerFrequencyHz = 0.0;
     double listeningFrequencyHz = 0.0;
     int inputMode = 0;
+    int modulationType = 0;
+    double bandwidthHz = 0.0;
     int fftLength = 0;
     int fftWindowType = 0;
 };
@@ -50,22 +53,27 @@ public:
         InterferenceTab = 0,
         StatisticsTab = 1,
         IqTab = 2,
-        DualInputTab = 3,
-        AnalyzerTab = 4
+        SynchronizationTab = 3,
+        DualInputTab = 4,
+        AnalyzerTab = 5
     };
 
     using Translator = std::function<QString(const QString &, const QString &)>;
     using ContextProvider = std::function<ResearchRadioContext()>;
     using SpectrumSettingsProvider = std::function<ResearchSpectrumSettings()>;
     using SpectrumSettingsApplier = std::function<void(const ResearchSpectrumSettings &)>;
+    using LiveSyncApplier =
+        std::function<void(bool, double, double, double, double)>;
 
     explicit ResearchAnalysisDialog(Translator translator,
                                     ContextProvider contextProvider,
                                     SpectrumSettingsProvider settingsProvider,
                                     SpectrumSettingsApplier settingsApplier,
+                                    LiveSyncApplier liveSyncApplier,
                                     QWidget *parent = nullptr);
 
     void selectTab(Tab tab);
+    void setIqView(int viewMode);
     void appendSpectrumFrame(const std::vector<float> &frequencies,
                              const std::vector<float> &levels,
                              const SpectrumScienceMetrics &metrics);
@@ -93,11 +101,13 @@ private:
     void rebuildTexts();
     void applySpectrumSettings();
     void updateAnalyzerStatus();
+    void updateLiveSyncButton();
 
     Translator translator;
     ContextProvider contextProvider;
     SpectrumSettingsProvider spectrumSettingsProvider;
     SpectrumSettingsApplier spectrumSettingsApplier;
+    LiveSyncApplier liveSyncApplier;
     QTabWidget *tabs = nullptr;
     QTimer *iqTimer = nullptr;
 
@@ -132,6 +142,27 @@ private:
     QLabel *iqStatus = nullptr;
     QCheckBox *iqFreezeCheckbox = nullptr;
     QSpinBox *iqSampleCountSpin = nullptr;
+    QComboBox *iqSourceCombo = nullptr;
+    QComboBox *iqViewCombo = nullptr;
+    QDoubleSpinBox *iqSymbolRateSpin = nullptr;
+    QSpinBox *iqPhaseSpin = nullptr;
+    QSpinBox *iqTraceCountSpin = nullptr;
+    IqChannelizer iqAnalysisChannelizer;
+    std::vector<float> iqChannelizedSnapshot;
+
+    ResearchPlotWidget *syncPlot = nullptr;
+    QLabel *syncStatus = nullptr;
+    QCheckBox *syncFreezeCheckbox = nullptr;
+    QCheckBox *syncCarrierCorrectionCheckbox = nullptr;
+    QCheckBox *syncPhaseCorrectionCheckbox = nullptr;
+    QPushButton *syncLiveButton = nullptr;
+    QComboBox *syncModulationCombo = nullptr;
+    QSpinBox *syncSampleCountSpin = nullptr;
+    QDoubleSpinBox *syncSymbolRateSpin = nullptr;
+    QSpinBox *syncPhaseBinsSpin = nullptr;
+    bool syncLiveHasEstimate = false;
+    double syncLiveCarrierHz = 0.0;
+    double syncLivePhaseRadians = 0.0;
     std::uint64_t lastIqEpoch = 0;
     std::uint64_t lastIqTotalFloatCount = 0;
     qint64 lastIqStatsTimeMs = 0;

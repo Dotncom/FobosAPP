@@ -237,6 +237,19 @@ using AMBE-capable binaries.
    Local license text:
    - licenses/ft8_lib/LICENSE
 
+16. HackRF host library and tools (optional native runtime)
+   Runtime files in the Windows package:
+   - hackrf/hackrf.dll
+   - hackrf/hackrf_info.exe
+
+   Upstream: https://github.com/greatscottgadgets/hackrf
+   License: GNU General Public License version 2 or later.
+   Packaged license text: hackrf/COPYING-hackrf.txt
+
+   The isolated HackRF runtime directory also contains libusb 1.0.27 under
+   LGPL-2.1-or-later and pthreads4w under Apache License 2.0. Their license and
+   notice files are stored beside the corresponding DLLs.
+
 Release/source obligation note:
 If a binary release includes GPL DMR voice backend DLLs, publish the
 corresponding FobosAPP and FobosDMRVoiceBackend-gpl source, plus the exact

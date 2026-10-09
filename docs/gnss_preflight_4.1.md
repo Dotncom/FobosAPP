@@ -1,6 +1,6 @@
 # GNSS/QTH preflight for 4.1
 
-This note is a practical checklist for the current GNSS workbench in FobosAPP.
+This note is a practical checklist for the current GNSS workbench in Obrii SDR.
 It is not a promise of autonomous GNSS positioning yet: real GPS L1 C/A lock is
 still unproven with the current antenna/RF conditions.
 

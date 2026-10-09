@@ -66,7 +66,7 @@ EOF
     fi
 
     mkdir -p "${UPSTREAM_SOURCE_ROOT}"
-    log "WARNING: cloning upstream ${repo}; this may not include FobosAPP patches."
+    log "WARNING: cloning upstream ${repo}; this may not include Obrii SDR patches."
     log "Cloning ${repo} -> ${dir}"
     git clone --depth 1 "${repo}" "${dir}"
     printf '%s\n' "${dir}"
@@ -97,5 +97,5 @@ echo
 echo "Fobos libraries installed into:"
 echo "  ${INSTALL_PREFIX}"
 echo
-echo "Now build FobosAPP with:"
+echo "Now build Obrii SDR with:"
 echo "  ./tools/build_linux.sh"

@@ -24,8 +24,33 @@ New-Item -ItemType Directory -Path (Join-Path $DeployPath "platforms") -Force | 
 New-Item -ItemType Directory -Path (Join-Path $DeployPath "imageformats") -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $DeployPath "audio") -Force | Out-Null
 
+# The bladeRF prototype is intentionally unavailable until it can be debugged
+# against physical hardware. Remove stale files left by older deployments.
+$DisabledBladeRfPaths = @(
+    (Join-Path $DeployPath "bladerf"),
+    (Join-Path $DeployPath "docs\bladerf_native_beta.md")
+)
+foreach ($DisabledPath in $DisabledBladeRfPaths) {
+    if (Test-Path -LiteralPath $DisabledPath) {
+        try {
+            Remove-Item -LiteralPath $DisabledPath -Recurse -Force -ErrorAction Stop
+        } catch {
+            Write-Warning "Could not remove stale disabled bladeRF artifact '$DisabledPath': $($_.Exception.Message)"
+        }
+    }
+}
+
+$LegacyExecutable = Join-Path $DeployPath "FobosAPP.exe"
+if (Test-Path -LiteralPath $LegacyExecutable) {
+    try {
+        Remove-Item -LiteralPath $LegacyExecutable -Force -ErrorAction Stop
+    } catch {
+        Write-Warning "Could not remove legacy executable '$LegacyExecutable': $($_.Exception.Message)"
+    }
+}
+
 $RootFiles = @(
-    @{ Source = Join-Path $BuildPath "FobosAPP.exe"; Name = "FobosAPP.exe" },
+    @{ Source = Join-Path $BuildPath "ObriiSDR.exe"; Name = "ObriiSDR.exe" },
     @{ Source = Join-Path $Workspace "fobos\fobos.dll"; Name = "fobos.dll" },
     @{ Source = Join-Path $Workspace "fobos_agile\fobos_sdr.dll"; Name = "fobos_sdr.dll" },
     @{ Source = Join-Path $Workspace "fftw-3.3.5-dll64\libfftw3f-3.dll"; Name = "libfftw3f-3.dll" },
@@ -65,6 +90,31 @@ foreach ($File in $RootFiles) {
         continue
     }
     Copy-Item -LiteralPath $File.Source -Destination $Destination -Force
+}
+
+$HackRfRuntimeSource = Join-Path $Workspace "third_party\runtime\hackrf\windows-x64"
+if (Test-Path -LiteralPath (Join-Path $HackRfRuntimeSource "hackrf.dll")) {
+    $HackRfDeployPath = Join-Path $DeployPath "hackrf"
+    New-Item -ItemType Directory -Path $HackRfDeployPath -Force | Out-Null
+    $HackRfRuntimeFiles = @(
+        "hackrf.dll",
+        "hackrf_info.exe",
+        "libusb-1.0.dll",
+        "pthreadVC3.dll",
+        "COPYING-hackrf.txt",
+        "COPYING-libusb.txt",
+        "LICENSE-pthreads4w.txt",
+        "NOTICE-pthreads4w.txt"
+    )
+    foreach ($RuntimeFile in $HackRfRuntimeFiles) {
+        $RuntimeSource = Join-Path $HackRfRuntimeSource $RuntimeFile
+        if (-not (Test-Path -LiteralPath $RuntimeSource)) {
+            throw "Incomplete HackRF runtime: $RuntimeSource"
+        }
+        Copy-Item -LiteralPath $RuntimeSource -Destination (Join-Path $HackRfDeployPath $RuntimeFile) -Force
+    }
+    Copy-Item -LiteralPath (Join-Path $Workspace "tools\run_hackrf_probe.cmd") `
+        -Destination (Join-Path $HackRfDeployPath "run_hackrf_probe.cmd") -Force
 }
 
 $QWindows = Join-Path $QtRoot "plugins\platforms\qwindows.dll"
@@ -119,12 +169,11 @@ if (Test-Path -LiteralPath $DeployDocsPath) {
 }
 
 $ReleaseDocFiles = @(
-    "docs\bladerf_native_beta.md",
     "docs\hackrf_native_beta.md",
     "docs\dmr_external_backend.md",
     "docs\gnss_preflight_4.1.md",
     "docs\iq_pipeline_audit.md",
-    "docs\release_notes_4.8.3.md",
+    "docs\release_notes_5.0.0.md",
     "docs\roadmap_4.0_cleanup.md"
 )
 foreach ($DocFile in $ReleaseDocFiles) {
@@ -250,7 +299,7 @@ foreach ($StaleDoc in $StaleLabDocs) {
 
 if ($Sign) {
     $SignScript = Join-Path $PSScriptRoot "sign_windows.ps1"
-    & $SignScript -Path (Join-Path $DeployPath "FobosAPP.exe") -PfxPath $PfxPath -CertPassword $CertPassword -CertSubject $CertSubject
+    & $SignScript -Path (Join-Path $DeployPath "ObriiSDR.exe") -PfxPath $PfxPath -CertPassword $CertPassword -CertSubject $CertSubject
 }
 
-Write-Host "Deployed FobosAPP to $DeployPath"
+Write-Host "Deployed Obrii SDR to $DeployPath"

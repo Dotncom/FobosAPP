@@ -63,6 +63,7 @@ public:
                             int maxBlocks = 8);
     bool retuneCenterFrequency(double centerFrequencyHz);
     bool applyRtlGainSettings(bool agc, int gainTenthsDb);
+    bool applyHackRfGainSettings(int lnaGainDb, int vgaGainDb);
     void updateNetworkIqSettings(const RadioSettings &settings, bool channelizeFrames);
     void configureNetworkIqStreaming(const RadioSettings &settings, bool emitFrames, bool channelizeFrames);
     std::shared_ptr<ZoomSpectrumProcessor> zoomSpectrumProcessor() const { return zoomProcessor; }

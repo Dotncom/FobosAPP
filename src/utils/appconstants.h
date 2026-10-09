@@ -9,6 +9,8 @@
 inline constexpr double RF_MIN_CENTER_FREQUENCY = 50000000.0;
 inline constexpr double RF_MIN_LISTENING_FREQUENCY = 25000000.0;
 inline constexpr double RF_EXPERIMENTAL_MAX_FREQUENCY = 7750000000.0;
+inline constexpr double HACKRF_MIN_FREQUENCY = 1000000.0;
+inline constexpr double HACKRF_MAX_FREQUENCY = 6000000000.0;
 inline constexpr double DIRECT_MIN_FREQUENCY = 1.0;
 
 inline constexpr int SCALE_SLIDER_FACTOR = 10;
@@ -36,6 +38,9 @@ inline constexpr int RTLSDR_NATIVE_DEVICE_INDEX_BASE = -2000;
 inline constexpr int SOAPY_SDR_DEVICE_INDEX = -3000;
 inline constexpr int BLADERF_NATIVE_DEVICE_INDEX_BASE = -4000;
 inline constexpr int HACKRF_NATIVE_DEVICE_INDEX_BASE = -5000;
+// Keep the prototype compiled for future hardware work, but do not expose or
+// start it until enumeration and streaming are validated on a physical unit.
+inline constexpr bool BLADERF_NATIVE_BACKEND_ENABLED = false;
 inline constexpr int NETWORK_REMOTE_RECEIVER_DEVICE_INDEX_BASE = 100000000;
 inline constexpr int NETWORK_REMOTE_RECEIVER_DEVICE_INDEX_MIN = 90000000;
 inline constexpr int NETWORK_REMOTE_RECEIVER_DEVICE_INDEX_MAX = 110000000;

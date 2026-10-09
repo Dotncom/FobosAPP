@@ -1,6 +1,7 @@
 #include "tuningutils.h"
 
 #include "appconstants.h"
+#include "receiverdeviceutils.h"
 
 #include <algorithm>
 #include <array>
@@ -14,14 +15,39 @@ double directMinFrequencyForMode(int inputMode, double sampleRate) {
     return inputMode == INPUT_HF_COMBINED ? -directMaxFrequency(sampleRate) : DIRECT_MIN_FREQUENCY;
 }
 
+double rfMinimumCenterFrequency(const RadioSettings &settings) {
+    return isHackRfNativeComboValue(settings.deviceIndex)
+               ? (std::max)(HACKRF_MIN_FREQUENCY, settings.sampleRate * 0.5)
+               : RF_MIN_CENTER_FREQUENCY;
+}
+
+double rfMaximumCenterFrequency(const RadioSettings &settings) {
+    return isHackRfNativeComboValue(settings.deviceIndex)
+               ? (std::max)(rfMinimumCenterFrequency(settings),
+                            HACKRF_MAX_FREQUENCY - settings.sampleRate * 0.5)
+               : RF_EXPERIMENTAL_MAX_FREQUENCY;
+}
+
+double rfMinimumListeningFrequency(const RadioSettings &settings) {
+    return isHackRfNativeComboValue(settings.deviceIndex)
+               ? DIRECT_MIN_FREQUENCY
+               : RF_MIN_LISTENING_FREQUENCY;
+}
+
+double rfMaximumFrequency(const RadioSettings &settings) {
+    return isHackRfNativeComboValue(settings.deviceIndex)
+               ? HACKRF_MAX_FREQUENCY
+               : RF_EXPERIMENTAL_MAX_FREQUENCY;
+}
+
 QPair<double, double> listeningScanVisibleSpanHz(const RadioSettings &settings) {
     if (settings.inputMode == INPUT_RF) {
         const double halfRate = (std::max)(1.0, settings.sampleRate) * 0.5;
-        const double low = (std::max)(RF_MIN_LISTENING_FREQUENCY,
+        const double low = (std::max)(rfMinimumListeningFrequency(settings),
                                       settings.centerFrequency - halfRate);
         const double high = (std::clamp)(settings.centerFrequency + halfRate,
                                          low,
-                                         RF_EXPERIMENTAL_MAX_FREQUENCY);
+                                         rfMaximumFrequency(settings));
         return qMakePair(low, high);
     }
 
@@ -108,28 +134,32 @@ void normalizeTuning(RadioSettings &settings, bool preserveCenter) {
 
     if (settings.inputMode == INPUT_RF) {
         const double halfRate = settings.sampleRate / 2.0;
+        const double minimumCenter = rfMinimumCenterFrequency(settings);
+        const double maximumCenter = rfMaximumCenterFrequency(settings);
+        const double minimumListening = rfMinimumListeningFrequency(settings);
+        const double maximumFrequency = rfMaximumFrequency(settings);
         settings.centerFrequency = (std::clamp)(settings.centerFrequency,
-                                                RF_MIN_CENTER_FREQUENCY,
-                                                RF_EXPERIMENTAL_MAX_FREQUENCY);
+                                                minimumCenter,
+                                                maximumCenter);
         settings.listeningFrequency = (std::clamp)(settings.listeningFrequency,
-                                                   RF_MIN_LISTENING_FREQUENCY,
-                                                   RF_EXPERIMENTAL_MAX_FREQUENCY);
+                                                   minimumListening,
+                                                   maximumFrequency);
 
         if (!preserveCenter && settings.listeningFrequency < settings.centerFrequency - halfRate) {
             settings.centerFrequency = (std::clamp)(settings.listeningFrequency + halfRate,
-                                                    RF_MIN_CENTER_FREQUENCY,
-                                                    RF_EXPERIMENTAL_MAX_FREQUENCY);
+                                                    minimumCenter,
+                                                    maximumCenter);
         } else if (!preserveCenter && settings.listeningFrequency > settings.centerFrequency + halfRate) {
             settings.centerFrequency = (std::clamp)(settings.listeningFrequency - halfRate,
-                                                    RF_MIN_CENTER_FREQUENCY,
-                                                    RF_EXPERIMENTAL_MAX_FREQUENCY);
+                                                    minimumCenter,
+                                                    maximumCenter);
         }
 
-        const double low = (std::max)(RF_MIN_LISTENING_FREQUENCY,
+        const double low = (std::max)(minimumListening,
                                       settings.centerFrequency - halfRate);
         const double high = (std::clamp)(settings.centerFrequency + halfRate,
                                          low,
-                                         RF_EXPERIMENTAL_MAX_FREQUENCY);
+                                         maximumFrequency);
         settings.listeningFrequency = (std::clamp)(settings.listeningFrequency, low, high);
     } else {
         settings.centerFrequency = 0.0;
@@ -163,12 +193,14 @@ bool offsetDmrCenterFromListening(RadioSettings &settings) {
         (std::min)(DMR_CENTER_MIN_OFFSET_HZ,
                    (std::max)(1000.0, halfRate * 0.25));
     double newCenter = settings.listeningFrequency - safeOffset;
-    if (newCenter < RF_MIN_CENTER_FREQUENCY) {
+    const double minimumCenter = rfMinimumCenterFrequency(settings);
+    const double maximumCenter = rfMaximumCenterFrequency(settings);
+    if (newCenter < minimumCenter) {
         newCenter = settings.listeningFrequency + safeOffset;
     }
     settings.centerFrequency = (std::clamp)(newCenter,
-                                            RF_MIN_CENTER_FREQUENCY,
-                                            RF_EXPERIMENTAL_MAX_FREQUENCY);
+                                            minimumCenter,
+                                            maximumCenter);
     settings.actualFrequency = settings.centerFrequency;
     normalizeTuning(settings, true);
     return true;

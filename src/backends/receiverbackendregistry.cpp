@@ -70,8 +70,8 @@ QList<ReceiverBackendRegistration> receiverBackendRegistrySnapshot() {
                          ReceiverBackendFeature::HardwareBandwidth |
                              ReceiverBackendFeature::PpmCorrection,
                          false,
-                         true,
-                         QStringLiteral("Experimental RX path; ready when libbladeRF is available"))
+                         false,
+                         QStringLiteral("Disabled until validated with physical bladeRF hardware"))
     };
 }
 

@@ -157,7 +157,7 @@ QByteArray fetchTileWithWinHttp(const QUrl &url, QString *error) {
         resource += QStringLiteral("?") + query;
     }
 
-    HINTERNET session = WinHttpOpen(L"FobosAPP/4.0 (+https://github.com/Dotncom/FobosAPP)",
+    HINTERNET session = WinHttpOpen(L"ObriiSDR/4.8 (+https://github.com/Dotncom/FobosAPP)",
                                     WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
                                     WINHTTP_NO_PROXY_NAME,
                                     WINHTTP_NO_PROXY_BYPASS,
@@ -759,7 +759,7 @@ void QthMapWidget::requestOnlineTile(const QString &url) {
 
     QNetworkRequest request(parsedUrl);
     request.setRawHeader("User-Agent",
-                         QByteArrayLiteral("FobosAPP/4.0 (+https://github.com/Dotncom/FobosAPP)"));
+                         QByteArrayLiteral("ObriiSDR/4.8 (+https://github.com/Dotncom/FobosAPP)"));
     request.setAttribute(QNetworkRequest::CacheLoadControlAttribute,
                          onlineDiskCacheEnabled
                              ? QNetworkRequest::PreferCache
