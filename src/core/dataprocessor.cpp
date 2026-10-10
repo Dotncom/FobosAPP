@@ -19,6 +19,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QStringList>
 #include <QTcpSocket>
@@ -67,6 +68,39 @@ constexpr uint32_t BLADERF_SYNC_TIMEOUT_MS = 250;
 constexpr int HACKRF_NATIVE_ERR_OPEN = -16101;
 constexpr int HACKRF_NATIVE_ERR_CONFIGURE = -16102;
 constexpr int HACKRF_NATIVE_ERR_STREAM = -16103;
+
+QVector<HackRfOperaCakeFrequencyRange> parseHackRfOperaCakeRanges(const QString &json) {
+    QVector<HackRfOperaCakeFrequencyRange> ranges;
+    const QJsonArray array = QJsonDocument::fromJson(json.toUtf8()).array();
+    for (const QJsonValue &value : array) {
+        const QJsonObject object = value.toObject();
+        const int minimum = (std::clamp)(object.value(QStringLiteral("minMhz")).toInt(), 0, 65535);
+        const int maximum = (std::clamp)(object.value(QStringLiteral("maxMhz")).toInt(), 0, 65535);
+        const int port = (std::clamp)(object.value(QStringLiteral("port")).toInt(), 0, 7);
+        if (maximum > minimum) {
+            ranges.append({static_cast<std::uint16_t>(minimum),
+                           static_cast<std::uint16_t>(maximum),
+                           static_cast<std::uint8_t>(port)});
+        }
+    }
+    return ranges;
+}
+
+QVector<HackRfOperaCakeDwell> parseHackRfOperaCakeDwells(const QString &json) {
+    QVector<HackRfOperaCakeDwell> dwells;
+    const QJsonArray array = QJsonDocument::fromJson(json.toUtf8()).array();
+    for (const QJsonValue &value : array) {
+        const QJsonObject object = value.toObject();
+        const qint64 samples = (std::max)(qint64(0),
+                                         object.value(QStringLiteral("samples")).toVariant().toLongLong());
+        const int port = (std::clamp)(object.value(QStringLiteral("port")).toInt(), 0, 7);
+        if (samples > 0) {
+            dwells.append({static_cast<std::uint32_t>((std::min)(samples, qint64(UINT32_MAX))),
+                           static_cast<std::uint8_t>(port)});
+        }
+    }
+    return dwells;
+}
 
 bool writeRtlTcpCommand(QTcpSocket &socket, quint8 command, quint32 parameter) {
     char packet[5] = {};
@@ -1310,7 +1344,10 @@ void DataProcessor::runHackRfNativeReader(const ReceiverStreamDescriptor &stream
     const std::uint64_t centerFrequencyHz = static_cast<std::uint64_t>(
         (std::clamp)(hardwareCenterFrequency, 1000000.0, 6000000000.0));
     const std::uint32_t sampleRateHz = static_cast<std::uint32_t>(sampleRate);
-    const std::uint32_t bandwidthHz = recommendedHackRfBandwidth(sampleRateHz);
+    const std::uint32_t bandwidthHz =
+        stream.hackRfAutomaticBandwidth || stream.hackRfBandwidthHz == 0
+            ? recommendedHackRfBandwidth(sampleRateHz)
+            : nearestHackRfBandwidth((std::min)(stream.hackRfBandwidthHz, sampleRateHz));
 
     bool configured = true;
     result = setHackRfSampleRateSafely(hackRfDevice, sampleRate);
@@ -1319,8 +1356,21 @@ void DataProcessor::runHackRfNativeReader(const ReceiverStreamDescriptor &stream
     result = setHackRfBandwidthSafely(hackRfDevice, bandwidthHz);
     qDebug() << "[HackRF] set baseband bandwidth" << bandwidthHz << "result" << result;
     configured = configured && result == 0;
-    result = setHackRfCenterFrequencySafely(hackRfDevice, centerFrequencyHz);
-    qDebug() << "[HackRF] set center frequency" << centerFrequencyHz << "result" << result;
+    if (stream.hackRfExplicitTuningEnabled) {
+        result = setHackRfExplicitFrequencySafely(
+            hackRfDevice,
+            stream.hackRfExplicitIfHz,
+            stream.hackRfExplicitLoHz,
+            static_cast<HackRfRfPath>((std::clamp)(stream.hackRfExplicitPath, 0, 2)));
+        qDebug() << "[HackRF] set explicit tuning"
+                 << "IF" << stream.hackRfExplicitIfHz
+                 << "LO" << stream.hackRfExplicitLoHz
+                 << "path" << stream.hackRfExplicitPath
+                 << "result" << result;
+    } else {
+        result = setHackRfCenterFrequencySafely(hackRfDevice, centerFrequencyHz);
+        qDebug() << "[HackRF] set center frequency" << centerFrequencyHz << "result" << result;
+    }
     configured = configured && result == 0;
     result = setHackRfAmpEnabledSafely(hackRfDevice, stream.hackRfAmpEnabled);
     qDebug() << "[HackRF] RF amp" << stream.hackRfAmpEnabled << "result" << result;
@@ -1336,6 +1386,39 @@ void DataProcessor::runHackRfNativeReader(const ReceiverStreamDescriptor &stream
     result = setHackRfBiasTeeEnabledSafely(hackRfDevice, stream.hackRfBiasTeeEnabled);
     qDebug() << "[HackRF] bias tee" << stream.hackRfBiasTeeEnabled << "result" << result;
     configured = configured && result == 0;
+    result = setHackRfClockOutEnabledSafely(hackRfDevice, stream.hackRfClockOutEnabled);
+    qDebug() << "[HackRF] CLKOUT" << stream.hackRfClockOutEnabled << "result" << result;
+    configured = configured && result == 0;
+    result = setHackRfHardwareSyncEnabledSafely(hackRfDevice, stream.hackRfHardwareSyncEnabled);
+    qDebug() << "[HackRF] hardware sync" << stream.hackRfHardwareSyncEnabled << "result" << result;
+    configured = configured && result == 0;
+    result = setHackRfRxOverrunLimitSafely(hackRfDevice, stream.hackRfRxOverrunLimit);
+    qDebug() << "[HackRF] RX overrun limit" << stream.hackRfRxOverrunLimit << "result" << result;
+    configured = configured && result == 0;
+    if (stream.hackRfOperaCakeEnabled) {
+        if (stream.hackRfOperaCakeMode == 1) {
+            result = configureHackRfOperaCakeFrequencySafely(
+                hackRfDevice,
+                static_cast<std::uint8_t>(stream.hackRfOperaCakeAddress),
+                parseHackRfOperaCakeRanges(stream.hackRfOperaCakeRangesJson));
+        } else if (stream.hackRfOperaCakeMode == 2) {
+            result = configureHackRfOperaCakeTimeSafely(
+                hackRfDevice,
+                static_cast<std::uint8_t>(stream.hackRfOperaCakeAddress),
+                parseHackRfOperaCakeDwells(stream.hackRfOperaCakeDwellsJson));
+        } else {
+            result = configureHackRfOperaCakeManualSafely(
+                hackRfDevice,
+                static_cast<std::uint8_t>(stream.hackRfOperaCakeAddress),
+                static_cast<std::uint8_t>(stream.hackRfOperaCakePortA),
+                static_cast<std::uint8_t>(stream.hackRfOperaCakePortB));
+        }
+        qDebug() << "[HackRF] Opera Cake"
+                 << "address" << stream.hackRfOperaCakeAddress
+                 << "mode" << stream.hackRfOperaCakeMode
+                 << "result" << result;
+        configured = configured && result == 0;
+    }
 
     if (!running.load()) {
         closeHackRfDeviceSafely(hackRfDevice);
@@ -2431,7 +2514,21 @@ bool DataProcessor::retuneCenterFrequency(double centerFrequencyHz) {
         }
         const std::uint64_t frequencyHz = static_cast<std::uint64_t>(
             (std::clamp)(hardwareFrequencyHz, 1000000.0, 6000000000.0));
-        const int result = setHackRfCenterFrequencySafely(hackRfDevice, frequencyHz);
+        int result = 0;
+        if (activeStreamDescriptor.hackRfExplicitTuningEnabled) {
+            std::uint64_t ifHz = frequencyHz;
+            const std::uint64_t loHz = activeStreamDescriptor.hackRfExplicitLoHz;
+            const int path = (std::clamp)(activeStreamDescriptor.hackRfExplicitPath, 0, 2);
+            if (path == static_cast<int>(HackRfRfPath::LowPass)) {
+                ifHz = frequencyHz + loHz;
+            } else if (path == static_cast<int>(HackRfRfPath::HighPass)) {
+                ifHz = frequencyHz > loHz ? frequencyHz - loHz : 0;
+            }
+            result = setHackRfExplicitFrequencySafely(
+                hackRfDevice, ifHz, loHz, static_cast<HackRfRfPath>(path));
+        } else {
+            result = setHackRfCenterFrequencySafely(hackRfDevice, frequencyHz);
+        }
         qDebug() << "[HackRF] live center retune"
                  << "logical" << centerFrequencyHz
                  << "frequency" << frequencyHz
@@ -2479,6 +2576,24 @@ bool DataProcessor::applyHackRfGainSettings(int lnaGainDb, int vgaGainDb) {
              << "LNA" << snappedLnaDb << "result" << lnaResult
              << "VGA" << snappedVgaDb << "result" << vgaResult;
     return lnaResult == 0 && vgaResult == 0;
+}
+
+bool DataProcessor::queryHackRfDiagnostics(HackRfDeviceDiagnostics *diagnostics,
+                                           QString *errorMessage) {
+    if (activeStreamKind != ReceiverBackendStreamKind::HackRfNative) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("HackRF is not the active receiver");
+        }
+        return false;
+    }
+    void *hackRfDevice = activeDevice.load();
+    if (!running.load() || !hackRfDevice) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("HackRF stream is not active");
+        }
+        return false;
+    }
+    return queryOpenHackRfDeviceDiagnostics(hackRfDevice, diagnostics, errorMessage);
 }
 
 bool DataProcessor::applyRtlGainSettings(bool agc, int gainTenthsDb) {

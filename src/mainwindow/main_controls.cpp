@@ -432,6 +432,7 @@ void YourClassName::onSensitivityChanged(int value) {
     sensitivity = value;
     sensitivityLabel->setText(QStringLiteral("%1: %2").arg(uiText(QStringLiteral("sensitivity"), QStringLiteral("Sensitivity"))).arg(value));
     settingRange();
+    refreshDspControlStates();
     savePersistentSettings();
 }
 
@@ -439,6 +440,7 @@ void YourClassName::onContrastChanged(int value) {
     contrast = value;
     contrastLabel->setText(QStringLiteral("%1: %2").arg(uiText(QStringLiteral("contrast"), QStringLiteral("Contrast"))).arg(value));
     settingRange();
+    refreshDspControlStates();
     savePersistentSettings();
 }
 
@@ -464,6 +466,7 @@ void YourClassName::onLevelMinChanged(int value) {
     if (waterfallWidget) {
         waterfallWidget->setLevelRange(displayLevelMin, displayLevelMax);
     }
+    refreshDspControlStates();
     savePersistentSettings();
 }
 
@@ -489,6 +492,7 @@ void YourClassName::onLevelMaxChanged(int value) {
     if (waterfallWidget) {
         waterfallWidget->setLevelRange(displayLevelMin, displayLevelMax);
     }
+    refreshDspControlStates();
     savePersistentSettings();
 }
 

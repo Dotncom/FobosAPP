@@ -23,6 +23,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QFileDialog>
+#include <QFontMetrics>
 #include <QJsonDocument>
 #include <QHBoxLayout>
 #include <QJsonObject>
@@ -38,11 +39,14 @@
 #include <QShowEvent>
 #include <QSignalBlocker>
 #include <QSizePolicy>
+#include <QStyle>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <thread>
 
 namespace {
@@ -135,6 +139,10 @@ QString replayDialogTranslationKey(const QString &id) {
     if (id == QStringLiteral("display_3d")) return QStringLiteral("spectrum_replay_dialog_display_3d");
     if (id == QStringLiteral("display_3d_mini")) return QStringLiteral("spectrum_replay_dialog_display_3d_mini");
     if (id == QStringLiteral("resolution")) return QStringLiteral("spectrum_replay_dialog_resolution");
+    if (id == QStringLiteral("area_ruler")) return QStringLiteral("spectrum_replay_dialog_area_ruler");
+    if (id == QStringLiteral("area_ruler_tooltip")) return QStringLiteral("spectrum_replay_dialog_area_ruler_tooltip");
+    if (id == QStringLiteral("frequency_span")) return QStringLiteral("spectrum_replay_dialog_frequency_span");
+    if (id == QStringLiteral("time_span")) return QStringLiteral("spectrum_replay_dialog_time_span");
     if (id == QStringLiteral("slice_step")) return QStringLiteral("spectrum_replay_dialog_slice_step");
     if (id == QStringLiteral("slice_width")) return QStringLiteral("spectrum_replay_dialog_slice_width");
     if (id == QStringLiteral("spectrum_slice_step")) return QStringLiteral("waterfall_3d_spectrum_slice_step");
@@ -169,6 +177,7 @@ SpectrumFrameReplayDialog::SpectrumFrameReplayDialog(QWidget *parent)
     graph->setMinimumHeight(220);
     graph->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
     graph->setLevelRange(levelMin, levelMax);
+    graph->setPauseControlVisible(true);
     graph->installEventFilter(this);
     graphScroll = new QScrollArea(this);
     graphScroll->setWidget(graph);
@@ -450,6 +459,25 @@ SpectrumFrameReplayDialog::SpectrumFrameReplayDialog(QWidget *parent)
     waterfallScroll->setWidget(waterfallLabel);
     waterfallScroll->setWidgetResizable(false);
     waterfallScroll->setMinimumHeight(300);
+    waterfallPauseButton = new QToolButton(waterfallScroll->viewport());
+    waterfallPauseButton->setAutoRaise(true);
+    waterfallPauseButton->setCheckable(true);
+    waterfallPauseButton->setFixedSize(24, 24);
+    waterfallPauseButton->setIcon(style()->standardIcon(QStyle::SP_MediaPause));
+    waterfallPauseButton->setToolTip(replayText("pause_waterfall", "Pause only the replay waterfall"));
+    connect(waterfallPauseButton, &QToolButton::toggled, this, [this](bool paused) {
+        replayWaterfallPaused = paused;
+        waterfallPauseButton->setIcon(style()->standardIcon(paused
+                                                                 ? QStyle::SP_MediaPlay
+                                                                 : QStyle::SP_MediaPause));
+        waterfallPauseButton->setToolTip(paused
+                                             ? replayText("resume_waterfall", "Resume replay waterfall")
+                                             : replayText("pause_waterfall", "Pause only the replay waterfall"));
+        if (!paused) {
+            renderWaterfallPixmap();
+            if (replayWaterfallDisplayMode != 0) rebuild3DWindow(true);
+        }
+    });
 
     waterfall3DView = new Waterfall3DView(this);
     waterfall3DView->setHistoryCapacity(128);
@@ -642,6 +670,21 @@ SpectrumFrameReplayDialog::SpectrumFrameReplayDialog(QWidget *parent)
                 schedulePersistentUiSettingsSave();
             });
 
+    waterfallAreaRulerCheckbox = new QCheckBox(
+        replayText("area_ruler", "Area ruler"), this);
+    waterfallAreaRulerCheckbox->setToolTip(replayText(
+        "area_ruler_tooltip",
+        "Drag over the 2D replay waterfall to measure frequency span and elapsed time."));
+    connect(waterfallAreaRulerCheckbox,
+            &QCheckBox::toggled,
+            this,
+            [this](bool checked) {
+                replayAreaRulerEnabled = checked;
+                if (!checked) replayAreaRulerDragging = false;
+                schedulePersistentUiSettingsSave();
+                renderWaterfallPixmap();
+            });
+
     QHBoxLayout *controlsLayout = new QHBoxLayout();
     controlsLayout->setContentsMargins(0, 0, 0, 0);
     controlsLayout->setSpacing(4);
@@ -684,6 +727,7 @@ SpectrumFrameReplayDialog::SpectrumFrameReplayDialog(QWidget *parent)
     displayLayout->addWidget(waterfallDisplayModeCombo);
     displayLayout->addWidget(new QLabel(replayText("resolution", "3D resolution"), this));
     displayLayout->addWidget(waterfall3DResolutionCombo);
+    displayLayout->addWidget(waterfallAreaRulerCheckbox);
     displayLayout->addWidget(new QLabel(replayText("slice_step", "Slice step"), this));
     displayLayout->addWidget(waterfall3DSliceStepSpin);
     displayLayout->addWidget(new QLabel(replayText("slice_width", "Slice width"), this));
@@ -726,6 +770,31 @@ SpectrumFrameReplayDialog::~SpectrumFrameReplayDialog() {
 }
 
 bool SpectrumFrameReplayDialog::eventFilter(QObject *watched, QEvent *event) {
+    if (watched == waterfallLabel && event && replayAreaRulerEnabled &&
+        (event->type() == QEvent::MouseButtonPress ||
+         event->type() == QEvent::MouseMove ||
+         event->type() == QEvent::MouseButtonRelease)) {
+        auto *mouseEvent = static_cast<QMouseEvent *>(event);
+        if (event->type() == QEvent::MouseButtonPress && mouseEvent->button() == Qt::LeftButton) {
+            replayAreaRulerDragging = true;
+            replayAreaRulerStart = mouseEvent->pos();
+            replayAreaRulerEnd = mouseEvent->pos();
+            renderWaterfallPixmap();
+            return true;
+        }
+        if (event->type() == QEvent::MouseMove && replayAreaRulerDragging) {
+            replayAreaRulerEnd = mouseEvent->pos();
+            renderWaterfallPixmap();
+            return true;
+        }
+        if (event->type() == QEvent::MouseButtonRelease &&
+            mouseEvent->button() == Qt::LeftButton && replayAreaRulerDragging) {
+            replayAreaRulerEnd = mouseEvent->pos();
+            replayAreaRulerDragging = false;
+            renderWaterfallPixmap();
+            return true;
+        }
+    }
     if ((watched == graph || watched == waterfallLabel) &&
         event &&
         (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseMove)) {
@@ -749,6 +818,12 @@ bool SpectrumFrameReplayDialog::eventFilter(QObject *watched, QEvent *event) {
 
 void SpectrumFrameReplayDialog::resizeEvent(QResizeEvent *event) {
     QDialog::resizeEvent(event);
+    if (waterfallPauseButton && waterfallScroll && waterfallScroll->viewport()) {
+        waterfallPauseButton->move((std::max)(2, waterfallScroll->viewport()->width() -
+                                                   waterfallPauseButton->width() - 6),
+                                   6);
+        waterfallPauseButton->raise();
+    }
     scheduleDeferredRender();
 }
 
@@ -849,6 +924,9 @@ void SpectrumFrameReplayDialog::loadPersistentUiSettings() {
     replay3DVncSliceInput =
         settings.value(QStringLiteral("spectrumReplay/3dVncSliceInput"),
                        replay3DVncSliceInput).toBool();
+    replayAreaRulerEnabled =
+        settings.value(QStringLiteral("spectrumReplay/areaRuler"),
+                       replayAreaRulerEnabled).toBool();
 
     if (levelMinSpin) {
         QSignalBlocker blocker(levelMinSpin);
@@ -917,6 +995,10 @@ void SpectrumFrameReplayDialog::loadPersistentUiSettings() {
         QSignalBlocker blocker(waterfall3DVncSliceInputCheckbox);
         waterfall3DVncSliceInputCheckbox->setChecked(replay3DVncSliceInput);
     }
+    if (waterfallAreaRulerCheckbox) {
+        QSignalBlocker blocker(waterfallAreaRulerCheckbox);
+        waterfallAreaRulerCheckbox->setChecked(replayAreaRulerEnabled);
+    }
     if (waterfall3DView) {
         waterfall3DView->setResolutionDivisor(replay3DResolutionDivisor);
         waterfall3DView->setSliceScrollStep(replay3DSliceStep);
@@ -956,6 +1038,7 @@ void SpectrumFrameReplayDialog::savePersistentUiSettings() const {
     settings.setValue(QStringLiteral("spectrumReplay/3dSpectrumSliceCapture"), replay3DSpectrumSliceCapture);
     settings.setValue(QStringLiteral("spectrumReplay/3dSpectrumSliceCaptureFixed"), replay3DSpectrumSliceCaptureFixed);
     settings.setValue(QStringLiteral("spectrumReplay/3dVncSliceInput"), replay3DVncSliceInput);
+    settings.setValue(QStringLiteral("spectrumReplay/areaRuler"), replayAreaRulerEnabled);
     if (speedCombo) {
         settings.setValue(QStringLiteral("spectrumReplay/speed"),
                           speedCombo->currentData().toDouble());
@@ -1238,6 +1321,7 @@ void SpectrumFrameReplayDialog::updateReplayDisplayMode() {
 }
 
 void SpectrumFrameReplayDialog::renderWaterfallPixmap() {
+    if (replayWaterfallPaused) return;
     if (waterfallImage.isNull()) {
         waterfallLabel->clear();
         return;
@@ -1307,6 +1391,56 @@ void SpectrumFrameReplayDialog::renderWaterfallPixmap() {
             painter.drawLine(markerX, 0, markerX, composed.height());
         }
     }
+    if (replayAreaRulerEnabled && !recording.frames.empty()) {
+        const QPoint first(std::clamp(replayAreaRulerStart.x(), 0, composed.width() - 1),
+                           std::clamp(replayAreaRulerStart.y(), 0, composed.height() - 1));
+        const QPoint last(std::clamp(replayAreaRulerEnd.x(), 0, composed.width() - 1),
+                          std::clamp(replayAreaRulerEnd.y(), 0, composed.height() - 1));
+        const QRect selection = QRect(first, last).normalized();
+        if (selection.width() > 1 || selection.height() > 1) {
+            auto imageYToFrame = [selectedY, loupeHeight, this](int imageY) {
+                int sourceY = imageY;
+                if (imageY > selectedY + loupeHeight - 1) {
+                    sourceY -= loupeHeight - 1;
+                } else if (imageY >= selectedY) {
+                    sourceY = selectedY;
+                }
+                return std::clamp(sourceY, 0, static_cast<int>(recording.frames.size()) - 1);
+            };
+            const SpectrumFrameRecord &frequencyFrame = recording.frames.front();
+            const double spanHz = frequencyFrame.maxFrequency - frequencyFrame.minFrequency;
+            const double firstHz = frequencyFrame.minFrequency +
+                                   static_cast<double>(selection.left()) * spanHz /
+                                       static_cast<double>((std::max)(1, composed.width() - 1));
+            const double lastHz = frequencyFrame.minFrequency +
+                                  static_cast<double>(selection.right()) * spanHz /
+                                      static_cast<double>((std::max)(1, composed.width() - 1));
+            const int firstFrame = imageYToFrame(selection.top());
+            const int lastFrame = imageYToFrame(selection.bottom());
+            const qint64 elapsedMs = std::llabs(
+                recording.frames[static_cast<std::size_t>(lastFrame)].elapsedMs -
+                recording.frames[static_cast<std::size_t>(firstFrame)].elapsedMs);
+            const QString label = QStringLiteral("%1: %2   %3: %4")
+                                      .arg(replayText("frequency_span", "Delta f"),
+                                           formatFrequency(std::abs(lastHz - firstHz)),
+                                           replayText("time_span", "Delta t"),
+                                           QString::number(static_cast<double>(elapsedMs) / 1000.0, 'f', 3) + QStringLiteral(" s"));
+            painter.setPen(QPen(QColor(255, 230, 64), 1, Qt::DashLine));
+            painter.setBrush(QColor(255, 230, 64, 24));
+            painter.drawRect(selection);
+            const QFontMetrics metrics(painter.font());
+            const QSize labelSize = metrics.boundingRect(label).adjusted(-5, -3, 5, 3).size();
+            QPoint textTopLeft(selection.left(), selection.top() - labelSize.height() - 2);
+            if (textTopLeft.y() < 0) textTopLeft.setY(selection.bottom() + 2);
+            if (textTopLeft.x() + labelSize.width() > composed.width()) {
+                textTopLeft.setX((std::max)(0, composed.width() - labelSize.width()));
+            }
+            const QRect placed(textTopLeft, labelSize);
+            painter.fillRect(placed, QColor(10, 10, 10, 220));
+            painter.setPen(QColor(255, 244, 150));
+            painter.drawText(placed, Qt::AlignCenter, label);
+        }
+    }
     painter.setPen(QPen(Qt::red, 2));
     painter.drawRect(0,
                      std::max(0, selectedY - 1),
@@ -1373,7 +1507,7 @@ void SpectrumFrameReplayDialog::updateFrameSelection(int index) {
     }
     updateReplayMarker();
     renderWaterfallPixmap();
-    if (replayWaterfallDisplayMode != 0) {
+    if (!replayWaterfallPaused && replayWaterfallDisplayMode != 0) {
         rebuild3DWindow(false);
     }
     updateLabels();

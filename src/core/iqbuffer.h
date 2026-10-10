@@ -21,6 +21,12 @@ struct Stats {
     std::uint64_t skippedSnapshotBlocks = 0;
 };
 
+struct DiscontinuityStats {
+    std::uint64_t epoch = 0;
+    std::uint64_t droppedQueuedBlocks = 0;
+    std::uint64_t skippedSnapshotBlocks = 0;
+};
+
 struct BlockMetadata {
     bool valid = false;
     bool tuning = false;
@@ -56,6 +62,7 @@ std::size_t size();
 std::size_t queuedBlocks();
 std::size_t queuedFloatCount();
 Stats stats();
+DiscontinuityStats discontinuityStats() noexcept;
 void armRetuneTrace(std::uint64_t epoch,
                     int publishLogs = 12,
                     int snapshotLogs = 8,

@@ -125,6 +125,11 @@ void YourClassName::updateReceiverSpecificControls() {
         clkBox->setCurrentIndex((std::max)(0, clkBox->findData(0)));
         pendingSettings.clockSource = 0;
     }
+    if (hackRfSettingsButton) {
+        hackRfSettingsButton->setVisible(hackRf);
+        hackRfSettingsButton->setEnabled(hackRf &&
+                                         (isIdle() || runState == RadioRunState::Running));
+    }
 }
 
 void YourClassName::onDirectSamplingChanged(int index) {

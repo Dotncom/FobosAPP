@@ -23,6 +23,10 @@ class QTabWidget;
 class QTableWidget;
 class QTimer;
 class ResearchPlotWidget;
+class SignalDensityWidget;
+class SpectrumMaskWidget;
+class PulseAnalysisWidget;
+class MeasurementSessionWidget;
 
 struct ResearchRadioContext {
     double sampleRateHz = 0.0;
@@ -55,7 +59,11 @@ public:
         IqTab = 2,
         SynchronizationTab = 3,
         DualInputTab = 4,
-        AnalyzerTab = 5
+        AnalyzerTab = 5,
+        DensityTab = 6,
+        MasksTab = 7,
+        PulseTab = 8,
+        SessionTab = 9
     };
 
     using Translator = std::function<QString(const QString &, const QString &)>;
@@ -64,16 +72,21 @@ public:
     using SpectrumSettingsApplier = std::function<void(const ResearchSpectrumSettings &)>;
     using LiveSyncApplier =
         std::function<void(bool, double, double, double, double)>;
+    using MaskTriggerHandler = std::function<void()>;
+    using SessionFrequencySetter = std::function<void(double)>;
 
     explicit ResearchAnalysisDialog(Translator translator,
                                     ContextProvider contextProvider,
                                     SpectrumSettingsProvider settingsProvider,
                                     SpectrumSettingsApplier settingsApplier,
                                     LiveSyncApplier liveSyncApplier,
+                                    MaskTriggerHandler maskTriggerHandler,
+                                    SessionFrequencySetter sessionFrequencySetter,
                                     QWidget *parent = nullptr);
 
     void selectTab(Tab tab);
     void setIqView(int viewMode);
+    bool hasActiveMeasurementSession() const;
     void appendSpectrumFrame(const std::vector<float> &frequencies,
                              const std::vector<float> &levels,
                              const SpectrumScienceMetrics &metrics);
@@ -108,6 +121,8 @@ private:
     SpectrumSettingsProvider spectrumSettingsProvider;
     SpectrumSettingsApplier spectrumSettingsApplier;
     LiveSyncApplier liveSyncApplier;
+    MaskTriggerHandler maskTriggerHandler;
+    SessionFrequencySetter sessionFrequencySetter;
     QTabWidget *tabs = nullptr;
     QTimer *iqTimer = nullptr;
 
@@ -185,6 +200,10 @@ private:
     QCheckBox *percentile99Checkbox = nullptr;
     QComboBox *amplitudeUnitCombo = nullptr;
     QLabel *analyzerStatus = nullptr;
+    SignalDensityWidget *densityWidget = nullptr;
+    SpectrumMaskWidget *maskWidget = nullptr;
+    PulseAnalysisWidget *pulseWidget = nullptr;
+    MeasurementSessionWidget *sessionWidget = nullptr;
 };
 
 #endif // RESEARCHANALYSISDIALOG_H

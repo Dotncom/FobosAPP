@@ -24,6 +24,7 @@
 #include "gnssserialutils.h"
 #include "tuningutils.h"
 #include "zoomspectrumdialog.h"
+#include "zoomdensitydialog.h"
 #include "transmitdialog.h"
 #include "dspflowpanel.h"
 
@@ -73,6 +74,8 @@
 #include <QColor>
 #include <QCoreApplication>
 #include <QRegularExpression>
+#include <QScrollArea>
+#include <QFrame>
 #include <QScopeGuard>
 #include <QScreen>
 #include <QSettings>
@@ -374,7 +377,7 @@ YourClassName::YourClassName(QWidget *parent)
     addModulationRadioButton(digitalWidget, digitalModeLayout, "DMR", MOD_DMR, "DMR 4FSK sync monitor");
     digitalModeLayout->addStretch();
     cwDecoderControlsWidget = new QWidget(digitalWidget);
-    QHBoxLayout *cwDecoderLayout = new QHBoxLayout(cwDecoderControlsWidget);
+    QGridLayout *cwDecoderLayout = new QGridLayout(cwDecoderControlsWidget);
     cwDecoderLayout->setContentsMargins(0, 0, 0, 0);
     QLabel *cwToneLabel = new QLabel("CW tone:", cwDecoderControlsWidget);
     markTranslatable(cwToneLabel, QStringLiteral("cw_decoder_tone"), QStringLiteral("CW tone:"));
@@ -393,6 +396,15 @@ YourClassName::YourClassName(QWidget *parent)
                      QStringLiteral("cw_decoder_adaptive"),
                      QStringLiteral("Adaptive speed"));
     cwDecoderAdaptiveCheckbox->setChecked(true);
+    QLabel *cwSelectivityLabel = new QLabel("Selectivity:", cwDecoderControlsWidget);
+    markTranslatable(cwSelectivityLabel,
+                     QStringLiteral("cw_decoder_selectivity"),
+                     QStringLiteral("Selectivity:"));
+    cwDecoderSelectivitySpin = new QSpinBox(cwDecoderControlsWidget);
+    cwDecoderSelectivitySpin->setRange(1, 10);
+    cwDecoderSelectivitySpin->setValue(5);
+    cwDecoderSelectivitySpin->setToolTip(
+        QStringLiteral("1 accepts weak/noisy tones; 10 narrows the tone detector and rejects more noise"));
     QLabel *cwAlphabetLabel = new QLabel("Alphabet:", cwDecoderControlsWidget);
     markTranslatable(cwAlphabetLabel,
                      QStringLiteral("cw_decoder_alphabet"),
@@ -402,14 +414,16 @@ YourClassName::YourClassName(QWidget *parent)
     cwDecoderAlphabetCombo->addItem(QString::fromUtf8(u8"Українська"), 1);
     cwDecoderAlphabetCombo->addItem(QString::fromUtf8(u8"English + Українська"), 2);
     cwDecoderAlphabetCombo->setCurrentIndex(2);
-    cwDecoderLayout->addWidget(cwToneLabel);
-    cwDecoderLayout->addWidget(cwDecoderToneSpin);
-    cwDecoderLayout->addWidget(cwWpmLabel);
-    cwDecoderLayout->addWidget(cwDecoderWpmSpin);
-    cwDecoderLayout->addWidget(cwDecoderAdaptiveCheckbox);
-    cwDecoderLayout->addWidget(cwAlphabetLabel);
-    cwDecoderLayout->addWidget(cwDecoderAlphabetCombo);
-    cwDecoderLayout->addStretch(1);
+    cwDecoderLayout->addWidget(cwToneLabel, 0, 0);
+    cwDecoderLayout->addWidget(cwDecoderToneSpin, 0, 1);
+    cwDecoderLayout->addWidget(cwWpmLabel, 0, 2);
+    cwDecoderLayout->addWidget(cwDecoderWpmSpin, 0, 3);
+    cwDecoderLayout->addWidget(cwDecoderAdaptiveCheckbox, 1, 0, 1, 2);
+    cwDecoderLayout->addWidget(cwSelectivityLabel, 1, 2);
+    cwDecoderLayout->addWidget(cwDecoderSelectivitySpin, 1, 3);
+    cwDecoderLayout->addWidget(cwAlphabetLabel, 2, 0);
+    cwDecoderLayout->addWidget(cwDecoderAlphabetCombo, 2, 1, 1, 3);
+    cwDecoderLayout->setColumnStretch(3, 1);
     cwDecoderControlsWidget->setVisible(pendingSettings.modulationType == MOD_CW);
     dmrLabLayout->addWidget(dmrLabCaptureCheckbox, 0, 0);
     QLabel *dmrCcLabel = new QLabel("CC:", digitalWidget);
@@ -488,7 +502,17 @@ YourClassName::YourClassName(QWidget *parent)
     digitalDock->setFeatures(QDockWidget::DockWidgetMovable |
                              QDockWidget::DockWidgetFloatable |
                              QDockWidget::DockWidgetClosable);
-    digitalDock->setWidget(digitalWidget);
+    digitalWidget->setMinimumWidth(0);
+    digitalWidget->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    QScrollArea *digitalScrollArea = new QScrollArea(digitalDock);
+    digitalScrollArea->setWidgetResizable(true);
+    digitalScrollArea->setFrameShape(QFrame::NoFrame);
+    digitalScrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    digitalScrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    digitalScrollArea->setMinimumWidth(0);
+    digitalScrollArea->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
+    digitalScrollArea->setWidget(digitalWidget);
+    digitalDock->setWidget(digitalScrollArea);
     addDockWidget(Qt::RightDockWidgetArea, digitalDock);
     digitalDock->hide();
 
@@ -525,6 +549,13 @@ YourClassName::YourClassName(QWidget *parent)
     videoStatusLabel = new QLabel(uiText(QStringLiteral("video_decoder_disabled"),
                                          QStringLiteral("Video decoder disabled")), videoPanel);
     videoWidget = new VideoWidget(videoPanel);
+    QPushButton *videoSaveImageButton = new QPushButton(
+        uiText(QStringLiteral("save_received_image"), QStringLiteral("Save received image...")),
+        videoPanel);
+    markTranslatable(videoSaveImageButton,
+                     QStringLiteral("save_received_image"),
+                     QStringLiteral("Save received image..."));
+    videoSaveImageButton->setEnabled(false);
     QLabel *videoModeLabel = new QLabel("Mode:", videoPanel);
     markTranslatable(videoModeLabel, QStringLiteral("mode"), QStringLiteral("Mode:"));
     videoModeLayout->addWidget(videoModeLabel);
@@ -547,6 +578,7 @@ YourClassName::YourClassName(QWidget *parent)
     videoHeaderLayout->addWidget(videoHSyncCheckbox);
     videoHeaderLayout->addWidget(videoVSyncCheckbox);
     videoHeaderLayout->addWidget(videoTestPatternCheckbox);
+    videoHeaderLayout->addWidget(videoSaveImageButton);
     videoHeaderLayout->addStretch();
     videoLayout->addLayout(videoModeLayout);
     videoLayout->addLayout(videoHeaderLayout);
@@ -562,6 +594,31 @@ YourClassName::YourClassName(QWidget *parent)
     videoDock->setWidget(videoPanel);
     addDockWidget(Qt::RightDockWidgetArea, videoDock);
     videoDock->hide();
+
+    connect(videoSaveImageButton, &QPushButton::clicked, this, [this]() {
+        if (!videoWidget || videoWidget->frame().isNull()) return;
+        const QString suggested = QDir::home().filePath(
+            QStringLiteral("obrii_sstv_%1.png")
+                .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss"))));
+        QString path = QFileDialog::getSaveFileName(
+            this,
+            uiText(QStringLiteral("save_received_image"), QStringLiteral("Save received image...")),
+            suggested,
+            QStringLiteral("PNG image (*.png);;JPEG image (*.jpg *.jpeg);;Bitmap image (*.bmp)"));
+        if (path.isEmpty()) return;
+        if (QFileInfo(path).suffix().isEmpty()) path += QStringLiteral(".png");
+        if (!videoWidget->frame().save(path)) {
+            QMessageBox::warning(this,
+                                 uiText(QStringLiteral("save_received_image"),
+                                        QStringLiteral("Save received image...")),
+                                 uiText(QStringLiteral("save_received_image_failed"),
+                                        QStringLiteral("Could not save the received image.")));
+            return;
+        }
+        videoStatusLabel->setText(
+            uiText(QStringLiteral("received_image_saved"),
+                   QStringLiteral("Received image saved: %1")).arg(path));
+    });
 
     QHBoxLayout *scaleLayout = new QHBoxLayout();
     QVBoxLayout *contrastLayout = new QVBoxLayout();
@@ -849,6 +906,7 @@ YourClassName::YourClassName(QWidget *parent)
     graphWidget = new MyGraphWidget(this);
     graphWidget->setMinimumSize(760, 180);
     graphWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    graphWidget->setPauseControlVisible(true);
     
     scaleWidget = new ScaleWidget(this);
     scaleWidget->setMinimumWidth(760);
@@ -858,13 +916,19 @@ YourClassName::YourClassName(QWidget *parent)
     waterfallWidget = new MyWaterfallWidget(this);
     waterfallWidget->setMinimumSize(760, 300);
     waterfallWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    waterfallWidget->setPauseControlVisible(true);
     waterfallWidget->setRowsPerFrame(waterfallRowsPerFrame);
+    waterfallWidget->setAreaMeasurementEnabled(waterfallAreaMeasurementEnabled);
     waterfallWidget->set3DHistoryRows(waterfall3DHistoryRows);
+    waterfallWidget->set3DSurfaceStyle(waterfall3DSurfaceStyle);
+    waterfallWidget->set3DSurfaceSmoothing(waterfall3DSmoothing);
+    waterfallWidget->set3DSurfaceLighting(waterfall3DLighting);
     waterfallWidget->set3DSpectrumSliceScrollStep(waterfall3DSpectrumSliceScrollStep);
     waterfallWidget->set3DSpectrumSliceWidth(waterfall3DSpectrumSliceRows);
     waterfallWidget->set3DSpectrumSliceCapture(waterfall3DSpectrumSliceCapture);
     waterfallWidget->set3DSpectrumSliceCaptureFixed(waterfall3DSpectrumSliceCaptureFixed);
     waterfallWidget->set3DFixedPlane(waterfall3DFixedPlane);
+    waterfallWidget->set3DMonochrome(waterfall3DMonochrome);
     waterfallWidget->set3DModifierFreeSliceInput(waterfall3DVncSliceInput);
     waterfallWidget->setAlternativeSpectrumGradientFill(alternativeSpectrumGradientFill);
     waterfallWidget->setAlternativeSpectrumGradientOpacity(alternativeSpectrumGradientOpacity);
@@ -916,6 +980,61 @@ YourClassName::YourClassName(QWidget *parent)
     waterfall3DResolutionLayout->addWidget(waterfall3DResolutionLabel);
     waterfall3DResolutionLayout->addWidget(waterfall3DResolutionCombo);
     waterfall3DResolutionLayout->addStretch(1);
+
+    QLabel *waterfall3DSurfaceStyleLabel = new QLabel(QStringLiteral("3D surface:"), this);
+    markTranslatable(waterfall3DSurfaceStyleLabel,
+                     QStringLiteral("waterfall_3d_surface_style"),
+                     QStringLiteral("3D surface:"));
+    waterfall3DSurfaceStyleCombo = new QComboBox(this);
+    waterfall3DSurfaceStyleCombo->addItem(
+        uiText(QStringLiteral("surface_style_original"), QStringLiteral("Original / needles")), 0);
+    waterfall3DSurfaceStyleCombo->addItem(
+        uiText(QStringLiteral("surface_style_solid"), QStringLiteral("Solid surface")), 1);
+    waterfall3DSurfaceStyleCombo->setCurrentIndex(
+        waterfall3DSurfaceStyleCombo->findData(waterfall3DSurfaceStyle));
+
+    QLabel *waterfall3DSmoothingLabel = new QLabel(QStringLiteral("Smoothing:"), this);
+    markTranslatable(waterfall3DSmoothingLabel,
+                     QStringLiteral("surface_smoothing"),
+                     QStringLiteral("Smoothing:"));
+    waterfall3DSmoothingCombo = new QComboBox(this);
+    waterfall3DSmoothingCombo->addItem(
+        uiText(QStringLiteral("surface_smoothing_off"), QStringLiteral("Off")), 0);
+    waterfall3DSmoothingCombo->addItem(
+        uiText(QStringLiteral("surface_smoothing_soft"), QStringLiteral("Soft")), 1);
+    waterfall3DSmoothingCombo->addItem(
+        uiText(QStringLiteral("surface_smoothing_strong"), QStringLiteral("Strong")), 2);
+    waterfall3DSmoothingCombo->setCurrentIndex(
+        waterfall3DSmoothingCombo->findData(waterfall3DSmoothing));
+
+    QLabel *waterfall3DLightingLabel = new QLabel(QStringLiteral("Lighting:"), this);
+    markTranslatable(waterfall3DLightingLabel,
+                     QStringLiteral("surface_lighting"),
+                     QStringLiteral("Lighting:"));
+    waterfall3DLightingCombo = new QComboBox(this);
+    waterfall3DLightingCombo->addItem(
+        uiText(QStringLiteral("surface_lighting_off"), QStringLiteral("Off")), 0);
+    waterfall3DLightingCombo->addItem(
+        uiText(QStringLiteral("surface_lighting_soft"), QStringLiteral("Soft shadows")), 1);
+    waterfall3DLightingCombo->addItem(
+        uiText(QStringLiteral("surface_lighting_strong"), QStringLiteral("Strong shadows")), 2);
+    waterfall3DLightingCombo->setCurrentIndex(
+        waterfall3DLightingCombo->findData(waterfall3DLighting));
+    const QString surfaceProcessingTooltip = uiText(
+        QStringLiteral("surface_processing_tooltip"),
+        QStringLiteral("GPU surface processing. Smoothing and lighting cost additional GPU time; keep them off on weak systems."));
+    waterfall3DSurfaceStyleCombo->setToolTip(surfaceProcessingTooltip);
+    waterfall3DSmoothingCombo->setToolTip(surfaceProcessingTooltip);
+    waterfall3DLightingCombo->setToolTip(surfaceProcessingTooltip);
+    QGridLayout *waterfall3DSurfaceLayout = new QGridLayout();
+    waterfall3DSurfaceLayout->setContentsMargins(0, 0, 0, 0);
+    waterfall3DSurfaceLayout->addWidget(waterfall3DSurfaceStyleLabel, 0, 0);
+    waterfall3DSurfaceLayout->addWidget(waterfall3DSurfaceStyleCombo, 0, 1);
+    waterfall3DSurfaceLayout->addWidget(waterfall3DSmoothingLabel, 1, 0);
+    waterfall3DSurfaceLayout->addWidget(waterfall3DSmoothingCombo, 1, 1);
+    waterfall3DSurfaceLayout->addWidget(waterfall3DLightingLabel, 2, 0);
+    waterfall3DSurfaceLayout->addWidget(waterfall3DLightingCombo, 2, 1);
+    waterfall3DSurfaceLayout->setColumnStretch(1, 1);
 
     waterfall3DHistoryRowsLabel = new QLabel(QStringLiteral("3D memory:"), this);
     markTranslatable(waterfall3DHistoryRowsLabel,
@@ -1024,6 +1143,25 @@ YourClassName::YourClassName(QWidget *parent)
     waterfall3DFixedPlaneCheckbox->setToolTip(uiText(
         QStringLiteral("waterfall_3d_fixed_plane_tooltip"),
         QStringLiteral("Use the fixed front-facing 3D plane from Alternative interface mode and lock camera controls.")));
+    waterfall3DMonochromeCheckbox = new QCheckBox(
+        uiText(QStringLiteral("waterfall_3d_monochrome"),
+               QStringLiteral("Monochrome blue 3D")),
+        this);
+    markTranslatable(waterfall3DMonochromeCheckbox,
+                     QStringLiteral("waterfall_3d_monochrome"),
+                     QStringLiteral("Monochrome blue 3D"));
+    waterfall3DMonochromeCheckbox->setChecked(waterfall3DMonochrome);
+    waterfall3DMonochromeCheckbox->setToolTip(uiText(
+        QStringLiteral("waterfall_3d_monochrome_tooltip"),
+        QStringLiteral("Render the 3D surface in a calm solid blue instead of amplitude colors.")));
+    waterfall3DAlternativeViewCheckbox = new QCheckBox(
+        uiText(QStringLiteral("waterfall_3d_alternative_view"),
+               QStringLiteral("Alternative view")),
+        this);
+    waterfall3DAlternativeViewCheckbox->setChecked(waterfall3DAlternativeView);
+    waterfall3DAlternativeViewCheckbox->setToolTip(uiText(
+        QStringLiteral("waterfall_3d_alternative_view_tooltip"),
+        QStringLiteral("Use the fixed front-facing 3D waterfall with the live spectrum at its near edge.")));
     waterfall3DVncSliceInputCheckbox = new QCheckBox(
         uiText(QStringLiteral("waterfall_3d_vnc_slice_input"),
                QStringLiteral("VNC slice control")),
@@ -1041,7 +1179,7 @@ YourClassName::YourClassName(QWidget *parent)
                      QStringLiteral("Gradient fill"));
     alternativeSpectrumGradientCheckbox->setChecked(alternativeSpectrumGradientFill);
     alternativeSpectrumGradientCheckbox->setEnabled(
-        alternativeInterfaceMode || waterfall3DFixedPlane);
+        waterfall3DAlternativeView || waterfall3DFixedPlane);
     alternativeSpectrumGradientCheckbox->setToolTip(uiText(
         QStringLiteral("alternative_spectrum_gradient_tooltip"),
         QStringLiteral("Fill below the spectrum contour in Alternative interface mode, or fill the visible front face of a fixed 3D plane.")));
@@ -1056,7 +1194,7 @@ YourClassName::YourClassName(QWidget *parent)
     alternativeSpectrumGradientOpacitySlider->setRange(0, 100);
     alternativeSpectrumGradientOpacitySlider->setValue(alternativeSpectrumGradientOpacity);
     alternativeSpectrumGradientOpacitySlider->setEnabled(
-        (alternativeInterfaceMode || waterfall3DFixedPlane) &&
+        (waterfall3DAlternativeView || waterfall3DFixedPlane) &&
         alternativeSpectrumGradientFill);
     alternativeSpectrumGradientOpacitySlider->setMinimumWidth(150);
     alternativeSpectrumGradientOpacitySlider->setSizePolicy(QSizePolicy::Expanding,
@@ -1079,7 +1217,9 @@ YourClassName::YourClassName(QWidget *parent)
     waterfall3DSpectrumSliceCaptureLayout->addStretch(1);
     QHBoxLayout *waterfall3DVncSliceInputLayout = new QHBoxLayout();
     waterfall3DVncSliceInputLayout->setContentsMargins(0, 0, 0, 0);
+    waterfall3DVncSliceInputLayout->addWidget(waterfall3DAlternativeViewCheckbox);
     waterfall3DVncSliceInputLayout->addWidget(waterfall3DFixedPlaneCheckbox);
+    waterfall3DVncSliceInputLayout->addWidget(waterfall3DMonochromeCheckbox);
     waterfall3DVncSliceInputLayout->addWidget(waterfall3DVncSliceInputCheckbox);
     waterfall3DVncSliceInputLayout->addStretch(1);
     QHBoxLayout *waterfall3DGradientLayout = new QHBoxLayout();
@@ -1109,6 +1249,14 @@ YourClassName::YourClassName(QWidget *parent)
     fobosButton->hide();
     networkButton = new QPushButton("Network", this);
     markTranslatable(networkButton, QStringLiteral("network"), QStringLiteral("Network"));
+    hackRfSettingsButton = new QPushButton("HackRF RX...", this);
+    markTranslatable(hackRfSettingsButton,
+                     QStringLiteral("hackrf_rx_settings"),
+                     QStringLiteral("HackRF RX..."));
+    hackRfSettingsButton->setToolTip(uiText(
+        QStringLiteral("hackrf_rx_settings_tooltip"),
+        QStringLiteral("RF path, filtering, clock, Opera Cake, sweep and diagnostics")));
+    hackRfSettingsButton->hide();
     appSettingsButton = new QPushButton("Settings...", this);
     markTranslatable(appSettingsButton, QStringLiteral("settings"), QStringLiteral("Settings..."));
     dspPathButton = new QPushButton("DSP", this);
@@ -1342,6 +1490,11 @@ YourClassName::YourClassName(QWidget *parent)
                      QStringLiteral("zoom_spectrum"),
                      QStringLiteral("Zoom spectrum"));
     zoomSpectrumButton->setToolTip(QString::fromUtf8(u8"Відкрити швидкий вузькосмуговий аналіз для діапазону, виділеного мишею на спектрі"));
+    zoomDensityButton = new QPushButton(QStringLiteral("Density"), this);
+    markTranslatable(zoomDensityButton,
+                     QStringLiteral("zoom_density"),
+                     QStringLiteral("Density"));
+    zoomDensityButton->setToolTip(QString::fromUtf8(u8"Відкрити окремий графік щільності для смуги, виділеної мишею на спектрі"));
     
     QLabel *clockSourceLabel = new QLabel("Clock:", this);
     markTranslatable(clockSourceLabel, QStringLiteral("clock"), QStringLiteral("Clock:"));
@@ -1490,6 +1643,14 @@ YourClassName::YourClassName(QWidget *parent)
     researchToolsButton->setToolTip(uiText(
         QStringLiteral("research_tools_open_tooltip"),
         QStringLiteral("Open interference, statistics, IQ and dual-input analysis tools.")));
+    waterfallAreaMeasurementCheckbox = new QCheckBox("Waterfall ruler", spectrumMeasurementBox);
+    markTranslatable(waterfallAreaMeasurementCheckbox,
+                     QStringLiteral("waterfall_area_measurement"),
+                     QStringLiteral("Waterfall ruler"));
+    waterfallAreaMeasurementCheckbox->setToolTip(uiText(
+        QStringLiteral("waterfall_area_measurement_tooltip"),
+        QStringLiteral("Enable a 2D waterfall selection tool that measures frequency span and elapsed time.")));
+    waterfallAreaMeasurementCheckbox->setChecked(waterfallAreaMeasurementEnabled);
     spurSuppressionCheckbox = new QCheckBox("Spur", spectrumMeasurementBox);
     markTranslatable(spurSuppressionCheckbox, QStringLiteral("spur"), QStringLiteral("Spur"));
     spurSuppressionCheckbox->setToolTip(uiText(
@@ -1641,6 +1802,7 @@ YourClassName::YourClassName(QWidget *parent)
     spectrumScienceActionLayout->addWidget(spectrumScienceExportButton, 0, 1);
     spectrumScienceActionLayout->addWidget(zeroSpanButton, 1, 0);
     spectrumScienceActionLayout->addWidget(researchToolsButton, 1, 1);
+    spectrumScienceActionLayout->addWidget(waterfallAreaMeasurementCheckbox, 2, 0, 1, 2);
     spectrumScienceActionLayout->setColumnStretch(0, 1);
     spectrumScienceActionLayout->setColumnStretch(1, 1);
     spectrumSciencePanelLayout->setContentsMargins(0, 0, 0, 0);
@@ -2795,6 +2957,7 @@ YourClassName::YourClassName(QWidget *parent)
     presetZoomLayout->setSpacing(4);
     presetZoomLayout->addWidget(presetManagerButton, 1);
     presetZoomLayout->addWidget(zoomSpectrumButton, 0);
+    presetZoomLayout->addWidget(zoomDensityButton, 0);
     fineTuneLayout->addLayout(presetZoomLayout);
 
     QVBoxLayout *receiverControlLayout = new QVBoxLayout();
@@ -2829,6 +2992,7 @@ YourClassName::YourClassName(QWidget *parent)
         sectionLayout->setSpacing(2);
 
         QToolButton *header = new QToolButton(section);
+        header->setObjectName(QStringLiteral("uiSectionHeader_%1").arg(key));
         header->setCheckable(true);
         header->setChecked(isExpanded);
         header->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
@@ -2867,6 +3031,7 @@ YourClassName::YourClassName(QWidget *parent)
     receiverSection.contentLayout->addLayout(gainLabelLayout);
     receiverSection.contentLayout->addLayout(gainSliderLayout);
     receiverSection.contentLayout->addLayout(rtlGainLayout);
+    receiverSection.contentLayout->addWidget(hackRfSettingsButton);
     receiverSection.contentLayout->addLayout(startStopLayout);
 
     multiVfoWidget = new MultiVfoWidget(this);
@@ -2994,6 +3159,7 @@ YourClassName::YourClassName(QWidget *parent)
         false);
     waterfall3DSection.contentLayout->addLayout(waterfallDisplayModeLayout);
     waterfall3DSection.contentLayout->addLayout(waterfall3DResolutionLayout);
+    waterfall3DSection.contentLayout->addLayout(waterfall3DSurfaceLayout);
     waterfall3DSection.contentLayout->addLayout(waterfall3DHistoryRowsLayout);
     waterfall3DSection.contentLayout->addLayout(waterfall3DSliceStepLayout);
     waterfall3DSection.contentLayout->addLayout(waterfall3DSliceWidthLayout);
@@ -3545,6 +3711,11 @@ YourClassName::YourClassName(QWidget *parent)
     });
     connect(fobosButton, &QPushButton::clicked, this, &YourClassName::listFobosDevices);
     connect(networkButton, &QPushButton::clicked, this, &YourClassName::openNetworkSettingsDialog);
+    connect(hackRfSettingsButton,
+            &QPushButton::clicked,
+            this,
+            &YourClassName::showHackRfRxSettings);
+    updateReceiverSpecificControls();
     connect(transmitButton, &QPushButton::clicked, this, &YourClassName::openTransmitDialog);
     connect(networkController, &NetworkController::statusChanged, this, &YourClassName::onNetworkStatusChanged);
     connect(networkController, &NetworkController::channelReady, this, [this](const QString &status) {
@@ -3645,6 +3816,8 @@ YourClassName::YourClassName(QWidget *parent)
         pendingSettings.cwDecoderWpm = cwDecoderWpmSpin ? cwDecoderWpmSpin->value() : 18;
         pendingSettings.cwDecoderAdaptiveSpeed =
             !cwDecoderAdaptiveCheckbox || cwDecoderAdaptiveCheckbox->isChecked();
+        pendingSettings.cwDecoderSelectivity =
+            cwDecoderSelectivitySpin ? cwDecoderSelectivitySpin->value() : 5;
         pendingSettings.cwDecoderAlphabet =
             cwDecoderAlphabetCombo ? cwDecoderAlphabetCombo->currentData().toInt() : 2;
         if (pendingSettings.modulationType == MOD_CW) updateDigitalDecoderMode();
@@ -3662,6 +3835,10 @@ YourClassName::YourClassName(QWidget *parent)
             &QCheckBox::toggled,
             this,
             [applyCwDecoderSettings](bool) { applyCwDecoderSettings(); });
+    connect(cwDecoderSelectivitySpin,
+            QOverload<int>::of(&QSpinBox::valueChanged),
+            this,
+            [applyCwDecoderSettings](int) { applyCwDecoderSettings(); });
     connect(cwDecoderAlphabetCombo,
             QOverload<int>::of(&QComboBox::currentIndexChanged),
             this,
@@ -4062,6 +4239,10 @@ YourClassName::YourClassName(QWidget *parent)
         updateIqFrameProducerSettings();
     });
     connect(videoProcessor, &VideoProcessor::frameReady, videoWidget, &VideoWidget::setFrame);
+    connect(videoProcessor, &VideoProcessor::frameReady, this,
+            [videoSaveImageButton](const QImage &frame) {
+                videoSaveImageButton->setEnabled(!frame.isNull());
+            });
     connect(videoProcessor, &VideoProcessor::statusChanged, this, &YourClassName::onVideoStatusChanged);
     connect(recordingManager, &RecordingManager::statusChanged, this, &YourClassName::updateRecordingStatus);
     connect(recordButton, &QPushButton::toggled, this, [this](bool checked) {
@@ -4632,13 +4813,13 @@ YourClassName::YourClassName(QWidget *parent)
         setSpectrumScienceMarker(pendingSettings.listeningFrequency);
     });
     connect(spectrumSciencePeakButton, &QPushButton::clicked, this, [this]() {
-        setSpectrumScienceMarker(spectrumScienceAnalyzer.strongestPeakFrequency());
+        spectrumSciencePendingAction = SpectrumScienceActionPeak;
     });
     connect(spectrumSciencePreviousButton, &QPushButton::clicked, this, [this]() {
-        setSpectrumScienceMarker(spectrumScienceAnalyzer.adjacentPeakFrequency(spectrumScienceActiveMarker, -1));
+        spectrumSciencePendingAction = SpectrumScienceActionPreviousPeak;
     });
     connect(spectrumScienceNextButton, &QPushButton::clicked, this, [this]() {
-        setSpectrumScienceMarker(spectrumScienceAnalyzer.adjacentPeakFrequency(spectrumScienceActiveMarker, 1));
+        spectrumSciencePendingAction = SpectrumScienceActionNextPeak;
     });
     connect(spectrumScienceClearButton, &QPushButton::clicked, this, [this]() {
         spectrumScienceAnalyzer.clearMarker(spectrumScienceActiveMarker);
@@ -4666,10 +4847,21 @@ YourClassName::YourClassName(QWidget *parent)
         spectrumScienceAnalyzer.resetTraces();
         updateSpectrumScienceUi();
     });
-    connect(spectrumScienceExportButton, &QPushButton::clicked, this, &YourClassName::exportSpectrumScienceCsv);
+    connect(spectrumScienceExportButton, &QPushButton::clicked, this, [this]() {
+        spectrumScienceExportPending = true;
+    });
     connect(zeroSpanButton, &QPushButton::clicked, this, &YourClassName::openZeroSpanDialog);
     connect(researchToolsButton, &QPushButton::clicked, this, [this]() {
         openResearchAnalysis(0);
+    });
+    connect(waterfallAreaMeasurementCheckbox, &QCheckBox::toggled, this, [this](bool checked) {
+        waterfallAreaMeasurementEnabled = checked;
+        if (waterfallWidget) {
+            waterfallWidget->setAreaMeasurementEnabled(checked);
+        }
+        if (persistentSettingsReady) {
+            savePersistentSettings();
+        }
     });
     connect(hfInterferenceAnalyzeButton, &QPushButton::clicked, this, [this]() {
         openResearchAnalysis(0);
@@ -4922,39 +5114,11 @@ YourClassName::YourClassName(QWidget *parent)
     connect(spurClearButton, &QPushButton::clicked, this, &YourClassName::clearSpurMask);
     connect(presetManagerButton, &QPushButton::clicked, this, &YourClassName::openPresetManager);
     connect(zoomSpectrumButton, &QPushButton::clicked, this, &YourClassName::openZoomSpectrum);
+    connect(zoomDensityButton, &QPushButton::clicked, this, &YourClassName::openZoomDensity);
     connect(appSettingsButton, &QPushButton::clicked, this, &YourClassName::openApplicationSettings);
     connect(dspPathButton, &QPushButton::clicked, this, [this]() {
-        if (!dspFlowPanel) {
-            dspFlowPanel = new DspFlowPanel(this);
-            dspFlowPanel->setAttribute(Qt::WA_DeleteOnClose, false);
-            dspFlowPanel->setLanguage(normalizedUiLanguage(uiLanguage) == QStringLiteral("uk"));
-            QSettings settings(persistentSettingsFilePath(), QSettings::IniFormat);
-            dspFlowPanel->setConfigurationJson(settings.value(QStringLiteral("dspFlow/configuration")).toString());
-            connect(dspFlowPanel, &DspFlowPanel::configurationChanged, this, [this](const QString &json) {
-                QSettings settings(persistentSettingsFilePath(), QSettings::IniFormat);
-                settings.setValue(QStringLiteral("dspFlow/configuration"), json);
-            });
-            connect(dspFlowPanel,
-                    &DspFlowPanel::blockActivated,
-                    this,
-                    &YourClassName::openDspBlockReference);
-            connect(dspFlowPanel,
-                    &DspFlowPanel::blockCreated,
-                    this,
-                    &YourClassName::registerDspFilterBlock);
-            connect(dspFlowPanel,
-                    &DspFlowPanel::controlTriggered,
-                    this,
-                    &YourClassName::triggerDspControlBlock);
-            connect(dspFlowPanel,
-                    &DspFlowPanel::controlStateRefreshRequested,
-                    this,
-                    &YourClassName::refreshDspControlStates);
-            connect(dspFlowPanel, &DspFlowPanel::fineTuneDeltaRequested, this, [this](double deltaHz) {
-                applyListeningFrequencyDelta(deltaHz, 60);
-            });
-            refreshDspControlStates();
-        }
+        ensureDspFlowPanel();
+        dspFlowPanel->setWorkspaceMode(false);
         dspFlowPanel->show();
         dspFlowPanel->raise();
         dspFlowPanel->activateWindow();
@@ -5000,7 +5164,7 @@ YourClassName::YourClassName(QWidget *parent)
                     return;
                 }
                 const int requestedMode = waterfallDisplayModeCombo->itemData(index).toInt();
-                if (alternativeInterfaceMode &&
+                if (waterfall3DAlternativeView &&
                     requestedMode == static_cast<int>(MyWaterfallWidget::DisplayMode::Waterfall2D)) {
                     applyAlternativeInterfaceMode();
                     return;
@@ -5019,6 +5183,33 @@ YourClassName::YourClassName(QWidget *parent)
                 }
                 waterfall3DResolutionDivisor = waterfall3DResolutionCombo->itemData(index).toInt();
                 waterfallWidget->set3DResolutionDivisor(waterfall3DResolutionDivisor);
+                savePersistentSettings();
+            });
+    connect(waterfall3DSurfaceStyleCombo,
+            qOverload<int>(&QComboBox::currentIndexChanged),
+            this,
+            [this](int index) {
+                if (!waterfall3DSurfaceStyleCombo || index < 0) return;
+                waterfall3DSurfaceStyle = waterfall3DSurfaceStyleCombo->itemData(index).toInt();
+                if (waterfallWidget) waterfallWidget->set3DSurfaceStyle(waterfall3DSurfaceStyle);
+                savePersistentSettings();
+            });
+    connect(waterfall3DSmoothingCombo,
+            qOverload<int>(&QComboBox::currentIndexChanged),
+            this,
+            [this](int index) {
+                if (!waterfall3DSmoothingCombo || index < 0) return;
+                waterfall3DSmoothing = waterfall3DSmoothingCombo->itemData(index).toInt();
+                if (waterfallWidget) waterfallWidget->set3DSurfaceSmoothing(waterfall3DSmoothing);
+                savePersistentSettings();
+            });
+    connect(waterfall3DLightingCombo,
+            qOverload<int>(&QComboBox::currentIndexChanged),
+            this,
+            [this](int index) {
+                if (!waterfall3DLightingCombo || index < 0) return;
+                waterfall3DLighting = waterfall3DLightingCombo->itemData(index).toInt();
+                if (waterfallWidget) waterfallWidget->set3DSurfaceLighting(waterfall3DLighting);
                 savePersistentSettings();
             });
     connect(waterfall3DHistoryRowsSpin,
@@ -5102,7 +5293,7 @@ YourClassName::YourClassName(QWidget *parent)
                 if (waterfallWidget) {
                     waterfallWidget->set3DFixedPlane(checked);
                 }
-                const bool gradientAvailable = alternativeInterfaceMode || checked;
+                const bool gradientAvailable = waterfall3DAlternativeView || checked;
                 if (alternativeSpectrumGradientCheckbox) {
                     alternativeSpectrumGradientCheckbox->setEnabled(gradientAvailable);
                 }
@@ -5110,6 +5301,22 @@ YourClassName::YourClassName(QWidget *parent)
                     alternativeSpectrumGradientOpacitySlider->setEnabled(
                         gradientAvailable && alternativeSpectrumGradientFill);
                 }
+                savePersistentSettings();
+            });
+    connect(waterfall3DMonochromeCheckbox,
+            &QCheckBox::toggled,
+            this,
+            [this](bool checked) {
+                waterfall3DMonochrome = checked;
+                if (waterfallWidget) waterfallWidget->set3DMonochrome(checked);
+                savePersistentSettings();
+            });
+    connect(waterfall3DAlternativeViewCheckbox,
+            &QCheckBox::toggled,
+            this,
+            [this](bool checked) {
+                waterfall3DAlternativeView = checked;
+                applyAlternativeInterfaceMode();
                 savePersistentSettings();
             });
     connect(waterfall3DVncSliceInputCheckbox,
@@ -5129,7 +5336,7 @@ YourClassName::YourClassName(QWidget *parent)
                 alternativeSpectrumGradientFill = checked;
                 if (alternativeSpectrumGradientOpacitySlider) {
                     alternativeSpectrumGradientOpacitySlider->setEnabled(
-                        (alternativeInterfaceMode || waterfall3DFixedPlane) && checked);
+                        (waterfall3DAlternativeView || waterfall3DFixedPlane) && checked);
                 }
                 if (waterfallWidget) {
                     waterfallWidget->setAlternativeSpectrumGradientFill(checked);
@@ -5182,6 +5389,11 @@ YourClassName::YourClassName(QWidget *parent)
 
 YourClassName::~YourClassName() {
     qApp->removeEventFilter(this);
+    if (dspFlowPanel) {
+        dspFlowPanel->hide();
+        delete dspFlowPanel;
+        dspFlowPanel = nullptr;
+    }
     const bool closeAlreadyFinalized = closeShutdownFinalized;
     if (!closeAlreadyFinalized) {
         refreshSettingsFromUi();
@@ -7921,6 +8133,30 @@ void YourClassName::openZoomSpectrum() {
                                   selectedHighHz);
 }
 
+void YourClassName::openZoomDensity() {
+    double selectedLowHz = 0.0;
+    double selectedHighHz = 0.0;
+    if (!graphWidget || !graphWidget->bandwidthSelection(selectedLowHz, selectedHighHz)) {
+        QMessageBox::information(this,
+                                 uiText(QStringLiteral("zoom_density_title"),
+                                        QStringLiteral("Selected signal density")),
+                                 uiText(QStringLiteral("zoom_density_select_range"),
+                                        QStringLiteral("First drag over the required band on the main spectrum.")));
+        return;
+    }
+    if (!zoomDensityDialog) {
+        zoomDensityDialog = new ZoomDensityDialog(
+            [this](const QString &key, const QString &fallback) {
+                return uiText(key, fallback);
+            },
+            this);
+    }
+    zoomDensityDialog->setRange(selectedLowHz, selectedHighHz);
+    zoomDensityDialog->show();
+    zoomDensityDialog->raise();
+    zoomDensityDialog->activateWindow();
+}
+
 void YourClassName::openTransmitDialog() {
     if (!transmitDialog) {
         transmitDialog = new TransmitDialog(uiLanguage, this);
@@ -8308,16 +8544,10 @@ int main(int argc, char *argv[]) {
     logFobosApiInfo();
     logReceiverBackendRegistry();
     YourClassName window;
-#ifdef _WIN32
-    window.showNormal();
-    window.raise();
-    window.activateWindow();
-#else
-    window.show();
-#endif
+    window.showConfiguredInterface();
 
     if (splash.isVisible()) {
-        splash.finish(&window);
+        splash.close();
     }
 
     qDebug() << "App started";

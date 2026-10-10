@@ -4,14 +4,16 @@ Obrii SDR is a wideband SDR receiver and research workstation, optimized first
 for RigExpert Fobos SDR hardware while also supporting additional receiver
 backends.
 The current packaged release is Windows-first, with active Linux/Raspberry Pi
-support and a separately maintained Android USB/network client. Version 5.0.0
-introduces the Obrii SDR identity, a graphical DSP path designer, a live
-reorderable audio-filter chain, Multi-VFO channel views, expanded research
-analysis, and a hardware-tested experimental native HackRF RX backend. It keeps
+support and a separately maintained Android USB/network client. Version 5.1.0
+adds experimental native HackRF transmission, a substantially expanded DSP
+workspace, selected-band density and scientific-session tools, while retaining
+the graphical DSP path designer, live audio-filter chain, Multi-VFO views, and
+hardware-tested native HackRF RX backend. It keeps
 the high-rate Fobos path, native RTL-SDR/rtl_tcp, optional SoapySDR, external
 NMEA/u-blox GNSS, SDR GNSS acquisition diagnostics, 2D/3D waterfall and replay,
-Zoom FFT, CW/SSTV decoding, DMR experiments, and the simulator-only transmitter
-laboratory. FFTW/VkFFT selection, exact Hz-per-point FFT sizes, stale-frame
+Zoom FFT, CW/SSTV decoding, DMR experiments, and a hardware-independent transmit
+laboratory with simulator/IQ export and an experimental, explicitly armed native
+HackRF output. FFTW/VkFFT selection, exact Hz-per-point FFT sizes, stale-frame
 dropping, and multistage channel extraction keep the wideband desktop and
 Raspberry paths responsive. Android is released separately only when its
 package changes.

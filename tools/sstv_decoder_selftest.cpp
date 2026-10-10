@@ -1,6 +1,6 @@
 #include "videoprocessor.h"
 
-#include <QApplication>
+#include <QCoreApplication>
 #include <QDebug>
 #include <QImage>
 #include <QStringList>
@@ -111,7 +111,7 @@ void appendRobot36Line(QByteArray &pcm,
 }
 
 int main(int argc, char **argv) {
-    QApplication application(argc, argv);
+    QCoreApplication application(argc, argv);
     VideoProcessor decoder;
     QStringList statuses;
     QImage latestFrame;

@@ -14,6 +14,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileDialog>
+#include <QHash>
 #include <QRegularExpression>
 #include <QSignalBlocker>
 #include <QTextStream>
@@ -538,8 +539,30 @@ void YourClassName::updateScanMeasurement(const std::vector<float> &frequencies,
         return;
     }
 
+    const double firstFrequency = frequencies.front();
+    const double lastFrequency = frequencies[static_cast<std::size_t>(dataCount - 1)];
+    if (!std::isfinite(firstFrequency) || !std::isfinite(lastFrequency)) {
+        return;
+    }
+    const qint64 firstKey = static_cast<qint64>(std::llround(firstFrequency / binHz));
+    const qint64 lastKey = static_cast<qint64>(std::llround(lastFrequency / binHz));
+    const qint64 minimumKey = (std::min)(firstKey, lastKey);
+    const qint64 maximumKey = (std::max)(firstKey, lastKey);
+    const qint64 frameBinCount64 = maximumKey - minimumKey + 1;
+    if (frameBinCount64 <= 0) {
+        return;
+    }
+
     ++scanMeasurementSequence;
-    QMap<qint64, float> framePeakByBin;
+    const bool useDenseFrameBins = frameBinCount64 <= 1000000;
+    std::vector<float> framePeakByBin;
+    QHash<qint64, float> sparseFramePeakByBin;
+    if (useDenseFrameBins) {
+        framePeakByBin.assign(static_cast<std::size_t>(frameBinCount64),
+                              -std::numeric_limits<float>::infinity());
+    } else {
+        sparseFramePeakByBin.reserve((std::min)(dataCount, 65536));
+    }
     for (int i = 0; i < dataCount; ++i) {
         const double frequency = frequencies[static_cast<std::size_t>(i)];
         const float level = magnitudes[static_cast<std::size_t>((i + dataCount / 2) % dataCount)];
@@ -547,28 +570,46 @@ void YourClassName::updateScanMeasurement(const std::vector<float> &frequencies,
             continue;
         }
         const qint64 key = static_cast<qint64>(std::llround(frequency / binHz));
-        auto it = framePeakByBin.find(key);
-        if (it == framePeakByBin.end() || level > it.value()) {
-            framePeakByBin[key] = level;
+        const qint64 frameIndex = key - minimumKey;
+        if (useDenseFrameBins && frameIndex >= 0 && frameIndex < frameBinCount64) {
+            float &peak = framePeakByBin[static_cast<std::size_t>(frameIndex)];
+            peak = (std::max)(peak, level);
+        } else if (!useDenseFrameBins) {
+            const auto existing = sparseFramePeakByBin.constFind(key);
+            if (existing == sparseFramePeakByBin.constEnd() || level > existing.value()) {
+                sparseFramePeakByBin.insert(key, level);
+            }
         }
     }
 
-    for (auto it = framePeakByBin.constBegin(); it != framePeakByBin.constEnd(); ++it) {
-        ScanMeasurementBin &bin = scanMeasurementBins[it.key()];
-        bin.frequencyHz = static_cast<double>(it.key()) * binHz;
-        bin.currentDb = it.value();
-        bin.peakDb = (std::max)(bin.peakDb, it.value());
+    auto applyFramePeak = [this, binHz](qint64 key, float framePeak) {
+        ScanMeasurementBin &bin = scanMeasurementBins[key];
+        bin.frequencyHz = static_cast<double>(key) * binHz;
+        bin.currentDb = framePeak;
+        bin.peakDb = (std::max)(bin.peakDb, framePeak);
         bin.seenCount += 1;
         bin.lastSequence = scanMeasurementSequence;
         if (scanMeasurementBaselineRecording) {
             if (bin.baselineCount <= 0) {
-                bin.baselineDb = it.value();
+                bin.baselineDb = framePeak;
                 bin.baselineCount = 1;
             } else {
                 const float alpha = bin.baselineCount < 8 ? 0.35f : 0.12f;
-                bin.baselineDb += alpha * (it.value() - bin.baselineDb);
+                bin.baselineDb += alpha * (framePeak - bin.baselineDb);
                 ++bin.baselineCount;
             }
+        }
+    };
+    if (useDenseFrameBins) {
+        for (qint64 frameIndex = 0; frameIndex < frameBinCount64; ++frameIndex) {
+            const float framePeak = framePeakByBin[static_cast<std::size_t>(frameIndex)];
+            if (std::isfinite(framePeak)) {
+                applyFramePeak(minimumKey + frameIndex, framePeak);
+            }
+        }
+    } else {
+        for (auto it = sparseFramePeakByBin.constBegin(); it != sparseFramePeakByBin.constEnd(); ++it) {
+            applyFramePeak(it.key(), it.value());
         }
     }
 

@@ -5,6 +5,7 @@
 #include "apphelp.h"
 #include "appsettingsutils.h"
 #include "diagnosticlogging.h"
+#include "dspflowpanel.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -21,20 +22,88 @@
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QInputDialog>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLabel>
 #include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QSettings>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStandardItem>
 #include <QStandardItemModel>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include <algorithm>
 
 extern bool secondGraph;
 
+namespace {
+
+struct InterfaceLayoutProfile {
+    QString name;
+    QByteArray geometry;
+    QByteArray windowState;
+    QJsonObject view;
+};
+
+QVector<InterfaceLayoutProfile> loadInterfaceLayoutProfiles() {
+    QSettings settings(persistentSettingsFilePath(), QSettings::IniFormat);
+    QVector<InterfaceLayoutProfile> profiles;
+    const int count = settings.beginReadArray(QStringLiteral("uiLayoutProfiles"));
+    profiles.reserve(count);
+    for (int index = 0; index < count; ++index) {
+        settings.setArrayIndex(index);
+        InterfaceLayoutProfile profile;
+        profile.name = settings.value(QStringLiteral("name")).toString().trimmed();
+        profile.geometry = settings.value(QStringLiteral("geometry")).toByteArray();
+        profile.windowState = settings.value(QStringLiteral("windowState")).toByteArray();
+        const QJsonDocument viewDocument = QJsonDocument::fromJson(
+            settings.value(QStringLiteral("view")).toByteArray());
+        if (viewDocument.isObject()) profile.view = viewDocument.object();
+        if (!profile.name.isEmpty()) profiles.push_back(profile);
+    }
+    settings.endArray();
+    std::sort(profiles.begin(), profiles.end(), [](const auto &left, const auto &right) {
+        return left.name.compare(right.name, Qt::CaseInsensitive) < 0;
+    });
+    return profiles;
+}
+
+void storeInterfaceLayoutProfiles(const QVector<InterfaceLayoutProfile> &profiles) {
+    QSettings settings(persistentSettingsFilePath(), QSettings::IniFormat);
+    settings.remove(QStringLiteral("uiLayoutProfiles"));
+    settings.beginWriteArray(QStringLiteral("uiLayoutProfiles"), profiles.size());
+    for (int index = 0; index < profiles.size(); ++index) {
+        settings.setArrayIndex(index);
+        settings.setValue(QStringLiteral("name"), profiles[index].name);
+        settings.setValue(QStringLiteral("geometry"), profiles[index].geometry);
+        settings.setValue(QStringLiteral("windowState"), profiles[index].windowState);
+        settings.setValue(QStringLiteral("view"),
+                          QJsonDocument(profiles[index].view).toJson(QJsonDocument::Compact));
+    }
+    settings.endArray();
+    settings.sync();
+}
+
+} // namespace
+
+void YourClassName::showConfiguredInterface() {
+    if (alternativeInterfaceMode) {
+        applyAlternativeInterfaceMode();
+        return;
+    }
+#ifdef _WIN32
+    showNormal();
+    raise();
+    activateWindow();
+#else
+    show();
+#endif
+}
 void YourClassName::applyAlternativeInterfaceMode() {
     if (!graphLayout || !graphWidget || !scaleWidget || !waterfallWidget) {
         return;
@@ -44,7 +113,7 @@ void YourClassName::applyAlternativeInterfaceMode() {
     graphLayout->removeWidget(scaleWidget);
     graphLayout->removeWidget(waterfallWidget);
 
-    if (alternativeInterfaceMode) {
+    if (waterfall3DAlternativeView) {
         if (secondGraph) {
             graphWidget->show();
             graphLayout->insertWidget(0, graphWidget, 2);
@@ -65,7 +134,7 @@ void YourClassName::applyAlternativeInterfaceMode() {
     for (int index = 0; index < graphLayout->count(); ++index) {
         graphLayout->setStretch(index, 0);
     }
-    if (alternativeInterfaceMode) {
+    if (waterfall3DAlternativeView) {
         if (secondGraph) {
             graphLayout->setStretch(0, 2);
             graphLayout->setStretch(1, 5);
@@ -79,13 +148,13 @@ void YourClassName::applyAlternativeInterfaceMode() {
 
     const bool alternativeMiniMode =
         waterfallDisplayMode == static_cast<int>(MyWaterfallWidget::DisplayMode::Waterfall3DWithMini);
-    const int effectiveMode = alternativeInterfaceMode
+    const int effectiveMode = waterfall3DAlternativeView
                                   ? (alternativeMiniMode
                                          ? static_cast<int>(MyWaterfallWidget::DisplayMode::Waterfall3DWithMini)
                                          : static_cast<int>(MyWaterfallWidget::DisplayMode::Waterfall3D))
                                   : waterfallDisplayMode;
-    waterfallWidget->setAlternativeInterfaceMode(alternativeInterfaceMode);
-    graphWidget->setFrequencyAxisLabelsVisible(alternativeInterfaceMode && secondGraph);
+    waterfallWidget->setAlternativeInterfaceMode(waterfall3DAlternativeView);
+    graphWidget->setFrequencyAxisLabelsVisible(waterfall3DAlternativeView && secondGraph);
     waterfallWidget->setDisplayMode(
         static_cast<MyWaterfallWidget::DisplayMode>(effectiveMode));
 
@@ -95,7 +164,7 @@ void YourClassName::applyAlternativeInterfaceMode() {
             for (int row = 0; row < model->rowCount(); ++row) {
                 if (QStandardItem *item = model->item(row)) {
                     const int mode = waterfallDisplayModeCombo->itemData(row).toInt();
-                    item->setEnabled(!alternativeInterfaceMode ||
+                    item->setEnabled(!waterfall3DAlternativeView ||
                                      mode == static_cast<int>(MyWaterfallWidget::DisplayMode::Waterfall3D) ||
                                      mode == static_cast<int>(MyWaterfallWidget::DisplayMode::Waterfall3DWithMini));
                 }
@@ -105,7 +174,7 @@ void YourClassName::applyAlternativeInterfaceMode() {
         if (index >= 0) {
             waterfallDisplayModeCombo->setCurrentIndex(index);
         }
-        waterfallDisplayModeCombo->setToolTip(alternativeInterfaceMode
+        waterfallDisplayModeCombo->setToolTip(waterfall3DAlternativeView
             ? uiText(QStringLiteral("alternative_interface_mode_locked"),
                      QStringLiteral("Alternative interface supports fixed 3D and 3D with a mini waterfall."))
             : uiText(QStringLiteral("waterfall_display_mode_tooltip"),
@@ -113,20 +182,41 @@ void YourClassName::applyAlternativeInterfaceMode() {
     }
     if (alternativeSpectrumGradientCheckbox) {
         alternativeSpectrumGradientCheckbox->setEnabled(
-            alternativeInterfaceMode || waterfall3DFixedPlane);
+            waterfall3DAlternativeView || waterfall3DFixedPlane);
     }
     if (alternativeSpectrumGradientOpacitySlider) {
         alternativeSpectrumGradientOpacitySlider->setEnabled(
-            (alternativeInterfaceMode || waterfall3DFixedPlane) &&
+            (waterfall3DAlternativeView || waterfall3DFixedPlane) &&
             alternativeSpectrumGradientFill);
     }
     if (waterfall3DFixedPlaneCheckbox) {
-        waterfall3DFixedPlaneCheckbox->setEnabled(!alternativeInterfaceMode);
+        waterfall3DFixedPlaneCheckbox->setEnabled(!waterfall3DAlternativeView);
     }
 
     centralWidget->updateGeometry();
     waterfallWidget->updateGeometry();
     waterfallWidget->update();
+
+    if (alternativeInterfaceMode) {
+        ensureDspFlowPanel();
+        dspFlowPanel->setWorkspaceMode(true);
+        dspFlowPanel->showMaximized();
+        dspFlowPanel->raise();
+        dspFlowPanel->activateWindow();
+        QTimer::singleShot(0, this, [this]() {
+            if (alternativeInterfaceMode) hide();
+        });
+    } else if (dspFlowPanel && dspFlowPanel->isWorkspaceMode()) {
+        dspFlowPanel->setWorkspaceMode(false);
+        dspFlowPanel->hide();
+#ifdef _WIN32
+        showNormal();
+        raise();
+        activateWindow();
+#else
+        show();
+#endif
+    }
 }
 
 void YourClassName::openApplicationHelp() {
@@ -362,6 +452,20 @@ void YourClassName::openApplicationSettings() {
     gpuWaterfallOption->setToolTip(uiText(
         QStringLiteral("gpu_waterfall_tooltip"),
         QStringLiteral("Experimental: prepare the waterfall for GPU-backed rendering. CPU texture rendering remains the safe fallback.")));
+    QComboBox *displayReductionCombo = new QComboBox(quickOptionsBox);
+    displayReductionCombo->addItem(uiText(QStringLiteral("display_reduction_peak"),
+                                           QStringLiteral("Peak (preserve narrow signals)")), 0);
+    displayReductionCombo->addItem(uiText(QStringLiteral("display_reduction_average_db"),
+                                           QStringLiteral("Average in dB")), 1);
+    displayReductionCombo->addItem(uiText(QStringLiteral("display_reduction_average_power"),
+                                           QStringLiteral("Average linear power (RMS)")), 2);
+    displayReductionCombo->addItem(uiText(QStringLiteral("display_reduction_sample"),
+                                           QStringLiteral("Center sample")), 3);
+    displayReductionCombo->addItem(uiText(QStringLiteral("display_reduction_minimum"),
+                                           QStringLiteral("Minimum")), 4);
+    displayReductionCombo->setToolTip(uiText(
+        QStringLiteral("display_reduction_tooltip"),
+        QStringLiteral("How groups of FFT bins are reduced to screen pixels. Peak retains short narrow signals; linear power gives the physically meaningful average noise level.")));
     QCheckBox *alternativeInterfaceOption = new QCheckBox(
         uiText(QStringLiteral("alternative_interface"), QStringLiteral("Alternative interface")),
         quickOptionsBox);
@@ -389,6 +493,20 @@ void YourClassName::openApplicationSettings() {
     waterfallFpsOption->setToolTip(uiText(
         QStringLiteral("waterfall_fps_overlay_tooltip"),
         QStringLiteral("Show the actual rendered frame rate over the 2D or 3D waterfall window.")));
+    QCheckBox *spectrumPeakMeterOption = new QCheckBox(
+        uiText(QStringLiteral("spectrum_peak_meter"), QStringLiteral("Analog peak meter")),
+        quickOptionsBox);
+    spectrumPeakMeterOption->setToolTip(uiText(
+        QStringLiteral("spectrum_peak_meter_tooltip"),
+        QStringLiteral("Show an analog needle meter for the active spectrum marker, or the strongest visible peak when no marker is selected.")));
+    QComboBox *spectrumPeakMeterStyleCombo = new QComboBox(quickOptionsBox);
+    spectrumPeakMeterStyleCombo->addItem(
+        uiText(QStringLiteral("spectrum_peak_meter_transparent"), QStringLiteral("Transparent")), 0);
+    spectrumPeakMeterStyleCombo->addItem(
+        uiText(QStringLiteral("spectrum_peak_meter_retro"), QStringLiteral("Amber retro backlight")), 1);
+    spectrumPeakMeterStyleCombo->setToolTip(uiText(
+        QStringLiteral("spectrum_peak_meter_style_tooltip"),
+        QStringLiteral("Choose a transparent instrument overlay or an amber backlit retro scale.")));
     QCheckBox *extendedSpectrumInfoOption = new QCheckBox(
         uiText(QStringLiteral("extended_spectrum_info"), QStringLiteral("Extended spectrum info")),
         quickOptionsBox);
@@ -407,7 +525,7 @@ void YourClassName::openApplicationSettings() {
         quickOptionsBox);
     simplifiedAudioChannelizerOption->setToolTip(uiText(
         QStringLiteral("simplified_audio_channelizer_tooltip"),
-        QStringLiteral("Use the lower-cost legacy one-pass channelizer for weak CPUs. It reduces filtering accuracy but preserves live audio at high sample rates.")));
+        QStringLiteral("Prioritize live audio on weak CPUs by reducing channelizer and background FFT load.")));
     audioOption->setChecked(audioCheckbox && audioCheckbox->isChecked());
     syncOption->setChecked(syncCheckbox && syncCheckbox->isChecked());
     syncOption->setEnabled(false);
@@ -418,11 +536,14 @@ void YourClassName::openApplicationSettings() {
     amateurBandMarkersOption->setChecked(showAmateurBandMarkers);
     compactBandMarkersOption->setChecked(compactBandMarkers);
     gpuWaterfallOption->setChecked(experimentalGpuWaterfall);
+    displayReductionCombo->setCurrentIndex((std::max)(0, displayReductionCombo->findData(spectrumDisplayReductionMode)));
     alternativeInterfaceOption->setChecked(alternativeInterfaceMode);
     gnssUbxAutoEnableOption->setChecked(gnssUbxAutoEnable);
     loggingOption->setChecked(diagnosticVerboseLogging);
     spectrumFpsOption->setChecked(showSpectrumFps);
     waterfallFpsOption->setChecked(showWaterfallFps);
+    spectrumPeakMeterOption->setChecked(showSpectrumPeakMeter);
+    spectrumPeakMeterStyleCombo->setCurrentIndex((std::max)(0, spectrumPeakMeterStyleCombo->findData(spectrumPeakMeterStyle)));
     extendedSpectrumInfoOption->setChecked(showExtendedSpectrumInfo);
     extendedRecordingMetadataOption->setChecked(extendedRecordingMetadataEnabled);
     simplifiedAudioChannelizerOption->setChecked(pendingSettings.simplifiedAudioChannelizer);
@@ -439,10 +560,65 @@ void YourClassName::openApplicationSettings() {
     quickOptionsLayout->addWidget(spectrumFpsOption, 4, 0);
     quickOptionsLayout->addWidget(waterfallFpsOption, 4, 1);
     quickOptionsLayout->addWidget(extendedSpectrumInfoOption, 4, 2);
-    quickOptionsLayout->addWidget(simplifiedAudioChannelizerOption, 5, 0, 1, 3);
-    quickOptionsLayout->addWidget(extendedRecordingMetadataOption, 6, 0, 1, 3);
-    quickOptionsLayout->addWidget(alternativeInterfaceOption, 7, 0, 1, 3);
+    quickOptionsLayout->addWidget(spectrumPeakMeterOption, 5, 0);
+    quickOptionsLayout->addWidget(spectrumPeakMeterStyleCombo, 5, 1, 1, 2);
+    quickOptionsLayout->addWidget(simplifiedAudioChannelizerOption, 6, 0, 1, 3);
+    quickOptionsLayout->addWidget(extendedRecordingMetadataOption, 7, 0, 1, 3);
+    quickOptionsLayout->addWidget(alternativeInterfaceOption, 8, 0, 1, 3);
+    quickOptionsLayout->addWidget(new QLabel(uiText(QStringLiteral("display_reduction"),
+                                                     QStringLiteral("FFT display reduction:")),
+                                             quickOptionsBox), 9, 0);
+    quickOptionsLayout->addWidget(displayReductionCombo, 9, 1, 1, 2);
     rootLayout->addWidget(quickOptionsBox);
+
+    const bool ukrainian = normalizedUiLanguage(uiLanguage) == QStringLiteral("uk");
+    QGroupBox *layoutProfilesBox = new QGroupBox(
+        ukrainian ? QStringLiteral("Профілі інтерфейсу") : QStringLiteral("Interface profiles"),
+        &dialog);
+    QVBoxLayout *layoutProfilesLayout = new QVBoxLayout(layoutProfilesBox);
+    QLabel *layoutProfilesHint = new QLabel(
+        ukrainian
+            ? QStringLiteral("Зберігає розмір і компонування вікна, док-панелі, розгорнуті розділи та основний режим відображення. Налаштування приймача й калібрування не змінюються.")
+            : QStringLiteral("Stores window geometry, dock panels, expanded sections and the primary display mode. Receiver and calibration settings are not changed."),
+        layoutProfilesBox);
+    layoutProfilesHint->setWordWrap(true);
+    QHBoxLayout *layoutProfilesControls = new QHBoxLayout();
+    QComboBox *layoutProfileCombo = new QComboBox(layoutProfilesBox);
+    QPushButton *saveLayoutProfileButton = new QPushButton(
+        ukrainian ? QStringLiteral("Зберегти поточний") : QStringLiteral("Save current"),
+        layoutProfilesBox);
+    QPushButton *loadLayoutProfileButton = new QPushButton(
+        ukrainian ? QStringLiteral("Завантажити") : QStringLiteral("Load"),
+        layoutProfilesBox);
+    QPushButton *deleteLayoutProfileButton = new QPushButton(
+        ukrainian ? QStringLiteral("Видалити") : QStringLiteral("Delete"),
+        layoutProfilesBox);
+    layoutProfilesControls->addWidget(layoutProfileCombo, 1);
+    layoutProfilesControls->addWidget(saveLayoutProfileButton);
+    layoutProfilesControls->addWidget(loadLayoutProfileButton);
+    layoutProfilesControls->addWidget(deleteLayoutProfileButton);
+    layoutProfilesLayout->addWidget(layoutProfilesHint);
+    layoutProfilesLayout->addLayout(layoutProfilesControls);
+    rootLayout->addWidget(layoutProfilesBox);
+
+    auto populateLayoutProfiles = [layoutProfileCombo,
+                                   loadLayoutProfileButton,
+                                   deleteLayoutProfileButton,
+                                   ukrainian](const QString &selectedName = QString()) {
+        const QSignalBlocker blocker(layoutProfileCombo);
+        layoutProfileCombo->clear();
+        const QVector<InterfaceLayoutProfile> profiles = loadInterfaceLayoutProfiles();
+        for (const auto &profile : profiles) layoutProfileCombo->addItem(profile.name, profile.name);
+        const int selectedIndex = layoutProfileCombo->findData(selectedName);
+        if (selectedIndex >= 0) layoutProfileCombo->setCurrentIndex(selectedIndex);
+        const bool available = layoutProfileCombo->count() > 0;
+        loadLayoutProfileButton->setEnabled(available);
+        deleteLayoutProfileButton->setEnabled(available);
+        layoutProfileCombo->setPlaceholderText(
+            ukrainian ? QStringLiteral("Немає збережених профілів")
+                      : QStringLiteral("No saved profiles"));
+    };
+    populateLayoutProfiles();
 
     auto applyLanguage = [this, languageCombo]() {
         const QString nextLanguage = languageCombo->currentData().toString();
@@ -565,6 +741,133 @@ void YourClassName::openApplicationSettings() {
     connect(importSettingsButton, &QPushButton::clicked, &dialog, [this]() {
         importSettingsBackup();
     });
+    connect(saveLayoutProfileButton, &QPushButton::clicked, &dialog,
+            [this, &dialog, layoutProfileCombo, populateLayoutProfiles, ukrainian]() {
+                bool accepted = false;
+                const QString name = QInputDialog::getText(
+                    &dialog,
+                    ukrainian ? QStringLiteral("Зберегти профіль інтерфейсу")
+                              : QStringLiteral("Save interface profile"),
+                    ukrainian ? QStringLiteral("Назва профілю:") : QStringLiteral("Profile name:"),
+                    QLineEdit::Normal,
+                    layoutProfileCombo->currentData().toString(),
+                    &accepted).trimmed();
+                if (!accepted || name.isEmpty()) return;
+
+                QVector<InterfaceLayoutProfile> profiles = loadInterfaceLayoutProfiles();
+                auto existing = std::find_if(profiles.begin(), profiles.end(), [&name](const auto &profile) {
+                    return profile.name.compare(name, Qt::CaseInsensitive) == 0;
+                });
+                if (existing != profiles.end()) {
+                    const auto answer = QMessageBox::question(
+                        &dialog,
+                        ukrainian ? QStringLiteral("Замінити профіль?") : QStringLiteral("Replace profile?"),
+                        ukrainian
+                            ? QStringLiteral("Профіль з такою назвою вже існує. Замінити його поточним компонуванням?")
+                            : QStringLiteral("A profile with this name already exists. Replace it with the current layout?"));
+                    if (answer != QMessageBox::Yes) return;
+                } else {
+                    profiles.push_back({});
+                    existing = profiles.end() - 1;
+                }
+
+                QJsonObject sections;
+                const QString prefix = QStringLiteral("uiSectionHeader_");
+                for (QToolButton *header : findChildren<QToolButton*>()) {
+                    if (header->objectName().startsWith(prefix)) {
+                        sections.insert(header->objectName().mid(prefix.size()), header->isChecked());
+                    }
+                }
+                QJsonObject view;
+                view.insert(QStringLiteral("sections"), sections);
+                view.insert(QStringLiteral("alternativeInterface"), alternativeInterfaceMode);
+                view.insert(QStringLiteral("secondSpectrum"), graphCheckbox && graphCheckbox->isChecked());
+                view.insert(QStringLiteral("colorSpectrum"), colorCheckbox && colorCheckbox->isChecked());
+                view.insert(QStringLiteral("waterfallDisplayMode"), waterfallDisplayMode);
+                view.insert(QStringLiteral("waterfall3DFixedPlane"), waterfall3DFixedPlane);
+                view.insert(QStringLiteral("waterfall3DAlternativeView"), waterfall3DAlternativeView);
+                view.insert(QStringLiteral("controlsVisible"), controlsDock && controlsDock->isVisible());
+                view.insert(QStringLiteral("digitalVisible"), digitalDock && digitalDock->isVisible());
+                view.insert(QStringLiteral("videoVisible"), videoDock && videoDock->isVisible());
+                existing->name = name;
+                existing->geometry = saveGeometry();
+                existing->windowState = saveState(1);
+                existing->view = view;
+                storeInterfaceLayoutProfiles(profiles);
+                populateLayoutProfiles(name);
+            });
+    connect(loadLayoutProfileButton, &QPushButton::clicked, &dialog,
+            [this, layoutProfileCombo, alternativeInterfaceOption]() {
+                const QString name = layoutProfileCombo->currentData().toString();
+                const QVector<InterfaceLayoutProfile> profiles = loadInterfaceLayoutProfiles();
+                const auto profile = std::find_if(profiles.cbegin(), profiles.cend(), [&name](const auto &item) {
+                    return item.name == name;
+                });
+                if (profile == profiles.cend()) return;
+
+                if (!profile->geometry.isEmpty()) restoreGeometry(profile->geometry);
+                if (!profile->windowState.isEmpty()) restoreState(profile->windowState, 1);
+                const QJsonObject view = profile->view;
+                const QJsonObject sections = view.value(QStringLiteral("sections")).toObject();
+                const QString prefix = QStringLiteral("uiSectionHeader_");
+                for (QToolButton *header : findChildren<QToolButton*>()) {
+                    if (!header->objectName().startsWith(prefix)) continue;
+                    const QString key = header->objectName().mid(prefix.size());
+                    if (sections.contains(key)) header->setChecked(sections.value(key).toBool());
+                }
+                if (graphCheckbox && view.contains(QStringLiteral("secondSpectrum")))
+                    graphCheckbox->setChecked(view.value(QStringLiteral("secondSpectrum")).toBool());
+                if (colorCheckbox && view.contains(QStringLiteral("colorSpectrum")))
+                    colorCheckbox->setChecked(view.value(QStringLiteral("colorSpectrum")).toBool());
+                if (waterfallDisplayModeCombo && view.contains(QStringLiteral("waterfallDisplayMode"))) {
+                    const int mode = view.value(QStringLiteral("waterfallDisplayMode")).toInt(waterfallDisplayMode);
+                    const int index = waterfallDisplayModeCombo->findData(mode);
+                    if (index >= 0) waterfallDisplayModeCombo->setCurrentIndex(index);
+                }
+                if (waterfall3DFixedPlaneCheckbox && view.contains(QStringLiteral("waterfall3DFixedPlane")))
+                    waterfall3DFixedPlaneCheckbox->setChecked(
+                        view.value(QStringLiteral("waterfall3DFixedPlane")).toBool());
+                if (waterfall3DAlternativeViewCheckbox &&
+                    view.contains(QStringLiteral("waterfall3DAlternativeView"))) {
+                    waterfall3DAlternativeViewCheckbox->setChecked(
+                        view.value(QStringLiteral("waterfall3DAlternativeView")).toBool());
+                }
+                if (view.contains(QStringLiteral("alternativeInterface"))) {
+                    const bool oldAlternative =
+                        view.value(QStringLiteral("alternativeInterface")).toBool();
+                    if (!view.contains(QStringLiteral("waterfall3DAlternativeView"))) {
+                        if (waterfall3DAlternativeViewCheckbox)
+                            waterfall3DAlternativeViewCheckbox->setChecked(oldAlternative);
+                        alternativeInterfaceOption->setChecked(false);
+                    } else {
+                        alternativeInterfaceOption->setChecked(oldAlternative);
+                    }
+                }
+                if (controlsDock && view.contains(QStringLiteral("controlsVisible")))
+                    controlsDock->setVisible(view.value(QStringLiteral("controlsVisible")).toBool());
+                if (digitalDock && view.contains(QStringLiteral("digitalVisible")))
+                    digitalDock->setVisible(view.value(QStringLiteral("digitalVisible")).toBool());
+                if (videoDock && view.contains(QStringLiteral("videoVisible")))
+                    videoDock->setVisible(view.value(QStringLiteral("videoVisible")).toBool());
+                savePersistentSettings();
+            });
+    connect(deleteLayoutProfileButton, &QPushButton::clicked, &dialog,
+            [&dialog, layoutProfileCombo, populateLayoutProfiles, ukrainian]() {
+                const QString name = layoutProfileCombo->currentData().toString();
+                if (name.isEmpty()) return;
+                const auto answer = QMessageBox::question(
+                    &dialog,
+                    ukrainian ? QStringLiteral("Видалити профіль?") : QStringLiteral("Delete profile?"),
+                    ukrainian ? QStringLiteral("Видалити профіль «%1»?").arg(name)
+                              : QStringLiteral("Delete profile '%1'?").arg(name));
+                if (answer != QMessageBox::Yes) return;
+                QVector<InterfaceLayoutProfile> profiles = loadInterfaceLayoutProfiles();
+                profiles.erase(std::remove_if(profiles.begin(), profiles.end(), [&name](const auto &profile) {
+                    return profile.name == name;
+                }), profiles.end());
+                storeInterfaceLayoutProfiles(profiles);
+                populateLayoutProfiles();
+            });
     connect(audioOption, &QCheckBox::toggled, &dialog, [this](bool checked) {
         if (audioCheckbox) {
             audioCheckbox->setChecked(checked);
@@ -607,6 +910,13 @@ void YourClassName::openApplicationSettings() {
         }
         savePersistentSettings();
     });
+    connect(displayReductionCombo,
+            QOverload<int>::of(&QComboBox::currentIndexChanged),
+            &dialog,
+            [this, displayReductionCombo](int) {
+                spectrumDisplayReductionMode = (std::clamp)(displayReductionCombo->currentData().toInt(), 0, 4);
+                savePersistentSettings();
+            });
     connect(alternativeInterfaceOption, &QCheckBox::toggled, &dialog, [this](bool checked) {
         alternativeInterfaceMode = checked;
         applyAlternativeInterfaceMode();
@@ -637,6 +947,19 @@ void YourClassName::openApplicationSettings() {
         }
         savePersistentSettings();
     });
+    connect(spectrumPeakMeterOption, &QCheckBox::toggled, &dialog, [this](bool checked) {
+        showSpectrumPeakMeter = checked;
+        if (graphWidget) graphWidget->setAnalogPeakMeterEnabled(checked);
+        if (dspFlowPanel) dspFlowPanel->setAnalogPeakMeterEnabled(checked);
+        savePersistentSettings();
+    });
+    connect(spectrumPeakMeterStyleCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            &dialog, [this, spectrumPeakMeterStyleCombo](int) {
+                spectrumPeakMeterStyle = std::clamp(spectrumPeakMeterStyleCombo->currentData().toInt(), 0, 1);
+                if (graphWidget) graphWidget->setAnalogPeakMeterStyle(spectrumPeakMeterStyle);
+                if (dspFlowPanel) dspFlowPanel->setAnalogPeakMeterStyle(spectrumPeakMeterStyle);
+                savePersistentSettings();
+            });
     connect(extendedSpectrumInfoOption, &QCheckBox::toggled, &dialog, [this](bool checked) {
         showExtendedSpectrumInfo = checked;
         if (graphWidget) {

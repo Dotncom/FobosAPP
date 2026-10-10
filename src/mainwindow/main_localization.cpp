@@ -214,7 +214,7 @@ void YourClassName::applyUiLanguage() {
                      QStringLiteral("waterfall_display_3d_mini"),
                      QStringLiteral("3D + mini waterfall"));
     if (waterfallDisplayModeCombo) {
-        waterfallDisplayModeCombo->setToolTip(alternativeInterfaceMode
+        waterfallDisplayModeCombo->setToolTip(waterfall3DAlternativeView
             ? uiText(QStringLiteral("alternative_interface_mode_locked"),
                      QStringLiteral("Alternative interface supports fixed 3D and 3D with a mini waterfall."))
             : uiText(QStringLiteral("waterfall_display_mode_tooltip"),
@@ -289,6 +289,22 @@ void YourClassName::applyUiLanguage() {
         waterfall3DFixedPlaneCheckbox->setToolTip(uiText(
             QStringLiteral("waterfall_3d_fixed_plane_tooltip"),
             QStringLiteral("Use the fixed front-facing 3D plane from Alternative interface mode and lock camera controls.")));
+    }
+    if (waterfall3DMonochromeCheckbox) {
+        waterfall3DMonochromeCheckbox->setText(uiText(
+            QStringLiteral("waterfall_3d_monochrome"),
+            QStringLiteral("Monochrome blue 3D")));
+        waterfall3DMonochromeCheckbox->setToolTip(uiText(
+            QStringLiteral("waterfall_3d_monochrome_tooltip"),
+            QStringLiteral("Render the 3D surface in a calm solid blue instead of amplitude colors.")));
+    }
+    if (waterfall3DAlternativeViewCheckbox) {
+        waterfall3DAlternativeViewCheckbox->setText(uiText(
+            QStringLiteral("waterfall_3d_alternative_view"),
+            QStringLiteral("Alternative view")));
+        waterfall3DAlternativeViewCheckbox->setToolTip(uiText(
+            QStringLiteral("waterfall_3d_alternative_view_tooltip"),
+            QStringLiteral("Use the fixed front-facing 3D waterfall with the live spectrum at its near edge.")));
     }
     if (waterfall3DVncSliceInputCheckbox) {
         waterfall3DVncSliceInputCheckbox->setText(uiText(

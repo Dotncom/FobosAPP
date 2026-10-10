@@ -38,7 +38,13 @@ public:
                              int fftWindowType);
     void setFpsOverlayEnabled(bool enabled);
     void setExtendedInfoOverlayEnabled(bool enabled);
+    void setAnalogPeakMeterEnabled(bool enabled);
+    void setAnalogPeakMeterStyle(int style);
+    void setAnalogPeakMeterTarget(double frequencyHz, bool valid);
     void setFrequencyAxisLabelsVisible(bool visible);
+    void setPauseControlVisible(bool visible);
+    void setDisplayPaused(bool paused);
+    bool isDisplayPaused() const noexcept { return displayPaused; }
     void setScienceAnalysisData(const std::vector<float> &maxHold,
                                 const std::vector<float> &minHold,
                                 const std::vector<float> &average,
@@ -76,6 +82,7 @@ protected:
     void leaveEvent(QEvent *event) override;
 
 private:
+    void updatePauseControl();
     struct CursorPeak {
         bool valid = false;
         double frequency = 0.0;
@@ -99,6 +106,7 @@ private:
     void updateFpsCounter();
     void drawFpsOverlay(QPainter &painter) const;
     void drawExtendedInfoOverlay(QPainter &painter) const;
+    void drawAnalogPeakMeter(QPainter &painter) const;
     float normalizedLevel(float value) const;
     float displayLevelAt(const std::vector<float> &levels, int index, int count, bool ordered) const;
     double displayFrequencyAt(int index, int count) const;
@@ -150,6 +158,10 @@ private:
     int metadataFftWindowType = 0;
     bool fpsOverlayEnabled = false;
     bool extendedInfoOverlayEnabled = false;
+    bool analogPeakMeterEnabled = false;
+    int analogPeakMeterStyle = 0;
+    bool analogPeakMeterTargetValid = false;
+    double analogPeakMeterTargetHz = 0.0;
     bool frequencyAxisLabelsVisible = false;
     std::vector<float> scienceMaxHoldData;
     std::vector<float> scienceMinHoldData;
@@ -167,6 +179,8 @@ private:
     QElapsedTimer fpsElapsedTimer;
     int fpsFrameCount = 0;
     double displayedFps = 0.0;
+    class QToolButton *pauseControl = nullptr;
+    bool displayPaused = false;
     QColor valueToColor(float value);
 };
 

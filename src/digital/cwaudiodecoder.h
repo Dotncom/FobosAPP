@@ -12,6 +12,7 @@ public:
         int initialWpm = 18;
         bool adaptiveSpeed = true;
         int alphabet = 0; // 0: International/Latin, 1: Ukrainian, 2: both.
+        int selectivity = 5; // 1: permissive, 10: narrow and noise-resistant.
     };
 
     struct Result {

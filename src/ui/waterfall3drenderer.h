@@ -8,6 +8,8 @@
 #include <QMatrix4x4>
 #include <QOpenGLBuffer>
 #include <QOpenGLShaderProgram>
+#include <QPointF>
+#include <QVector3D>
 
 class Waterfall3DRenderer {
 public:
@@ -46,6 +48,14 @@ public:
     void setFixedFrontPresentation(bool enabled);
     void setFixedFrontExpanded(bool enabled);
     void setFrontFaceGradient(bool enabled, int opacityPercent);
+    void setDensityAxes(bool enabled);
+    void setDensityAxisMapping(int xDimension, int yDimension);
+    void setDensityFrontProfile(const std::vector<float> &normalizedLevels);
+    void setDensityFrontProfileStyle(int style);
+    void setSurfaceStyle(int style);
+    void setSurfaceSmoothing(int smoothing);
+    void setSurfaceLighting(int lighting);
+    void setMonochrome(bool enabled);
     bool beginFrequencySlice(int screenX, int screenY, int viewportWidth, int viewportHeight);
     bool beginSpectrumSlice(int screenX, int screenY, int viewportWidth, int viewportHeight);
     void stepFrequencySlice(int direction);
@@ -60,6 +70,18 @@ public:
     void orbitCamera(float deltaX, float deltaY);
     void panCamera(float deltaX, float deltaY, int viewportWidth, int viewportHeight);
     void zoomCamera(int wheelDelta);
+    bool densityAxisScreenPoints(int viewportWidth,
+                                 int viewportHeight,
+                                 QPointF &origin,
+                                 QPointF &frequencyEnd,
+                                 QPointF &densityEnd,
+                                 QPointF &levelEnd) const;
+    bool densityPointToScreen(float densityRatio,
+                              float frequencyRatio,
+                              float levelRatio,
+                              int viewportWidth,
+                              int viewportHeight,
+                              QPointF &screen) const;
     void render(int viewportWidth, int viewportHeight);
     void releaseGpuResources();
 
@@ -73,6 +95,7 @@ private:
     struct GpuGridVertex {
         float row = 0.0f;
         float column = 0.0f;
+        float densityScale = 1.0f;
     };
 
     struct ViewParameters {
@@ -107,6 +130,16 @@ private:
     bool fixedFrontExpanded = false;
     bool frontFaceGradient = false;
     int frontFaceGradientOpacity = 70;
+    bool densityAxes = false;
+    int densityAxisXDimension = 0;
+    int densityAxisYDimension = 1;
+    int densityAxisZDimension = 2;
+    std::vector<float> densityFrontProfile;
+    int densityFrontProfileStyle = 0;
+    int surfaceStyle = 0;
+    int surfaceSmoothing = 0;
+    int surfaceLighting = 0;
+    bool monochrome = false;
     std::vector<HistoryRow> capturedSpectrumRows;
     int capturedSpectrumFirstRow = -1;
     int capturedSpectrumRowsRemaining = 0;
@@ -131,11 +164,15 @@ private:
     void refreshCapturedSpectrumRows();
     void resampleHistoryColumns(int outputColumns);
     ViewParameters viewParameters(int viewportWidth, int viewportHeight) const;
+    QVector3D densityPosition(float densityRatio,
+                              float frequencyRatio,
+                              float levelRatio) const;
     bool ensureSurfaceProgram();
     void resetGpuSurfaceData();
     void rebuildGpuSurface();
     bool uploadGpuSurfaceRows();
     bool renderGpuSurface(const QMatrix4x4 &transform);
+    void applySampleColor(const VertexSample &sample) const;
 };
 
 #endif // WATERFALL3DRENDERER_H

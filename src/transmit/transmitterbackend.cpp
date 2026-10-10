@@ -24,6 +24,7 @@ bool SimulatorTransmitterBackend::start(const TxConfiguration &configuration, QS
     currentConfiguration = configuration;
     iq.clear();
     running = true;
+    outputEnabled = true;
     if (error) {
         error->clear();
     }
@@ -39,6 +40,10 @@ bool SimulatorTransmitterBackend::writeIq(const std::complex<float> *samples,
                              : QStringLiteral("TX simulator is not running");
         }
         return false;
+    }
+    if (!outputEnabled) {
+        if (error) error->clear();
+        return true;
     }
     const int maximumSamples = currentConfiguration.sampleRate * 180;
     const int available = (std::max)(0, maximumSamples - iq.size());
@@ -61,8 +66,15 @@ bool SimulatorTransmitterBackend::writeIq(const std::complex<float> *samples,
     return true;
 }
 
+bool SimulatorTransmitterBackend::setOutputEnabled(bool enabled, QString *error) {
+    outputEnabled = enabled;
+    if (error) error->clear();
+    return running;
+}
+
 void SimulatorTransmitterBackend::stop() {
     running = false;
+    outputEnabled = false;
 }
 
 bool SimulatorTransmitterBackend::isRunning() const {

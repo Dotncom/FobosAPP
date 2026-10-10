@@ -7,8 +7,11 @@
 #include <cmath>
 #include <limits>
 #include <QLabel>
+#include <QDateTime>
 #include <QLinearGradient>
 #include <QPainterPath>
+#include <QStyle>
+#include <QToolButton>
 
 bool changebit=false;
 
@@ -82,6 +85,13 @@ MyWaterfallWidget::MyWaterfallWidget(QWidget *parent)
       waterfall3DRenderer(std::make_unique<Waterfall3DRenderer>()) {
 		waterfallTexture = 0;
     setMouseTracking(true);
+    pauseControl = new QToolButton(this);
+    pauseControl->setAutoRaise(true);
+    pauseControl->setCheckable(true);
+    pauseControl->setFixedSize(24, 24);
+    pauseControl->hide();
+    connect(pauseControl, &QToolButton::toggled, this, &MyWaterfallWidget::setDisplayPaused);
+    updatePauseControl();
     fpsOverlayLabel = new QLabel(QStringLiteral("FPS --"), this);
     fpsOverlayLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
     fpsOverlayLabel->setStyleSheet(QStringLiteral(
@@ -101,6 +111,14 @@ MyWaterfallWidget::MyWaterfallWidget(QWidget *parent)
         "QLabel { color: rgb(225, 240, 255); background-color: rgba(0, 0, 0, 190); "
         "padding: 5px 7px; border: 1px solid rgba(120, 210, 255, 120); }"));
     sliceDetailsOverlayLabel->hide();
+    areaMeasurementOverlayLabel = new QLabel(this);
+    areaMeasurementOverlayLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
+    areaMeasurementOverlayLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    areaMeasurementOverlayLabel->setTextFormat(Qt::PlainText);
+    areaMeasurementOverlayLabel->setStyleSheet(QStringLiteral(
+        "QLabel { color: rgb(225, 245, 255); background-color: rgba(4, 12, 24, 224); "
+        "padding: 5px 7px; border: 1px solid rgba(120, 210, 255, 210); }"));
+    areaMeasurementOverlayLabel->hide();
     for (QLabel *&label : alternativeDbLabels) {
         label = new QLabel(this);
         label->setAttribute(Qt::WA_TransparentForMouseEvents);
@@ -185,6 +203,20 @@ void MyWaterfallWidget::mousePressEvent(QMouseEvent *event) {
                                event->modifiers().testFlag(Qt::ShiftModifier);
     const bool modifierFreeSlice = modifierFreeSliceInput &&
                                    !event->modifiers().testFlag(Qt::ControlModifier);
+    if (areaMeasurementEnabled &&
+        activeDisplayMode == DisplayMode::Waterfall2D &&
+        !secondGraph &&
+        event->button() == Qt::LeftButton) {
+        areaMeasurementActive = true;
+        areaMeasurementVisible = true;
+        areaMeasurementStartPos = event->pos();
+        areaMeasurementEndPos = event->pos();
+        spectrumPanActive = false;
+        spectrumPanButton = Qt::NoButton;
+        update();
+        event->accept();
+        return;
+    }
     if (activeDisplayMode != DisplayMode::Waterfall2D &&
         event->button() == Qt::LeftButton &&
         (sliceModifier || modifierFreeSlice)) {
@@ -269,7 +301,8 @@ void MyWaterfallWidget::mousePressEvent(QMouseEvent *event) {
         return;
     }
     if (event->button() == Qt::RightButton) {
-        emit tuneContextRequested(frequencyAtX(event->x()), event->globalPos());
+        if (tuneContextEnabled)
+            emit tuneContextRequested(frequencyAtX(event->x()), event->globalPos());
         event->accept();
         return;
     }
@@ -289,6 +322,12 @@ void MyWaterfallWidget::mouseMoveEvent(QMouseEvent *event) {
     if (alternativeSpectrumMeasurementActive) {
         alternativeSpectrumMeasurementVisible = true;
         alternativeSpectrumMeasureEndPos = event->pos();
+        update();
+        event->accept();
+        return;
+    }
+    if (areaMeasurementActive) {
+        areaMeasurementEndPos = event->pos();
         update();
         event->accept();
         return;
@@ -346,6 +385,17 @@ void MyWaterfallWidget::mouseReleaseEvent(QMouseEvent *event) {
         if (std::abs(alternativeSpectrumMeasureEndPos.x() -
                      alternativeSpectrumMeasureStartPos.x()) < 4) {
             alternativeSpectrumMeasurementVisible = false;
+        }
+        update();
+        event->accept();
+        return;
+    }
+    if (event->button() == Qt::LeftButton && areaMeasurementActive) {
+        areaMeasurementEndPos = event->pos();
+        areaMeasurementActive = false;
+        if (std::abs(areaMeasurementEndPos.x() - areaMeasurementStartPos.x()) < 3 ||
+            std::abs(areaMeasurementEndPos.y() - areaMeasurementStartPos.y()) < 3) {
+            areaMeasurementVisible = false;
         }
         update();
         event->accept();
@@ -614,6 +664,10 @@ qDebug() << "MyWaterfallWidget::initializeGL done";
 
 void MyWaterfallWidget::resizeGL(int w, int h) {
         glViewport(0, 0, w, h);
+        if (pauseControl) {
+            pauseControl->move((std::max)(2, w - pauseControl->width() - 6), 6);
+            pauseControl->raise();
+        }
         ensureLineBuffer();
         resizeWaterfallTexturePreserve(w, h);
         if (waterfallVbo.isCreated()) {
@@ -656,6 +710,7 @@ void MyWaterfallWidget::resizeWaterfallTexturePreserve(int w, int h) {
     const int oldWidth = textureWidth;
     const int oldHeight = textureHeight;
     const int oldWriteRow = waterfallWriteRow;
+    const std::deque<qint64> oldRowTimes = waterfallRowTimesMs;
     const size_t oldPixelBytes = static_cast<size_t>(oldWidth) * oldHeight * 3;
     if (waterfallTexturePixels.size() != oldPixelBytes) {
         resetWaterfallTexture(newWidth, newHeight);
@@ -680,6 +735,23 @@ void MyWaterfallWidget::resizeWaterfallTexturePreserve(int w, int h) {
     textureHeight = newHeight;
     waterfallWriteRow = 0;
     waterfallTexturePixels = std::move(resized);
+    waterfallRowTimesMs.clear();
+    if (!oldRowTimes.empty()) {
+        const int preservedRows = (std::clamp)(
+            static_cast<int>(std::lround(static_cast<double>(oldRowTimes.size()) *
+                                         static_cast<double>(newHeight) /
+                                         static_cast<double>((std::max)(1, oldHeight)))),
+            1,
+            newHeight);
+        for (int row = 0; row < preservedRows; ++row) {
+            const std::size_t sourceIndex = (std::min)(
+                oldRowTimes.size() - 1,
+                static_cast<std::size_t>(
+                    static_cast<long long>(row) * static_cast<long long>(oldRowTimes.size()) /
+                    (std::max)(1, preservedRows)));
+            waterfallRowTimesMs.push_back(oldRowTimes[sourceIndex]);
+        }
+    }
     glBindTexture(GL_TEXTURE_2D, waterfallTexture);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
@@ -702,6 +774,7 @@ void MyWaterfallWidget::setData(const std::vector<float> &sourceXData,
                                 float levelMin,
                                  float levelMax,
                                  bool displayOrdered) {
+    if (displayPaused) return;
     bool shouldScheduleUpdate = false;
     bool shouldRefreshSliceOverlay = false;
     {
@@ -853,6 +926,75 @@ void MyWaterfallWidget::setData(const std::vector<float> &sourceXData,
     }
 }
 
+void MyWaterfallWidget::queueDiscontinuityRow(DiscontinuityKind kind) {
+    if (displayPaused) return;
+    bool shouldScheduleUpdate = false;
+    {
+        QMutexLocker locker(&mutex);
+        ensureLineBuffer();
+        if (lineData.empty()) return;
+
+        const unsigned char red = kind == DiscontinuityKind::ProcessingQueueDrop ? 238 : 72;
+        const unsigned char green = kind == DiscontinuityKind::ProcessingQueueDrop ? 42 : 16;
+        const unsigned char blue = kind == DiscontinuityKind::ProcessingQueueDrop ? 42 : 16;
+        for (std::size_t index = 0; index + 2 < lineData.size(); index += 3) {
+            lineData[index] = red;
+            lineData[index + 1] = green;
+            lineData[index + 2] = blue;
+        }
+
+        if (activeDisplayMode != DisplayMode::Waterfall2D) {
+            const int width = (std::max)(1, static_cast<int>(lineData.size() / 3));
+            pixelLevelData.assign(static_cast<std::size_t>(width), levelMin);
+            waterfall3DRenderer->appendRow(pixelLevelData,
+                                           lineData,
+                                           levelMin,
+                                           levelMax,
+                                           rowsPerFrame);
+        }
+        queueCurrentTextureLine();
+        waterfallRowsSinceRateUpdate += static_cast<quint64>((std::max)(1, rowsPerFrame));
+        if (!updateQueued) {
+            updateQueued = true;
+            shouldScheduleUpdate = true;
+        }
+    }
+    if (shouldScheduleUpdate) {
+        QMetaObject::invokeMethod(this, "update", Qt::QueuedConnection);
+    }
+}
+
+void MyWaterfallWidget::setPauseControlVisible(bool visible) {
+    if (!pauseControl) return;
+    pauseControl->setVisible(visible);
+    if (visible) pauseControl->raise();
+}
+
+void MyWaterfallWidget::setDisplayPaused(bool paused) {
+    if (displayPaused == paused) {
+        updatePauseControl();
+        return;
+    }
+    displayPaused = paused;
+    if (pauseControl && pauseControl->isChecked() != paused) {
+        pauseControl->blockSignals(true);
+        pauseControl->setChecked(paused);
+        pauseControl->blockSignals(false);
+    }
+    updatePauseControl();
+    emit displayPausedChanged(paused);
+}
+
+void MyWaterfallWidget::updatePauseControl() {
+    if (!pauseControl) return;
+    pauseControl->setIcon(style()->standardIcon(displayPaused
+                                                    ? QStyle::SP_MediaPlay
+                                                    : QStyle::SP_MediaPause));
+    pauseControl->setToolTip(displayPaused
+                                 ? QString::fromUtf8(u8"Відновити оновлення водоспаду")
+                                 : QString::fromUtf8(u8"Призупинити лише відображення водоспаду"));
+}
+
 void MyWaterfallWidget::setRowsPerFrame(int rows) {
     const int clampedRows = (std::clamp)(rows, 1, 8);
     QMutexLocker locker(&mutex);
@@ -891,6 +1033,21 @@ void MyWaterfallWidget::setFpsOverlayEnabled(bool enabled) {
         positionInfoOverlays();
         fpsOverlayLabel->setVisible(enabled);
         fpsOverlayLabel->raise();
+    }
+    update();
+}
+
+void MyWaterfallWidget::setAreaMeasurementEnabled(bool enabled) {
+    if (areaMeasurementEnabled == enabled) {
+        return;
+    }
+    areaMeasurementEnabled = enabled;
+    areaMeasurementActive = false;
+    if (!enabled) {
+        areaMeasurementVisible = false;
+        if (areaMeasurementOverlayLabel) {
+            areaMeasurementOverlayLabel->hide();
+        }
     }
     update();
 }
@@ -995,6 +1152,30 @@ void MyWaterfallWidget::set3DHistoryRows(int rows) {
     update();
 }
 
+void MyWaterfallWidget::set3DSurfaceStyle(int style) {
+    {
+        QMutexLocker locker(&mutex);
+        waterfall3DRenderer->setSurfaceStyle(style);
+    }
+    update();
+}
+
+void MyWaterfallWidget::set3DSurfaceSmoothing(int smoothing) {
+    {
+        QMutexLocker locker(&mutex);
+        waterfall3DRenderer->setSurfaceSmoothing(smoothing);
+    }
+    update();
+}
+
+void MyWaterfallWidget::set3DSurfaceLighting(int lighting) {
+    {
+        QMutexLocker locker(&mutex);
+        waterfall3DRenderer->setSurfaceLighting(lighting);
+    }
+    update();
+}
+
 void MyWaterfallWidget::set3DSliceScrollStep(int points) {
     QMutexLocker locker(&mutex);
     waterfall3DRenderer->setSliceScrollStep(points);
@@ -1047,6 +1228,13 @@ void MyWaterfallWidget::set3DFixedPlane(bool enabled) {
     update();
 }
 
+void MyWaterfallWidget::set3DMonochrome(bool enabled) {
+    {
+        QMutexLocker locker(&mutex);
+        waterfall3DRenderer->setMonochrome(enabled);
+    }
+    update();
+}
 void MyWaterfallWidget::setAlternativeInterfaceMode(bool enabled) {
     {
         QMutexLocker locker(&mutex);
@@ -1467,6 +1655,8 @@ void MyWaterfallWidget::clearData() {
         fftLength = 0;
         std::fill(lineData.begin(), lineData.end(), 0);
         pendingTextureLines.clear();
+        pendingTextureLineTimesMs.clear();
+        waterfallRowTimesMs.clear();
         pendingTextureLine = false;
         textureClearRequested = true;
         waterfall3DRenderer->clear();
@@ -1484,8 +1674,12 @@ void MyWaterfallWidget::queueCurrentTextureLine() {
         (std::clamp)(effectiveHeight / effectiveRows, 1, 512));
     while (pendingTextureLines.size() >= maximumPendingLines) {
         pendingTextureLines.pop_front();
+        if (!pendingTextureLineTimesMs.empty()) {
+            pendingTextureLineTimesMs.pop_front();
+        }
     }
     pendingTextureLines.push_back(lineData);
+    pendingTextureLineTimesMs.push_back(QDateTime::currentMSecsSinceEpoch());
     pendingTextureLine = true;
 }
 
@@ -1507,6 +1701,9 @@ void MyWaterfallWidget::uploadPendingTextureLine() {
     const std::size_t maximumLines = static_cast<std::size_t>((std::max)(1, textureHeight / rowsToWrite));
     while (pendingTextureLines.size() > maximumLines) {
         pendingTextureLines.pop_front();
+        if (!pendingTextureLineTimesMs.empty()) {
+            pendingTextureLineTimesMs.pop_front();
+        }
     }
 
     const std::size_t rowBytes = static_cast<std::size_t>(textureWidth) * 3U;
@@ -1514,6 +1711,12 @@ void MyWaterfallWidget::uploadPendingTextureLine() {
     while (!pendingTextureLines.empty()) {
         std::vector<unsigned char> queuedLine = std::move(pendingTextureLines.front());
         pendingTextureLines.pop_front();
+        const qint64 queuedTimeMs = pendingTextureLineTimesMs.empty()
+                                          ? QDateTime::currentMSecsSinceEpoch()
+                                          : pendingTextureLineTimesMs.front();
+        if (!pendingTextureLineTimesMs.empty()) {
+            pendingTextureLineTimesMs.pop_front();
+        }
         const std::vector<unsigned char> *sourceLine = &queuedLine;
         if (queuedLine.size() != rowBytes) {
             const int sourceWidth = static_cast<int>(queuedLine.size() / 3U);
@@ -1546,6 +1749,10 @@ void MyWaterfallWidget::uploadPendingTextureLine() {
                             GL_RGB,
                             GL_UNSIGNED_BYTE,
                             sourceLine->data());
+            waterfallRowTimesMs.push_front(queuedTimeMs);
+            while (waterfallRowTimesMs.size() > static_cast<std::size_t>(textureHeight)) {
+                waterfallRowTimesMs.pop_back();
+            }
             continue;
         }
 
@@ -1587,6 +1794,12 @@ void MyWaterfallWidget::uploadPendingTextureLine() {
                             GL_RGB,
                             GL_UNSIGNED_BYTE,
                             textureUploadRows.data() + rowBytes * static_cast<std::size_t>(firstRunRows));
+        }
+        for (int row = 0; row < rowsToWrite; ++row) {
+            waterfallRowTimesMs.push_front(queuedTimeMs);
+        }
+        while (waterfallRowTimesMs.size() > static_cast<std::size_t>(textureHeight)) {
+            waterfallRowTimesMs.pop_back();
         }
     }
     glBindTexture(GL_TEXTURE_2D, 0);
@@ -1652,6 +1865,8 @@ void MyWaterfallWidget::paintGL() {
             ensureLineBuffer();
             std::fill(lineData.begin(), lineData.end(), 0);
             pendingTextureLines.clear();
+            pendingTextureLineTimesMs.clear();
+            waterfallRowTimesMs.clear();
             resetWaterfallTexture(width(), height());
             pendingTextureLine = false;
             textureClearRequested = false;
@@ -1731,6 +1946,93 @@ void MyWaterfallWidget::paintGL() {
         if (drawSegmentOverlay) {
             drawScanSegments(painter);
         }
+    }
+    drawWaterfallAreaMeasurement(painter);
+}
+
+qint64 MyWaterfallWidget::waterfallTimeAtY(int y) const {
+    if (waterfallRowTimesMs.empty() || height() <= 0) {
+        return 0;
+    }
+    const int clampedY = (std::clamp)(y, 0, (std::max)(0, height() - 1));
+    const std::size_t index = (std::min)(
+        waterfallRowTimesMs.size() - 1,
+        static_cast<std::size_t>(
+            static_cast<long long>(clampedY) * static_cast<long long>(waterfallRowTimesMs.size()) /
+            (std::max)(1, height())));
+    return waterfallRowTimesMs[index];
+}
+
+void MyWaterfallWidget::drawWaterfallAreaMeasurement(QPainter &painter) const {
+    if (!areaMeasurementEnabled || !areaMeasurementVisible ||
+        activeDisplayMode != DisplayMode::Waterfall2D || secondGraph ||
+        width() <= 1 || height() <= 1) {
+        if (areaMeasurementOverlayLabel) {
+            areaMeasurementOverlayLabel->hide();
+        }
+        return;
+    }
+
+    QMutexLocker locker(&mutex);
+    QRect selection(areaMeasurementStartPos, areaMeasurementEndPos);
+    selection = selection.normalized().intersected(rect().adjusted(0, 0, -1, -1));
+    if (selection.width() < 3 || selection.height() < 3) {
+        if (areaMeasurementOverlayLabel) {
+            areaMeasurementOverlayLabel->hide();
+        }
+        return;
+    }
+
+    const double f1 = frequencyAtX(selection.left());
+    const double f2 = frequencyAtX(selection.right());
+    const qint64 t1 = waterfallTimeAtY(selection.top());
+    const qint64 t2 = waterfallTimeAtY(selection.bottom());
+    const qint64 olderTime = (std::min)(t1, t2);
+    const qint64 newerTime = (std::max)(t1, t2);
+
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing, false);
+    painter.fillRect(selection, QColor(50, 155, 255, 34));
+    painter.setPen(QPen(QColor(120, 215, 255, 235), 1, Qt::DashLine));
+    painter.drawRect(selection.adjusted(0, 0, -1, -1));
+    painter.drawLine(selection.center().x(), selection.top(),
+                     selection.center().x(), selection.bottom());
+    painter.drawLine(selection.left(), selection.center().y(),
+                     selection.right(), selection.center().y());
+
+    QStringList lines;
+    lines << QStringLiteral("%1 - %2   df %3")
+                 .arg(formatFrequencyLabel((std::min)(f1, f2)))
+                 .arg(formatFrequencyLabel((std::max)(f1, f2)))
+                 .arg(formatFrequencySpanLabel(std::abs(f2 - f1)));
+    if (olderTime > 0 && newerTime > 0) {
+        lines << QStringLiteral("%1 - %2   dt %3 s")
+                     .arg(QDateTime::fromMSecsSinceEpoch(olderTime).toString(QStringLiteral("HH:mm:ss.zzz")))
+                     .arg(QDateTime::fromMSecsSinceEpoch(newerTime).toString(QStringLiteral("HH:mm:ss.zzz")))
+                     .arg(static_cast<double>(newerTime - olderTime) / 1000.0, 0, 'f', 3);
+    } else {
+        lines << QStringLiteral("t: --");
+    }
+
+    painter.restore();
+
+    if (areaMeasurementOverlayLabel) {
+        areaMeasurementOverlayLabel->setText(lines.join(QLatin1Char('\n')));
+        areaMeasurementOverlayLabel->adjustSize();
+        int labelX = selection.left() + 5;
+        int labelY = selection.top() + 5;
+        if (labelY + areaMeasurementOverlayLabel->height() > height() - 4) {
+            labelY = selection.top() - areaMeasurementOverlayLabel->height() - 5;
+        }
+        labelX = (std::clamp)(labelX,
+                              4,
+                              (std::max)(4, width() - areaMeasurementOverlayLabel->width() - 4));
+        labelY = (std::clamp)(labelY,
+                              4,
+                              (std::max)(4, height() - areaMeasurementOverlayLabel->height() - 4));
+        areaMeasurementOverlayLabel->move(labelX, labelY);
+        areaMeasurementOverlayLabel->show();
+        areaMeasurementOverlayLabel->raise();
     }
 }
 
@@ -2037,7 +2339,7 @@ void MyWaterfallWidget::updateFpsCounter() {
 }
 
 void MyWaterfallWidget::positionInfoOverlays() {
-    int nextY = 8;
+    int nextY = pauseControl && pauseControl->isVisible() ? 36 : 8;
     if (fpsOverlayLabel) {
         fpsOverlayLabel->move((std::max)(8, width() - fpsOverlayLabel->width() - 8), nextY);
         if (fpsOverlayLabel->isVisible()) {

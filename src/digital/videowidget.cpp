@@ -9,6 +9,10 @@ VideoWidget::VideoWidget(QWidget *parent)
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 }
 
+const QImage &VideoWidget::frame() const {
+    return currentFrame;
+}
+
 void VideoWidget::setFrame(const QImage &frame) {
     currentFrame = frame;
     update();

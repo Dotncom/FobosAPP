@@ -54,7 +54,7 @@ QByteArray makeMorse(const QStringList &words, int sampleRate, double toneHz, in
     return pcm;
 }
 
-QString decode(const QByteArray &pcm, int alphabet) {
+QString decode(const QByteArray &pcm, int alphabet, int selectivity = 5) {
     CwAudioDecoder decoder;
     CwAudioDecoder::Settings settings;
     settings.sampleRate = 48000;
@@ -62,6 +62,7 @@ QString decode(const QByteArray &pcm, int alphabet) {
     settings.initialWpm = 18;
     settings.adaptiveSpeed = true;
     settings.alphabet = alphabet;
+    settings.selectivity = selectivity;
     decoder.configure(settings);
     QString text;
     constexpr int chunkBytes = 48000 / 50 * 2;
@@ -82,6 +83,13 @@ int main(int argc, char **argv) {
     const QString englishDecoded = decode(english, 0);
     qInfo().noquote() << "English:" << englishDecoded;
     if (englishDecoded != QStringLiteral("SOS TEST")) return 1;
+    for (const int selectivity : {1, 3, 5, 10}) {
+        const QString decoded = decode(english, 0, selectivity);
+        if (decoded != QStringLiteral("SOS TEST")) {
+            qWarning() << "CW selectivity failure" << selectivity << decoded;
+            return 4 + selectivity;
+        }
+    }
 
     const QByteArray ukrainian = makeMorse({QStringLiteral(".... --.")},
                                            48000,

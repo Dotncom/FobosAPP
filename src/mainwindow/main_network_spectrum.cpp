@@ -300,10 +300,15 @@ void YourClassName::displayNetworkSpectrumFrame(const QJsonObject &frame) {
             : std::vector<float>();
     const std::vector<float> &detectorFrequencies =
         hunterFrequencies.size() == frequencies.size() ? hunterFrequencies : frequencies;
-    updateDmrHunter(detectorFrequencies, magnitudes);
-    updateFpvHunter(detectorFrequencies,
-                    magnitudes);
-    updateDigitalVideoHunter(detectorFrequencies, magnitudes);
+    if (dmrHunterSettings.enabled) {
+        updateDmrHunter(detectorFrequencies, magnitudes);
+    }
+    if (fpvHunterSettings.enabled) {
+        updateFpvHunter(detectorFrequencies, magnitudes);
+    }
+    if (digitalVideoHunterSettings.enabled) {
+        updateDigitalVideoHunter(detectorFrequencies, magnitudes);
+    }
     updateScanMeasurement(detectorFrequencies, magnitudes);
 
     const int frameFftLength = static_cast<int>(frequencies.size());
@@ -384,16 +389,18 @@ void YourClassName::displayNetworkSpectrumFrame(const QJsonObject &frame) {
         const std::vector<float> measurementOverlay =
             scanMeasurementOverlay(measurementFrequencies, graphTargetCount);
 
-        std::vector<float> orderedScienceLevels(static_cast<std::size_t>(graphTargetCount), -160.0f);
-        for (int i = 0; i < graphTargetCount; ++i) {
-            orderedScienceLevels[static_cast<std::size_t>(i)] =
-                graphMagnitudes[static_cast<std::size_t>((i + graphTargetCount / 2) % graphTargetCount)];
-        }
-        updateSpectrumScience(measurementFrequencies, orderedScienceLevels);
-        if (frameScanSegments.isEmpty()) {
-            feedZeroSpanFrame(frequencies, magnitudes, true);
-        } else {
-            feedZeroSpanFrame(measurementFrequencies, orderedScienceLevels, false);
+        if (spectrumScienceAnalysisRequired()) {
+            std::vector<float> orderedScienceLevels(static_cast<std::size_t>(graphTargetCount), -160.0f);
+            for (int i = 0; i < graphTargetCount; ++i) {
+                orderedScienceLevels[static_cast<std::size_t>(i)] =
+                    graphMagnitudes[static_cast<std::size_t>((i + graphTargetCount / 2) % graphTargetCount)];
+            }
+            updateSpectrumScience(measurementFrequencies, orderedScienceLevels);
+            if (frameScanSegments.isEmpty()) {
+                feedZeroSpanFrame(frequencies, magnitudes, true);
+            } else {
+                feedZeroSpanFrame(measurementFrequencies, orderedScienceLevels, false);
+            }
         }
 
         graphWidget->setLevelRange(displayLevelMin, displayLevelMax);
@@ -500,10 +507,15 @@ void YourClassName::displayNetworkSpectrumFrameBinary(const QJsonObject &frame, 
             : std::vector<float>();
     const std::vector<float> &detectorFrequencies =
         hunterFrequencies.size() == frequencies.size() ? hunterFrequencies : frequencies;
-    updateDmrHunter(detectorFrequencies, magnitudes);
-    updateFpvHunter(detectorFrequencies,
-                    magnitudes);
-    updateDigitalVideoHunter(detectorFrequencies, magnitudes);
+    if (dmrHunterSettings.enabled) {
+        updateDmrHunter(detectorFrequencies, magnitudes);
+    }
+    if (fpvHunterSettings.enabled) {
+        updateFpvHunter(detectorFrequencies, magnitudes);
+    }
+    if (digitalVideoHunterSettings.enabled) {
+        updateDigitalVideoHunter(detectorFrequencies, magnitudes);
+    }
     updateScanMeasurement(detectorFrequencies, magnitudes);
 
     const bool spectrumShapeChanged =
@@ -576,16 +588,18 @@ void YourClassName::displayNetworkSpectrumFrameBinary(const QJsonObject &frame, 
         const std::vector<float> measurementOverlay =
             scanMeasurementOverlay(measurementFrequencies, graphTargetCount);
 
-        std::vector<float> orderedScienceLevels(static_cast<std::size_t>(graphTargetCount), -160.0f);
-        for (int i = 0; i < graphTargetCount; ++i) {
-            orderedScienceLevels[static_cast<std::size_t>(i)] =
-                graphMagnitudes[static_cast<std::size_t>((i + graphTargetCount / 2) % graphTargetCount)];
-        }
-        updateSpectrumScience(measurementFrequencies, orderedScienceLevels);
-        if (frameScanSegments.isEmpty()) {
-            feedZeroSpanFrame(frequencies, magnitudes, true);
-        } else {
-            feedZeroSpanFrame(measurementFrequencies, orderedScienceLevels, false);
+        if (spectrumScienceAnalysisRequired()) {
+            std::vector<float> orderedScienceLevels(static_cast<std::size_t>(graphTargetCount), -160.0f);
+            for (int i = 0; i < graphTargetCount; ++i) {
+                orderedScienceLevels[static_cast<std::size_t>(i)] =
+                    graphMagnitudes[static_cast<std::size_t>((i + graphTargetCount / 2) % graphTargetCount)];
+            }
+            updateSpectrumScience(measurementFrequencies, orderedScienceLevels);
+            if (frameScanSegments.isEmpty()) {
+                feedZeroSpanFrame(frequencies, magnitudes, true);
+            } else {
+                feedZeroSpanFrame(measurementFrequencies, orderedScienceLevels, false);
+            }
         }
 
         graphWidget->setLevelRange(displayLevelMin, displayLevelMax);

@@ -78,6 +78,64 @@ void Waterfall3DView::setModifierFreeSliceInput(bool enabled) {
     modifierFreeSliceInput = enabled;
 }
 
+void Waterfall3DView::setDensityAxes(bool enabled) {
+    densityAxes = enabled;
+    renderer->setDensityAxes(enabled);
+    update();
+}
+
+void Waterfall3DView::setDensityAxisMapping(int xDimension, int yDimension) {
+    renderer->setDensityAxisMapping(xDimension, yDimension);
+    update();
+}
+
+void Waterfall3DView::setDensityFrontProfile(
+    const std::vector<float> &normalizedLevels) {
+    renderer->setDensityFrontProfile(normalizedLevels);
+    update();
+}
+
+void Waterfall3DView::setDensityFrontProfileStyle(int style) {
+    renderer->setDensityFrontProfileStyle(style);
+    update();
+}
+
+void Waterfall3DView::setSurfaceStyle(int style) {
+    renderer->setSurfaceStyle(style);
+    update();
+}
+
+void Waterfall3DView::setSurfaceSmoothing(int smoothing) {
+    renderer->setSurfaceSmoothing(smoothing);
+    update();
+}
+
+void Waterfall3DView::setSurfaceLighting(int lighting) {
+    renderer->setSurfaceLighting(lighting);
+    update();
+}
+
+void Waterfall3DView::setDensityAxisLabels(const QString &frequency,
+                                           const QString &density,
+                                           const QString &level) {
+    densityFrequencyLabel = frequency;
+    densityAccumulationLabel = density;
+    densityLevelLabel = level;
+    update();
+}
+
+void Waterfall3DView::setDensityAxisRanges(double firstFrequencyHz,
+                                           double lastFrequencyHz,
+                                           double minimumDb,
+                                           double maximumDb,
+                                           double maximumDensity) {
+    densityFirstFrequencyHz = firstFrequencyHz;
+    densityLastFrequencyHz = lastFrequencyHz;
+    densityMinimumDb = minimumDb;
+    densityMaximumDb = maximumDb;
+    densityMaximumValue = (std::max)(0.0, maximumDensity);
+}
+
 void Waterfall3DView::setOverview(const QImage &image,
                                   int windowStart,
                                   int windowEnd,
@@ -109,6 +167,9 @@ void Waterfall3DView::paintGL() {
     renderer->render(width(), height());
     if (overviewVisible) {
         drawOverview();
+    }
+    if (densityAxes) {
+        drawDensityAxes();
     }
 }
 
@@ -282,13 +343,125 @@ void Waterfall3DView::drawOverview() {
                               std::clamp(windowBottom, target.top(), target.bottom() + 1) -
                                   std::clamp(windowTop, target.top(), target.bottom())));
 
-    const int selectedY = target.top() +
-                          static_cast<int>((overviewSelectedRow + 0.5) * rowScale);
-    painter.setPen(QPen(QColor(255, 72, 72, 245), 2));
-    painter.drawLine(target.left(),
-                     std::clamp(selectedY, target.top(), target.bottom()),
-                     target.right(),
-                     std::clamp(selectedY, target.top(), target.bottom()));
+    if (overviewSelectedRow >= 0) {
+        const int selectedY = target.top() +
+                              static_cast<int>((overviewSelectedRow + 0.5) * rowScale);
+        painter.setPen(QPen(QColor(255, 72, 72, 245), 2));
+        painter.drawLine(target.left(),
+                         std::clamp(selectedY, target.top(), target.bottom()),
+                         target.right(),
+                         std::clamp(selectedY, target.top(), target.bottom()));
+    }
+}
+
+void Waterfall3DView::drawDensityAxes() {
+    QPointF origin;
+    QPointF frequencyEnd;
+    QPointF densityEnd;
+    QPointF levelEnd;
+    if (!renderer->densityAxisScreenPoints(width(),
+                                           height(),
+                                           origin,
+                                           frequencyEnd,
+                                           densityEnd,
+                                           levelEnd)) {
+        return;
+    }
+
+    QImage overlay((std::max)(1, width()),
+                   (std::max)(1, height()),
+                   QImage::Format_ARGB32_Premultiplied);
+    overlay.fill(Qt::transparent);
+    QPainter painter(&overlay);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setFont(QFont(painter.font().family(), 9, QFont::DemiBold));
+
+    const auto drawLabel = [&](const QPointF &anchor,
+                               const QString &text,
+                               const QColor &color,
+                               int horizontalOffset,
+                               int verticalOffset) {
+        const QFontMetrics metrics(painter.font());
+        QRect rect = metrics.boundingRect(text).adjusted(-4, -2, 4, 2);
+        QPoint topLeft(static_cast<int>(std::lround(anchor.x())) + horizontalOffset,
+                       static_cast<int>(std::lround(anchor.y())) + verticalOffset);
+        if (horizontalOffset < 0) topLeft.rx() -= rect.width();
+        if (verticalOffset < 0) topLeft.ry() -= rect.height();
+        topLeft.setX(std::clamp(topLeft.x(), 2, (std::max)(2, width() - rect.width() - 2)));
+        topLeft.setY(std::clamp(topLeft.y(), 2, (std::max)(2, height() - rect.height() - 2)));
+        rect.moveTopLeft(topLeft);
+        painter.fillRect(rect, QColor(0, 0, 0, 220));
+        painter.setPen(color.lighter(125));
+        painter.drawText(rect, Qt::AlignCenter, text);
+    };
+
+    const auto drawAxis = [&](const QPointF &end, const QColor &color, const QString &label) {
+        painter.setPen(QPen(color, 2.0));
+        painter.drawLine(origin, end);
+        const QLineF axis(origin, end);
+        if (axis.length() > 8.0) {
+            QLineF left = axis;
+            left.setLength(8.0);
+            left.setAngle(axis.angle() + 155.0);
+            left.translate(end - left.p1());
+            QLineF right = axis;
+            right.setLength(8.0);
+            right.setAngle(axis.angle() - 155.0);
+            right.translate(end - right.p1());
+            painter.drawLine(left);
+            painter.drawLine(right);
+        }
+        drawLabel(end, label, color, 6, -4);
+    };
+
+    drawAxis(frequencyEnd, QColor(70, 205, 255), densityFrequencyLabel);
+    drawAxis(densityEnd, QColor(255, 177, 70), densityAccumulationLabel);
+    drawAxis(levelEnd, QColor(105, 235, 125), densityLevelLabel);
+
+    const auto frequencyText = [](double hz) {
+        const double magnitude = std::abs(hz);
+        if (magnitude >= 1.0e9) return QString::number(hz / 1.0e9, 'f', 3) + QStringLiteral(" GHz");
+        if (magnitude >= 1.0e6) return QString::number(hz / 1.0e6, 'f', 3) + QStringLiteral(" MHz");
+        if (magnitude >= 1.0e3) return QString::number(hz / 1.0e3, 'f', 2) + QStringLiteral(" kHz");
+        return QString::number(hz, 'f', 1) + QStringLiteral(" Hz");
+    };
+    constexpr int TickCount = 5;
+    for (int tick = 0; tick < TickCount; ++tick) {
+        const float ratio = static_cast<float>(tick) / static_cast<float>(TickCount - 1);
+        QPointF point;
+        if (renderer->densityPointToScreen(0.0f, ratio, 0.0f, width(), height(), point)) {
+            painter.setPen(QPen(QColor(70, 205, 255), 2.0));
+            painter.drawEllipse(point, 2.5, 2.5);
+            const double value = densityFirstFrequencyHz +
+                                 (densityLastFrequencyHz - densityFirstFrequencyHz) * ratio;
+            drawLabel(point, frequencyText(value), QColor(70, 205, 255), 5, -7);
+        }
+        if (renderer->densityPointToScreen(ratio, 0.0f, 0.0f, width(), height(), point)) {
+            painter.setPen(QPen(QColor(255, 177, 70), 2.0));
+            painter.drawEllipse(point, 2.5, 2.5);
+            drawLabel(point,
+                      QString::number(densityMaximumValue * ratio,
+                                      'f',
+                                      densityMaximumValue < 10.0 ? 2 : 0),
+                      QColor(255, 177, 70),
+                      5,
+                      5);
+        }
+        if (renderer->densityPointToScreen(0.0f, 0.0f, ratio, width(), height(), point)) {
+            painter.setPen(QPen(QColor(105, 235, 125), 2.0));
+            painter.drawEllipse(point, 2.5, 2.5);
+            const double value = densityMinimumDb + (densityMaximumDb - densityMinimumDb) * ratio;
+            drawLabel(point,
+                      QString::number(value, 'f', 1) + QStringLiteral(" dBFS"),
+                      QColor(105, 235, 125),
+                      -6,
+                      -4);
+        }
+    }
+    painter.end();
+
+    QPainter widgetPainter(this);
+    widgetPainter.drawImage(0, 0, overlay);
 }
 
 void Waterfall3DView::emitSelectedFrequency() {

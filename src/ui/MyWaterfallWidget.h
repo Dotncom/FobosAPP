@@ -40,10 +40,16 @@ public:
         Waterfall3DWithMini = 2
     };
 
+    enum class DiscontinuityKind {
+        ProcessingQueueDrop,
+        VisualSnapshotSkip
+    };
+
     explicit MyWaterfallWidget(QWidget *parent = nullptr);
     ~MyWaterfallWidget();
     bool initialized;
     void setData(const std::vector<float> &xData, const std::vector<float> &yData, double minFrequency, double maxFrequency, int fftLength, bool secondGraph, bool colorSpectrum, float contrast, float sensitivity, float levelMin, float levelMax, bool displayOrdered = false);
+    void queueDiscontinuityRow(DiscontinuityKind kind);
     void setRowsPerFrame(int rows);
     void setRenderBackend(RenderBackend backend);
     RenderBackend renderBackend() const;
@@ -51,6 +57,9 @@ public:
     DisplayMode displayMode() const;
     void set3DResolutionDivisor(int divisor);
     void set3DHistoryRows(int rows);
+    void set3DSurfaceStyle(int style);
+    void set3DSurfaceSmoothing(int smoothing);
+    void set3DSurfaceLighting(int lighting);
     void set3DSliceScrollStep(int points);
     void set3DSliceWidth(int points);
     void set3DSpectrumSliceScrollStep(int rows);
@@ -59,6 +68,7 @@ public:
     void set3DSpectrumSliceCaptureFixed(bool enabled);
     void set3DModifierFreeSliceInput(bool enabled);
     void set3DFixedPlane(bool enabled);
+    void set3DMonochrome(bool enabled);
     void setAlternativeInterfaceMode(bool enabled);
     void setAlternativeSpectrumGradientFill(bool enabled);
     void setAlternativeSpectrumGradientOpacity(int percent);
@@ -75,6 +85,11 @@ public:
                              int fftWindowType);
     void setFpsOverlayEnabled(bool enabled);
     void setExtendedInfoOverlayEnabled(bool enabled);
+    void setAreaMeasurementEnabled(bool enabled);
+    void setPauseControlVisible(bool visible);
+    void setDisplayPaused(bool paused);
+    void setTuneContextEnabled(bool enabled) noexcept { tuneContextEnabled = enabled; }
+    bool isDisplayPaused() const noexcept { return displayPaused; }
     void setScienceAnalysisData(const std::vector<float> &maxHold,
                                 const std::vector<float> &minHold,
                                 const std::vector<float> &average,
@@ -91,6 +106,7 @@ public:
     void clearData();
     void computeLineData();
 signals:
+    void displayPausedChanged(bool paused);
     void scaleChanged(int delta);
     void tuneContextRequested(double frequency, const QPoint &globalPos);
     void autoTuneRequested(double frequency);
@@ -106,6 +122,7 @@ protected:
     void mouseDoubleClickEvent(QMouseEvent *event) override;
     void leaveEvent(QEvent *event) override;
 private:
+    void updatePauseControl();
     void ensureLineBuffer();
     void resetWaterfallTexture(int w, int h);
     void resizeWaterfallTexturePreserve(int w, int h);
@@ -115,6 +132,7 @@ private:
     void drawMiniWaterfallOverlay(float vStart);
     void uploadPendingTextureLine();
     void drawScanSegments(QPainter &painter) const;
+    void drawWaterfallAreaMeasurement(QPainter &painter) const;
     void drawAlternativeSpectrumOverlay(QPainter &painter,
                                         const std::vector<float> &normalizedLevels) const;
     void drawAlternativeBandMarkers(QPainter &painter, const QRect &plotRect) const;
@@ -133,6 +151,7 @@ private:
     double actualFrequencyForDisplayFrequency(double displayFrequency) const;
     double displayFrequencyForActualFrequency(double actualFrequency) const;
     double frequencyAtX(int x) const;
+    qint64 waterfallTimeAtY(int y) const;
     double signalCenterNearFrequency(double frequency);
     mutable QMutex mutex;
     QOpenGLBuffer waterfallVbo;
@@ -142,6 +161,8 @@ private:
     std::vector<unsigned char> textureUploadRows;
     std::vector<unsigned char> waterfallTexturePixels;
     std::deque<std::vector<unsigned char>> pendingTextureLines;
+    std::deque<qint64> pendingTextureLineTimesMs;
+    std::deque<qint64> waterfallRowTimesMs;
     std::vector<float> pixelMaxData;
     std::vector<float> pixelFrequencyData;
     std::vector<float> pixelLevelData;
@@ -179,6 +200,7 @@ private:
     bool frequencySliceMouseActive = false;
     bool spectrumFrameSliceMouseActive = false;
     bool modifierFreeSliceInput = false;
+    bool tuneContextEnabled = true;
     bool alternativeInterfaceMode = false;
     bool fixed3DPlane = false;
     bool alternativeSpectrumGradientFill = false;
@@ -189,6 +211,11 @@ private:
     bool alternativeSpectrumMeasurementVisible = false;
     QPoint alternativeSpectrumMeasureStartPos;
     QPoint alternativeSpectrumMeasureEndPos;
+    bool areaMeasurementEnabled = false;
+    bool areaMeasurementActive = false;
+    bool areaMeasurementVisible = false;
+    QPoint areaMeasurementStartPos;
+    QPoint areaMeasurementEndPos;
     bool pendingTextureLine = false;
     bool textureClearRequested = false;
     bool updateQueued = false;
@@ -225,6 +252,9 @@ private:
     QLabel *fpsOverlayLabel = nullptr;
     QLabel *sliceOverlayLabel = nullptr;
     QLabel *sliceDetailsOverlayLabel = nullptr;
+    QLabel *areaMeasurementOverlayLabel = nullptr;
+    class QToolButton *pauseControl = nullptr;
+    bool displayPaused = false;
     std::array<QLabel*, 6> alternativeDbLabels{};
     std::vector<QLabel*> alternativeBandLabels;
     QLabel *alternativeMeasurementLabel = nullptr;

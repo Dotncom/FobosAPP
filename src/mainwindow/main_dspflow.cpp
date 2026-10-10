@@ -2,12 +2,15 @@
 #include "multivfowidget.h"
 
 #include "audiofilterchainwidget.h"
+#include "appsettingsutils.h"
 #include "dspflowpanel.h"
 #include "frequencycontrol.h"
+#include "tuningutils.h"
 #include "researchanalysisdialog.h"
 #include "videowidget.h"
 
 #include <QAbstractButton>
+#include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
@@ -23,6 +26,9 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QRadioButton>
+#include <QPointer>
+#include <QSettings>
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QSpinBox>
@@ -68,188 +74,276 @@ void copyComboContents(QComboBox *source, QComboBox *copy) {
 QComboBox *linkedCombo(QComboBox *source, QWidget *parent, QTimer *syncTimer) {
     auto *copy = new QComboBox(parent);
     copy->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
-    copyComboContents(source, copy);
-    QObject::connect(copy, QOverload<int>::of(&QComboBox::currentIndexChanged), source,
-                     [source](int index) {
-                         if (source && source->currentIndex() != index) {
-                             source->setCurrentIndex(index);
-                         }
+    if (!source) {
+        copy->setEnabled(false);
+        return copy;
+    }
+
+    QPointer<QComboBox> sourceGuard(source);
+    copyComboContents(sourceGuard.data(), copy);
+    QObject::connect(copy, QOverload<int>::of(&QComboBox::currentIndexChanged), copy,
+                     [sourceGuard](int index) {
+                         if (sourceGuard && sourceGuard->currentIndex() != index)
+                             sourceGuard->setCurrentIndex(index);
                      });
     QObject::connect(source, QOverload<int>::of(&QComboBox::currentIndexChanged), copy,
                      [copy](int index) {
-                         if (copy && copy->currentIndex() != index) {
+                         if (copy->currentIndex() != index) {
                              const QSignalBlocker blocker(copy);
                              copy->setCurrentIndex(index);
                          }
                      });
-    QObject::connect(syncTimer, &QTimer::timeout, copy, [source, copy]() {
-        if (!source || !copy || focusInside(copy)) {
+    QObject::connect(syncTimer, &QTimer::timeout, copy, [sourceGuard, copy]() {
+        if (!sourceGuard) {
+            copy->setEnabled(false);
             return;
         }
-        if (!comboContentsMatch(source, copy)) {
-            copyComboContents(source, copy);
-        } else if (copy->currentIndex() != source->currentIndex()) {
+        if (focusInside(copy)) return;
+        if (!comboContentsMatch(sourceGuard.data(), copy)) {
+            copyComboContents(sourceGuard.data(), copy);
+        } else if (copy->currentIndex() != sourceGuard->currentIndex()) {
             const QSignalBlocker blocker(copy);
-            copy->setCurrentIndex(source->currentIndex());
+            copy->setCurrentIndex(sourceGuard->currentIndex());
         }
-        copy->setEnabled(source->isEnabled());
+        copy->setEnabled(sourceGuard->isEnabled());
     });
     return copy;
 }
-
 QWidget *linkedSlider(QSlider *source, QWidget *parent, QTimer *syncTimer,
                       const QString &suffix = QString(), double divisor = 1.0) {
     auto *container = new QWidget(parent);
     auto *layout = new QHBoxLayout(container);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(5);
-    auto *copy = new QSlider(source->orientation(), container);
+    auto *copy = new QSlider(source ? source->orientation() : Qt::Horizontal, container);
     auto *valueLabel = new QLabel(container);
-    valueLabel->setMinimumWidth(54);
+    valueLabel->setMinimumWidth(64);
     valueLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    const auto updateLabel = [valueLabel, suffix, divisor](int value) {
+        const double safeDivisor = divisor == 0.0 ? 1.0 : divisor;
+        valueLabel->setText(QStringLiteral("%1%2")
+                                .arg(value / safeDivisor, 0, 'f', safeDivisor == 1.0 ? 0 : 1)
+                                .arg(suffix));
+    };
+    layout->addWidget(copy, 1);
+    layout->addWidget(valueLabel);
+    if (!source) {
+        copy->setEnabled(false);
+        valueLabel->setText(QStringLiteral("--"));
+        return container;
+    }
+
+    QPointer<QSlider> sourceGuard(source);
     copy->setRange(source->minimum(), source->maximum());
     copy->setSingleStep(source->singleStep());
     copy->setPageStep(source->pageStep());
+    copy->setInvertedAppearance(source->invertedAppearance());
     copy->setValue(source->value());
-    const auto updateLabel = [valueLabel, suffix, divisor](int value) {
-        valueLabel->setText(QStringLiteral("%1%2").arg(value / divisor, 0, 'f', divisor == 1.0 ? 0 : 1).arg(suffix));
-    };
     updateLabel(copy->value());
-    layout->addWidget(copy, 1);
-    layout->addWidget(valueLabel);
-    QObject::connect(copy, &QSlider::valueChanged, source, [source, updateLabel](int value) {
+    QObject::connect(copy, &QSlider::valueChanged, copy, [sourceGuard, updateLabel](int value) {
         updateLabel(value);
-        if (source && source->value() != value) {
-            source->setValue(value);
-        }
+        if (sourceGuard && sourceGuard->value() != value) sourceGuard->setValue(value);
     });
     QObject::connect(source, &QSlider::valueChanged, copy, [copy, updateLabel](int value) {
         updateLabel(value);
-        if (copy && copy->value() != value) {
+        if (copy->value() != value) {
             const QSignalBlocker blocker(copy);
             copy->setValue(value);
         }
     });
-    QObject::connect(syncTimer, &QTimer::timeout, copy, [source, copy, updateLabel]() {
-        if (!source || !copy || focusInside(copy)) {
+    QObject::connect(syncTimer, &QTimer::timeout, copy, [sourceGuard, copy, updateLabel]() {
+        if (!sourceGuard) {
+            copy->setEnabled(false);
             return;
         }
-        if (copy->minimum() != source->minimum() || copy->maximum() != source->maximum()) {
+        if (focusInside(copy)) return;
+        if (copy->minimum() != sourceGuard->minimum() || copy->maximum() != sourceGuard->maximum()) {
             const QSignalBlocker blocker(copy);
-            copy->setRange(source->minimum(), source->maximum());
+            copy->setRange(sourceGuard->minimum(), sourceGuard->maximum());
         }
-        if (copy->value() != source->value()) {
+        if (copy->value() != sourceGuard->value()) {
             const QSignalBlocker blocker(copy);
-            copy->setValue(source->value());
-            updateLabel(source->value());
+            copy->setValue(sourceGuard->value());
+            updateLabel(sourceGuard->value());
         }
-        copy->setEnabled(source->isEnabled());
+        copy->setEnabled(sourceGuard->isEnabled());
     });
     return container;
 }
-
+QWidget *valueSlider(QSlider **sliderOut, QWidget *parent, int minimum, int maximum,
+                     int value, const QString &suffix = QString(), double divisor = 1.0) {
+    auto *container = new QWidget(parent);
+    auto *layout = new QHBoxLayout(container);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(5);
+    auto *slider = new QSlider(Qt::Horizontal, container);
+    auto *valueLabel = new QLabel(container);
+    valueLabel->setMinimumWidth(72);
+    valueLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    slider->setRange(minimum, maximum);
+    slider->setValue(std::clamp(value, minimum, maximum));
+    const auto updateLabel = [valueLabel, suffix, divisor](int current) {
+        const double safeDivisor = divisor == 0.0 ? 1.0 : divisor;
+        valueLabel->setText(QStringLiteral("%1%2")
+                                .arg(current / safeDivisor, 0, 'f',
+                                     safeDivisor == 1.0 ? 0 : 1)
+                                .arg(suffix));
+    };
+    updateLabel(slider->value());
+    QObject::connect(slider, &QSlider::valueChanged, slider, updateLabel);
+    layout->addWidget(slider, 1);
+    layout->addWidget(valueLabel);
+    if (sliderOut) *sliderOut = slider;
+    return container;
+}
 QCheckBox *linkedCheckBox(QCheckBox *source, const QString &text, QWidget *parent, QTimer *syncTimer) {
     auto *copy = new QCheckBox(text, parent);
-    copy->setChecked(source->isChecked());
-    QObject::connect(copy, &QCheckBox::toggled, source, [source](bool checked) {
-        if (source && source->isChecked() != checked) {
-            source->setChecked(checked);
-        }
+    if (!source) {
+        copy->setEnabled(false);
+        return copy;
+    }
+
+    QPointer<QCheckBox> sourceGuard(source);
+    copy->setChecked(sourceGuard->isChecked());
+    QObject::connect(copy, &QCheckBox::toggled, copy, [sourceGuard](bool checked) {
+        if (sourceGuard && sourceGuard->isChecked() != checked) sourceGuard->setChecked(checked);
     });
     QObject::connect(source, &QCheckBox::toggled, copy, [copy](bool checked) {
-        if (copy && copy->isChecked() != checked) {
+        if (copy->isChecked() != checked) {
             const QSignalBlocker blocker(copy);
             copy->setChecked(checked);
         }
     });
-    QObject::connect(syncTimer, &QTimer::timeout, copy, [source, copy]() {
-        if (!source || !copy || focusInside(copy)) return;
-        if (copy->isChecked() != source->isChecked()) {
-            const QSignalBlocker blocker(copy);
-            copy->setChecked(source->isChecked());
+    QObject::connect(syncTimer, &QTimer::timeout, copy, [sourceGuard, copy]() {
+        if (!sourceGuard) {
+            copy->setEnabled(false);
+            return;
         }
-        copy->setEnabled(source->isEnabled());
+        if (focusInside(copy)) return;
+        if (copy->isChecked() != sourceGuard->isChecked()) {
+            const QSignalBlocker blocker(copy);
+            copy->setChecked(sourceGuard->isChecked());
+        }
+        copy->setEnabled(sourceGuard->isEnabled());
     });
     return copy;
 }
-
 QDoubleSpinBox *linkedDoubleSpin(QDoubleSpinBox *source, QWidget *parent, QTimer *syncTimer) {
     auto *copy = new QDoubleSpinBox(parent);
-    copy->setRange(source->minimum(), source->maximum());
-    copy->setDecimals(source->decimals());
-    copy->setSingleStep(source->singleStep());
-    copy->setSuffix(source->suffix());
+    if (!source) { copy->setEnabled(false); return copy; }
+    QPointer<QDoubleSpinBox> sourceGuard(source);
+    copy->setRange(sourceGuard->minimum(), sourceGuard->maximum());
+    copy->setDecimals(sourceGuard->decimals());
+    copy->setSingleStep(sourceGuard->singleStep());
+    copy->setSuffix(sourceGuard->suffix());
     copy->setKeyboardTracking(false);
-    copy->setValue(source->value());
-    QObject::connect(copy, QOverload<double>::of(&QDoubleSpinBox::valueChanged), source,
-                     [source](double value) { if (source && source->value() != value) source->setValue(value); });
+    copy->setValue(sourceGuard->value());
+    QObject::connect(copy, QOverload<double>::of(&QDoubleSpinBox::valueChanged), copy,
+        [sourceGuard](double value) {
+            if (sourceGuard && !qFuzzyCompare(sourceGuard->value() + 1.0, value + 1.0))
+                sourceGuard->setValue(value);
+        });
     QObject::connect(source, QOverload<double>::of(&QDoubleSpinBox::valueChanged), copy,
-                     [copy](double value) {
-                         if (copy && copy->value() != value) {
-                             const QSignalBlocker blocker(copy); copy->setValue(value);
-                         }
-                     });
-    QObject::connect(syncTimer, &QTimer::timeout, copy, [source, copy]() {
-        if (!source || !copy || focusInside(copy)) return;
-        if (copy->value() != source->value()) {
-            const QSignalBlocker blocker(copy); copy->setValue(source->value());
+        [copy](double value) {
+            if (!qFuzzyCompare(copy->value() + 1.0, value + 1.0)) {
+                const QSignalBlocker blocker(copy); copy->setValue(value);
+            }
+        });
+    QObject::connect(syncTimer, &QTimer::timeout, copy, [sourceGuard, copy]() {
+        if (!sourceGuard) { copy->setEnabled(false); return; }
+        if (focusInside(copy)) return;
+        if (copy->minimum() != sourceGuard->minimum() || copy->maximum() != sourceGuard->maximum()) {
+            const QSignalBlocker blocker(copy);
+            copy->setRange(sourceGuard->minimum(), sourceGuard->maximum());
         }
-        copy->setEnabled(source->isEnabled());
+        if (!qFuzzyCompare(copy->value() + 1.0, sourceGuard->value() + 1.0)) {
+            const QSignalBlocker blocker(copy); copy->setValue(sourceGuard->value());
+        }
+        copy->setEnabled(sourceGuard->isEnabled());
     });
     return copy;
 }
-
 QSpinBox *linkedSpin(QSpinBox *source, QWidget *parent, QTimer *syncTimer) {
     auto *copy = new QSpinBox(parent);
-    copy->setRange(source->minimum(), source->maximum());
-    copy->setSingleStep(source->singleStep());
-    copy->setSuffix(source->suffix());
-    copy->setValue(source->value());
-    QObject::connect(copy, QOverload<int>::of(&QSpinBox::valueChanged), source,
-                     [source](int value) { if (source && source->value() != value) source->setValue(value); });
+    if (!source) { copy->setEnabled(false); return copy; }
+    QPointer<QSpinBox> sourceGuard(source);
+    copy->setRange(sourceGuard->minimum(), sourceGuard->maximum());
+    copy->setSingleStep(sourceGuard->singleStep());
+    copy->setSuffix(sourceGuard->suffix());
+    copy->setValue(sourceGuard->value());
+    QObject::connect(copy, QOverload<int>::of(&QSpinBox::valueChanged), copy,
+        [sourceGuard](int value) {
+            if (sourceGuard && sourceGuard->value() != value) sourceGuard->setValue(value);
+        });
     QObject::connect(source, QOverload<int>::of(&QSpinBox::valueChanged), copy,
-                     [copy](int value) {
-                         if (copy && copy->value() != value) {
-                             const QSignalBlocker blocker(copy); copy->setValue(value);
-                         }
-                     });
-    QObject::connect(syncTimer, &QTimer::timeout, copy, [source, copy]() {
-        if (!source || !copy || focusInside(copy)) return;
-        if (copy->value() != source->value()) {
-            const QSignalBlocker blocker(copy); copy->setValue(source->value());
+        [copy](int value) {
+            if (copy->value() != value) {
+                const QSignalBlocker blocker(copy); copy->setValue(value);
+            }
+        });
+    QObject::connect(syncTimer, &QTimer::timeout, copy, [sourceGuard, copy]() {
+        if (!sourceGuard) { copy->setEnabled(false); return; }
+        if (focusInside(copy)) return;
+        if (copy->minimum() != sourceGuard->minimum() || copy->maximum() != sourceGuard->maximum()) {
+            const QSignalBlocker blocker(copy);
+            copy->setRange(sourceGuard->minimum(), sourceGuard->maximum());
         }
-        copy->setEnabled(source->isEnabled());
+        if (copy->value() != sourceGuard->value()) {
+            const QSignalBlocker blocker(copy); copy->setValue(sourceGuard->value());
+        }
+        copy->setEnabled(sourceGuard->isEnabled());
     });
     return copy;
 }
-
 QLineEdit *linkedLineEdit(QLineEdit *source, QWidget *parent, QTimer *syncTimer) {
     auto *copy = new QLineEdit(parent);
-    copy->setText(source->text());
-    copy->setPlaceholderText(source->placeholderText());
-    QObject::connect(copy, &QLineEdit::editingFinished, source, [source, copy]() {
-        if (source && source->text() != copy->text()) {
-            source->setText(copy->text());
-            emit source->editingFinished();
+    if (!source) { copy->setEnabled(false); return copy; }
+    QPointer<QLineEdit> sourceGuard(source);
+    copy->setText(sourceGuard->text());
+    copy->setPlaceholderText(sourceGuard->placeholderText());
+    QObject::connect(copy, &QLineEdit::editingFinished, copy, [sourceGuard, copy]() {
+        if (sourceGuard && sourceGuard->text() != copy->text()) {
+            sourceGuard->setText(copy->text()); emit sourceGuard->editingFinished();
         }
     });
     QObject::connect(source, &QLineEdit::textChanged, copy, [copy](const QString &value) {
         if (!focusInside(copy) && copy->text() != value) {
-            const QSignalBlocker blocker(copy);
-            copy->setText(value);
+            const QSignalBlocker blocker(copy); copy->setText(value);
         }
     });
-    QObject::connect(syncTimer, &QTimer::timeout, copy, [source, copy]() {
-        if (!source || !copy || focusInside(copy)) return;
-        if (copy->text() != source->text()) {
-            const QSignalBlocker blocker(copy);
-            copy->setText(source->text());
+    QObject::connect(syncTimer, &QTimer::timeout, copy, [sourceGuard, copy]() {
+        if (!sourceGuard) { copy->setEnabled(false); return; }
+        if (focusInside(copy)) return;
+        if (copy->text() != sourceGuard->text()) {
+            const QSignalBlocker blocker(copy); copy->setText(sourceGuard->text());
         }
-        copy->setEnabled(source->isEnabled());
+        copy->setEnabled(sourceGuard->isEnabled());
     });
     return copy;
 }
-
+QLabel *linkedLabel(QLabel *source, QWidget *parent, QTimer *syncTimer) {
+    auto *copy = new QLabel(parent);
+    copy->setWordWrap(true);
+    copy->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    if (!source) {
+        copy->setText(QStringLiteral("--"));
+        copy->setEnabled(false);
+        return copy;
+    }
+    QPointer<QLabel> sourceGuard(source);
+    copy->setText(source->text());
+    copy->setToolTip(source->toolTip());
+    QObject::connect(syncTimer, &QTimer::timeout, copy, [sourceGuard, copy]() {
+        if (!sourceGuard) {
+            copy->setEnabled(false);
+            return;
+        }
+        if (copy->text() != sourceGuard->text()) copy->setText(sourceGuard->text());
+        if (copy->toolTip() != sourceGuard->toolTip()) copy->setToolTip(sourceGuard->toolTip());
+        copy->setEnabled(sourceGuard->isEnabled());
+    });
+    return copy;
+}
 AudioFilterKind filterKindForBlock(const QString &type, bool *ok = nullptr) {
     static const QHash<QString, AudioFilterKind> kinds = {
         {QStringLiteral("filter_low_pass"), AudioFilterKind::LowPass},
@@ -278,6 +372,90 @@ AudioFilterKind filterKindForBlock(const QString &type, bool *ok = nullptr) {
 }
 
 } // namespace
+
+void YourClassName::ensureDspFlowPanel() {
+    if (dspFlowPanel) return;
+    dspFlowPanel = new DspFlowPanel(nullptr);
+    dspFlowPanel->setAttribute(Qt::WA_DeleteOnClose, false);
+    dspFlowPanel->setLanguage(normalizedUiLanguage(uiLanguage) == QStringLiteral("uk"));
+    dspFlowPanel->setAnalogPeakMeterEnabled(showSpectrumPeakMeter);
+    dspFlowPanel->setAnalogPeakMeterStyle(spectrumPeakMeterStyle);
+    QSettings settings(persistentSettingsFilePath(), QSettings::IniFormat);
+    dspFlowPanel->setConfigurationJson(
+        settings.value(QStringLiteral("dspFlow/configuration")).toString());
+    connect(dspFlowPanel, &DspFlowPanel::configurationChanged, this,
+            [this](const QString &json) {
+                QSettings settings(persistentSettingsFilePath(), QSettings::IniFormat);
+                settings.setValue(QStringLiteral("dspFlow/configuration"), json);
+            });
+    connect(dspFlowPanel, &DspFlowPanel::blockActivated,
+            this, &YourClassName::openDspBlockReference);
+    connect(dspFlowPanel, &DspFlowPanel::blockCreated,
+            this, &YourClassName::registerDspFilterBlock);
+    connect(dspFlowPanel, &DspFlowPanel::controlTriggered,
+            this, &YourClassName::triggerDspControlBlock);
+    connect(dspFlowPanel, &DspFlowPanel::controlStateRefreshRequested,
+            this, &YourClassName::refreshDspControlStates);
+    connect(dspFlowPanel, &DspFlowPanel::fineTuneDeltaRequested,
+            this, [this](double deltaHz) { applyListeningFrequencyDelta(deltaHz, 60); });
+    connect(dspFlowPanel, &DspFlowPanel::workspaceScaleChanged,
+            this, &YourClassName::onWaterfallScaleChanged);
+    connect(dspFlowPanel, &DspFlowPanel::workspacePanRequested,
+            this, &YourClassName::panSpectrumView);
+    connect(dspFlowPanel, &DspFlowPanel::workspaceTuneContextRequested,
+            this, &YourClassName::showTuneContextMenu);
+    connect(dspFlowPanel, &DspFlowPanel::workspaceAutoTuneRequested,
+            this, &YourClassName::tuneSignalCenterAt);
+    connect(dspFlowPanel, &DspFlowPanel::workspaceScienceMarkerRequested,
+            this, &YourClassName::setSpectrumScienceMarker);
+    connect(dspFlowPanel, &DspFlowPanel::workspaceMultiVfoSelectionRequested,
+            this, [this](double lowHz, double highHz) {
+                if (!multiVfoWidget) return;
+                const int channelIndex = multiVfoWidget->addSelection(lowHz, highHz);
+                if (dspFlowPanel && channelIndex >= 0) dspFlowPanel->addMultiVfoBranch(channelIndex);
+            });
+    connect(dspFlowPanel, &DspFlowPanel::workspaceListeningFrequencyRequested,
+            this, [this](double frequency) {
+                updateTuningFromScale(frequency, pendingSettings.centerFrequency);
+            });
+    connect(dspFlowPanel, &DspFlowPanel::workspaceCenterFrequencyRequested,
+            this, [this](double frequency) {
+                updateTuningFromScale(pendingSettings.listeningFrequency, frequency);
+            });
+    connect(dspFlowPanel, &DspFlowPanel::workspaceTuningRequested,
+            this, &YourClassName::updateTuningFromScale);
+    connect(dspFlowPanel, &DspFlowPanel::workspaceAnalogPeakMeterToggled,
+            this, [this](bool enabled) {
+                showSpectrumPeakMeter = enabled;
+                if (graphWidget) graphWidget->setAnalogPeakMeterEnabled(enabled);
+                if (dspFlowPanel) dspFlowPanel->setAnalogPeakMeterEnabled(enabled);
+                savePersistentSettings();
+            });
+    connect(dspFlowPanel, &DspFlowPanel::workspaceAnalogPeakMeterStyleChanged,
+            this, [this](int style) {
+                spectrumPeakMeterStyle = std::clamp(style, 0, 1);
+                if (graphWidget) graphWidget->setAnalogPeakMeterStyle(spectrumPeakMeterStyle);
+                if (dspFlowPanel) dspFlowPanel->setAnalogPeakMeterStyle(spectrumPeakMeterStyle);
+                savePersistentSettings();
+            });
+    connect(dspFlowPanel, &DspFlowPanel::workspaceModeExitRequested, this, [this]() {
+        alternativeInterfaceMode = false;
+        if (dspFlowPanel) {
+            dspFlowPanel->setWorkspaceMode(false);
+            dspFlowPanel->hide();
+        }
+        showNormal();
+        show();
+        raise();
+        activateWindow();
+        savePersistentSettings();
+    });
+    connect(dspFlowPanel, &DspFlowPanel::workspaceCloseRequested, this, [this]() {
+        if (dspFlowPanel) dspFlowPanel->hide();
+        close();
+    });
+    refreshDspControlStates();
+}
 
 void YourClassName::registerDspFilterBlock(const QString &type, const QString &id) {
     bool ok = false;
@@ -314,6 +492,43 @@ void YourClassName::refreshDspControlStates() {
     states.insert(QStringLiteral("gnss_serial"), gnssSerialPort && gnssSerialPort->isOpen());
     dspFlowPanel->setControlStates(runState != RadioRunState::Idle, states);
     dspFlowPanel->setFineTuneRangeHz(fineTuneRangeHz());
+    QJsonObject visualization;
+    visualization.insert(QStringLiteral("displayMode"), waterfallDisplayModeCombo
+        ? waterfallDisplayModeCombo->currentData().toInt()
+        : static_cast<int>(MyWaterfallWidget::DisplayMode::Waterfall2D));
+    visualization.insert(QStringLiteral("resolutionDivisor"), waterfall3DResolutionDivisor);
+visualization.insert(QStringLiteral("historyRows"), waterfall3DHistoryRows);
+    visualization.insert(QStringLiteral("rowsPerFrame"), waterfallRowsPerFrame);
+    visualization.insert(QStringLiteral("gpuPrepared"), experimentalGpuWaterfall);
+    visualization.insert(QStringLiteral("minimumDbfs"), displayLevelMin);
+    visualization.insert(QStringLiteral("maximumDbfs"), displayLevelMax);
+    visualization.insert(QStringLiteral("contrast"), contrast);
+    visualization.insert(QStringLiteral("sensitivity"), sensitivity);
+    visualization.insert(QStringLiteral("colorSpectrum"), checked(colorCheckbox));
+    visualization.insert(QStringLiteral("spectrumGradientFill"),
+                         checked(alternativeSpectrumGradientCheckbox));
+    visualization.insert(QStringLiteral("spectrumGradientOpacity"),
+                         alternativeSpectrumGradientOpacity);
+    visualization.insert(QStringLiteral("secondSpectrum"), checked(graphCheckbox));
+    visualization.insert(QStringLiteral("showSpectrumFps"), showSpectrumFps);
+    visualization.insert(QStringLiteral("showWaterfallFps"), showWaterfallFps);
+    visualization.insert(QStringLiteral("showExtendedSpectrumInfo"), showExtendedSpectrumInfo);
+    visualization.insert(QStringLiteral("waterfallAreaMeasurementEnabled"), waterfallAreaMeasurementEnabled);
+    visualization.insert(QStringLiteral("waterfall3DFixedPlane"), waterfall3DFixedPlane);
+    visualization.insert(QStringLiteral("waterfall3DMonochrome"), waterfall3DMonochrome);
+    visualization.insert(QStringLiteral("waterfall3DSurfaceStyle"), waterfall3DSurfaceStyle);
+    visualization.insert(QStringLiteral("waterfall3DSmoothing"), waterfall3DSmoothing);
+    visualization.insert(QStringLiteral("waterfall3DLighting"), waterfall3DLighting);
+    visualization.insert(QStringLiteral("waterfall3DSpectrumSliceCapture"), waterfall3DSpectrumSliceCapture);
+    visualization.insert(QStringLiteral("waterfall3DSpectrumSliceCaptureFixed"), waterfall3DSpectrumSliceCaptureFixed);
+    visualization.insert(QStringLiteral("waterfall3DVncSliceInput"), waterfall3DVncSliceInput);
+    visualization.insert(QStringLiteral("waterfall3DSliceScrollStep"), waterfall3DSliceScrollStep);
+    visualization.insert(QStringLiteral("waterfall3DSliceWidth"), waterfall3DSliceWidth);
+    visualization.insert(QStringLiteral("waterfall3DSpectrumSliceScrollStep"), waterfall3DSpectrumSliceScrollStep);
+    visualization.insert(QStringLiteral("waterfall3DSpectrumSliceRows"), waterfall3DSpectrumSliceRows);
+    visualization.insert(QStringLiteral("fftLength"), pendingSettings.fftLength);
+    visualization.insert(QStringLiteral("fftWindowType"), pendingSettings.fftWindowType);
+    dspFlowPanel->setWorkspaceVisualizationSettings(visualization);
 }
 
 void YourClassName::triggerDspControlBlock(const QString &controlType,
@@ -376,6 +591,19 @@ void YourClassName::openDspBlockReference(const QString &type, const QString &id
         return QString::fromUtf8(ukrainian ? uk : en);
     };
 
+    if (dspFlowPanel &&
+        (type == QStringLiteral("workspace_spectrum") ||
+         type == QStringLiteral("workspace_waterfall"))) {
+        const QString controllerId = dspFlowPanel->boundWorkspaceSettingsBlockId(id);
+        if (!controllerId.isEmpty()) {
+            const QString controllerType = dspFlowPanel->blockTypeForId(controllerId);
+            if (!controllerType.isEmpty()) {
+                openDspBlockReference(controllerType, controllerId);
+                return;
+            }
+        }
+    }
+
     bool filterBlock = false;
     const AudioFilterKind filterKind = filterKindForBlock(type, &filterBlock);
     if (filterBlock) {
@@ -391,8 +619,25 @@ void YourClassName::openDspBlockReference(const QString &type, const QString &id
         return;
     }
     if (type == QStringLiteral("zoom_spectrum")) { openZoomSpectrum(); return; }
+    if (type == QStringLiteral("zoom_density")) { openZoomDensity(); return; }
     if (type == QStringLiteral("zero_span")) { openZeroSpanDialog(); return; }
     if (type == QStringLiteral("research_analysis")) { openResearchAnalysis(0); return; }
+    static const QHash<QString, ResearchAnalysisDialog::Tab> researchTabs = {
+        {QStringLiteral("research_interference"), ResearchAnalysisDialog::InterferenceTab},
+        {QStringLiteral("research_statistics"), ResearchAnalysisDialog::StatisticsTab},
+        {QStringLiteral("research_iq"), ResearchAnalysisDialog::IqTab},
+        {QStringLiteral("research_dual_input"), ResearchAnalysisDialog::DualInputTab},
+        {QStringLiteral("research_analyzer"), ResearchAnalysisDialog::AnalyzerTab},
+        {QStringLiteral("research_density"), ResearchAnalysisDialog::DensityTab},
+        {QStringLiteral("research_masks"), ResearchAnalysisDialog::MasksTab},
+        {QStringLiteral("research_pulse"), ResearchAnalysisDialog::PulseTab},
+        {QStringLiteral("research_session"), ResearchAnalysisDialog::SessionTab}
+    };
+    const auto researchTab = researchTabs.constFind(type);
+    if (researchTab != researchTabs.cend()) {
+        openResearchAnalysis(static_cast<int>(researchTab.value()));
+        return;
+    }
     if (type == QStringLiteral("oscilloscope_view") ||
         type == QStringLiteral("constellation_view") ||
         type == QStringLiteral("eye_diagram_view") ||
@@ -489,6 +734,8 @@ void YourClassName::openDspBlockReference(const QString &type, const QString &id
     form->setContentsMargins(0, 0, 0, 0);
     form->setHorizontalSpacing(10);
     form->setVerticalSpacing(7);
+    form->setRowWrapPolicy(QFormLayout::WrapLongRows);
+    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     root->addLayout(form);
     auto *syncTimer = new QTimer(dialog);
@@ -654,6 +901,10 @@ void YourClassName::openDspBlockReference(const QString &type, const QString &id
         form->addRow(QStringLiteral("VGA:"), linkedSlider(vgaGainSlider, dialog, syncTimer));
         form->addRow(QString(), linkedCheckBox(rtlAgcCheckbox, QStringLiteral("RTL AGC"), dialog, syncTimer));
         form->addRow(QStringLiteral("RTL gain:"), linkedSlider(rtlGainSlider, dialog, syncTimer, QStringLiteral(" dB"), 10.0));
+        form->addRow(QString(), buttonRow({
+            actionButton(fobosButton, text("Деталі Fobos", "Fobos details")),
+            actionButton(hackRfSettingsButton, QStringLiteral("HackRF RX..."))
+        }));
         auto *refresh = new QPushButton(text("Оновити список пристроїв", "Refresh device list"), dialog);
         connect(refresh, &QPushButton::clicked, refreshButton, &QPushButton::click);
         form->addRow(QString(), refresh);
@@ -672,28 +923,47 @@ void YourClassName::openDspBlockReference(const QString &type, const QString &id
         form->addRow(QStringLiteral("FFT:"), linkedCombo(fftComboBox, dialog, syncTimer));
         form->addRow(QString(), linkedCheckBox(fftBinWidthModeCheckbox, QStringLiteral("Hz/point"), dialog, syncTimer));
         form->addRow(QStringLiteral("Hz/point:"), linkedDoubleSpin(fftBinWidthSpin, dialog, syncTimer));
+    } else if (type == QStringLiteral("display_scale")) {
+        title = text("Масштаб і рівні", "Scale and levels");
+        form->addRow(text("Масштаб:", "Scale:"),
+                     linkedSlider(scaleSlider, dialog, syncTimer,
+                                  QStringLiteral("%"), SCALE_SLIDER_FACTOR));
+        form->addRow(text("Дод. масштаб:", "Extra scale:"),
+                     linkedSlider(additionalScaleDivisorSlider, dialog, syncTimer));
+        form->addRow(text("Мінімум:", "Minimum:"),
+                     linkedSlider(levelMinSlider, dialog, syncTimer,
+                                  QStringLiteral(" dBFS"), LEVEL_SLIDER_FACTOR));
+        form->addRow(text("Максимум:", "Maximum:"),
+                     linkedSlider(levelMaxSlider, dialog, syncTimer,
+                                  QStringLiteral(" dBFS"), LEVEL_SLIDER_FACTOR));
+        auto *hint = new QLabel(
+            text("Глобальні значення синхронно застосовуються до спектра, водоспаду та частотної шкали.",
+                 "Global values are applied synchronously to spectrum, waterfall, and frequency ruler."),
+            dialog);
+        hint->setWordWrap(true);
+        form->addRow(QString(), hint);
     } else if (type == QStringLiteral("hf_interference")) {
         title = text("HF лабораторія завад", "HF interference lab");
         form->addRow(QString(), linkedCheckBox(hfNoiseCancelFreezeCheckbox,
                                                text("Заморозити оцінку", "Freeze estimate"), dialog, syncTimer));
         form->addRow(text("Глибина придушення:", "Cancellation depth:"),
-                     linkedSlider(hfNoiseCancelDepthSlider, dialog, syncTimer));
+                     linkedSlider(hfNoiseCancelDepthSlider, dialog, syncTimer, QStringLiteral("%"), 1.0));
         form->addRow(text("Підсилення опори:", "Reference gain:"),
-                     linkedSlider(hfNoiseCancelRefGainSlider, dialog, syncTimer));
+                     linkedSlider(hfNoiseCancelRefGainSlider, dialog, syncTimer, QStringLiteral(" dB"), 10.0));
         form->addRow(text("Затримка опори:", "Reference delay:"),
-                     linkedSlider(hfNoiseCancelRefDelaySlider, dialog, syncTimer));
+                     linkedSlider(hfNoiseCancelRefDelaySlider, dialog, syncTimer, QStringLiteral(" ns")));
         form->addRow(text("Нахил опори:", "Reference tilt:"),
-                     linkedSlider(hfNoiseCancelRefTiltSlider, dialog, syncTimer));
+                     linkedSlider(hfNoiseCancelRefTiltSlider, dialog, syncTimer, QStringLiteral(" dB"), 10.0));
         form->addRow(QString(), linkedCheckBox(hfAudioBlankerCheckbox,
                                                text("Аудіо blanker", "Audio blanker"), dialog, syncTimer));
         form->addRow(text("Поріг blanker:", "Blanker threshold:"),
-                     linkedSlider(hfAudioBlankerThresholdSlider, dialog, syncTimer));
+                     linkedSlider(hfAudioBlankerThresholdSlider, dialog, syncTimer, QStringLiteral(" x"), 10.0));
         form->addRow(QString(), linkedCheckBox(hfInterferenceBaselineCheckbox,
                                                text("Віднімати baseline", "Subtract baseline"), dialog, syncTimer));
         form->addRow(QString(), linkedCheckBox(hfInterferenceRawOverlayCheckbox,
                                                text("Показати сирий спектр", "Show raw spectrum"), dialog, syncTimer));
         form->addRow(text("Глибина baseline:", "Baseline depth:"),
-                     linkedSlider(hfInterferenceBaselineDepthSlider, dialog, syncTimer));
+                     linkedSlider(hfInterferenceBaselineDepthSlider, dialog, syncTimer, QStringLiteral("%")));
         form->addRow(text("Згладжування:", "Smoothing:"),
                      linkedSlider(hfInterferenceBaselineSmoothSlider, dialog, syncTimer));
         form->addRow(QString(), buttonRow({actionButton(hfInterferenceBaselineLearnButton, text("Навчити", "Learn")),
@@ -704,6 +974,384 @@ void YourClassName::openDspBlockReference(const QString &type, const QString &id
     } else if (type == QStringLiteral("resampler")) {
         title = text("Sample rate / ресемплер", "Sample rate / resampler");
         form->addRow(text("Sample rate:", "Sample rate:"), linkedCombo(sampleBox, dialog, syncTimer));
+    } else if (type == QStringLiteral("workspace_spectrum") ||
+               type == QStringLiteral("workspace_ruler") ||
+               type == QStringLiteral("workspace_waterfall")) {
+        title = type == QStringLiteral("workspace_spectrum")
+                    ? text("Робочий спектр", "Workspace spectrum")
+                    : (type == QStringLiteral("workspace_ruler")
+                           ? text("Лінійка частот", "Frequency ruler")
+                           : text("Робочий водоспад", "Workspace waterfall"));
+        const QJsonObject blockSettings = dspFlowPanel
+                                              ? dspFlowPanel->blockSettings(id)
+                                              : QJsonObject();
+        auto *paused = new QCheckBox(text("Пауза", "Pause"), dialog);
+        paused->setChecked(blockSettings.value(QStringLiteral("paused")).toBool(false));
+        form->addRow(QString(), paused);
+        QComboBox *workspaceDisplayMode = nullptr;
+        if (type == QStringLiteral("workspace_waterfall")) {
+            workspaceDisplayMode = new QComboBox(dialog);
+            if (waterfallDisplayModeCombo) {
+                for (int index = 0; index < waterfallDisplayModeCombo->count(); ++index) {
+                    workspaceDisplayMode->addItem(waterfallDisplayModeCombo->itemText(index),
+                                                  waterfallDisplayModeCombo->itemData(index));
+                }
+            }
+            if (workspaceDisplayMode->count() == 0) {
+                workspaceDisplayMode->addItem(text("2D водоспад", "2D waterfall"), 0);
+                workspaceDisplayMode->addItem(text("3D водоспад", "3D waterfall"), 1);
+                workspaceDisplayMode->addItem(text("3D + міні", "3D + mini"), 2);
+            }
+            const int globalMode = waterfallDisplayModeCombo
+                                       ? waterfallDisplayModeCombo->currentData().toInt()
+                                       : 0;
+            const int storedMode = blockSettings.value(QStringLiteral("displayMode")).toInt(globalMode);
+            const int modeIndex = workspaceDisplayMode->findData(storedMode);
+            workspaceDisplayMode->setCurrentIndex(modeIndex >= 0 ? modeIndex : 0);
+            form->addRow(text("Режим цього віджета:", "This widget mode:"), workspaceDisplayMode);
+        }
+
+        QCheckBox *workspaceColor = nullptr;
+        QCheckBox *workspaceGradient = nullptr;
+        QSlider *workspaceGradientOpacity = nullptr;
+        QSlider *workspaceSensitivity = nullptr;
+        QSlider *workspaceContrast = nullptr;
+        QCheckBox *workspaceFixedPlane = nullptr;
+        QCheckBox *workspaceMonochrome = nullptr;
+        QComboBox *workspaceResolution = nullptr;
+        QComboBox *workspaceSurface = nullptr;
+        QComboBox *workspaceSmoothing = nullptr;
+        QComboBox *workspaceLighting = nullptr;
+        QSlider *workspaceHistory = nullptr;
+        QSlider *workspaceFrequencyStep = nullptr;
+        QSlider *workspaceFrequencyWidth = nullptr;
+        QSlider *workspaceSpectrumStep = nullptr;
+        QSlider *workspaceSpectrumRows = nullptr;
+        QCheckBox *workspaceCapture = nullptr;
+        QCheckBox *workspaceCaptureFixed = nullptr;
+        QCheckBox *workspaceVncInput = nullptr;
+        if (type == QStringLiteral("workspace_waterfall")) {
+            form->addRow(text("Чутливість:", "Sensitivity:"),
+                         valueSlider(&workspaceSensitivity, dialog, 1, 30,
+                                     blockSettings.value(QStringLiteral("sensitivity")).toInt(sensitivity)));
+            form->addRow(text("Контраст:", "Contrast:"),
+                         valueSlider(&workspaceContrast, dialog, 1, 20,
+                                     blockSettings.value(QStringLiteral("contrast")).toInt(contrast)));
+        }
+        if (type == QStringLiteral("workspace_spectrum") ||
+            type == QStringLiteral("workspace_waterfall")) {
+            workspaceColor = new QCheckBox(text("Кольоровий спектр", "Colored spectrum"), dialog);
+            workspaceColor->setChecked(
+                blockSettings.value(QStringLiteral("colorSpectrum")).toBool(
+                    colorCheckbox ? colorCheckbox->isChecked() : true));
+        }
+        if (type == QStringLiteral("workspace_spectrum") ||
+            type == QStringLiteral("workspace_waterfall")) {
+            workspaceGradient = new QCheckBox(text("Градієнт спектра", "Spectrum gradient"), dialog);
+            workspaceGradient->setChecked(
+                blockSettings.value(QStringLiteral("spectrumGradientFill")).toBool(
+                    alternativeSpectrumGradientCheckbox
+                        ? alternativeSpectrumGradientCheckbox->isChecked()
+                        : false));
+            form->addRow(QString(), workspaceColor);
+            form->addRow(QString(), workspaceGradient);
+            form->addRow(text("Прозорість градієнта:", "Gradient opacity:"),
+                         valueSlider(&workspaceGradientOpacity, dialog, 0, 100,
+                                     blockSettings.value(QStringLiteral("spectrumGradientOpacity")).toInt(
+                                         alternativeSpectrumGradientOpacity),
+                                     QStringLiteral("%")));
+        }
+        if (type == QStringLiteral("workspace_waterfall")) {
+            workspaceFixedPlane = new QCheckBox(
+                text("Зафіксувати площину", "Fix plane"), dialog);
+            workspaceMonochrome = new QCheckBox(
+                text("Однотонний синій 3D", "Monochrome blue 3D"), dialog);
+            workspaceFixedPlane->setChecked(
+                blockSettings.value(QStringLiteral("waterfall3DFixedPlane")).toBool(
+                    waterfall3DFixedPlane));
+            workspaceMonochrome->setChecked(
+                blockSettings.value(QStringLiteral("waterfall3DMonochrome")).toBool(
+                    waterfall3DMonochrome));
+            form->addRow(QString(), workspaceFixedPlane);
+            form->addRow(QString(), workspaceMonochrome);
+            workspaceResolution = new QComboBox(dialog);
+            for (int divisor : {1, 2, 4, 8, 16, 32, 64})
+                workspaceResolution->addItem(QStringLiteral("1/%1").arg(divisor), divisor);
+            workspaceResolution->setCurrentIndex((std::max)(0, workspaceResolution->findData(
+                blockSettings.value(QStringLiteral("resolutionDivisor")).toInt(waterfall3DResolutionDivisor))));
+            form->addRow(text("Роздільність:", "Resolution:"), workspaceResolution);
+            workspaceSurface = new QComboBox(dialog);
+            workspaceSurface->addItem(text("Оригінал / голки", "Original / needles"), 0);
+            workspaceSurface->addItem(text("Суцільна поверхня", "Solid surface"), 1);
+            workspaceSurface->setCurrentIndex((std::max)(0, workspaceSurface->findData(
+                blockSettings.value(QStringLiteral("waterfall3DSurfaceStyle")).toInt(waterfall3DSurfaceStyle))));
+            form->addRow(text("Поверхня:", "Surface:"), workspaceSurface);
+            workspaceSmoothing = new QComboBox(dialog);
+            workspaceSmoothing->addItem(text("Вимкнено", "Off"), 0);
+            workspaceSmoothing->addItem(text("М'яке", "Soft"), 1);
+            workspaceSmoothing->addItem(text("Сильне", "Strong"), 2);
+            workspaceSmoothing->setCurrentIndex((std::max)(0, workspaceSmoothing->findData(
+                blockSettings.value(QStringLiteral("waterfall3DSmoothing")).toInt(waterfall3DSmoothing))));
+            form->addRow(text("Згладжування:", "Smoothing:"), workspaceSmoothing);
+            workspaceLighting = new QComboBox(dialog);
+            workspaceLighting->addItem(text("Вимкнено", "Off"), 0);
+            workspaceLighting->addItem(text("М'які тіні", "Soft shadows"), 1);
+            workspaceLighting->addItem(text("Сильні тіні", "Strong shadows"), 2);
+            workspaceLighting->setCurrentIndex((std::max)(0, workspaceLighting->findData(
+                blockSettings.value(QStringLiteral("waterfall3DLighting")).toInt(waterfall3DLighting))));
+            form->addRow(text("Освітлення:", "Lighting:"), workspaceLighting);
+            form->addRow(text("Пам'ять:", "Memory:"),
+                         valueSlider(&workspaceHistory, dialog, 16, 2048,
+                                     blockSettings.value(QStringLiteral("historyRows")).toInt(waterfall3DHistoryRows),
+                                     text(" рядків", " rows")));
+            form->addRow(text("Крок частотного зрізу:", "Frequency slice step:"),
+                         valueSlider(&workspaceFrequencyStep, dialog, 1, 256,
+                                     blockSettings.value(QStringLiteral("waterfall3DSliceScrollStep")).toInt(
+                                         waterfall3DSliceScrollStep), text(" тчк", " pt")));
+            form->addRow(text("Ширина частотного зрізу:", "Frequency slice width:"),
+                         valueSlider(&workspaceFrequencyWidth, dialog, 1, 4096,
+                                     blockSettings.value(QStringLiteral("waterfall3DSliceWidth")).toInt(
+                                         waterfall3DSliceWidth), text(" тчк", " pt")));
+            form->addRow(text("Крок часового зрізу:", "Time slice step:"),
+                         valueSlider(&workspaceSpectrumStep, dialog, 1, 2048,
+                                     blockSettings.value(QStringLiteral("waterfall3DSpectrumSliceScrollStep")).toInt(
+                                         waterfall3DSpectrumSliceScrollStep), text(" ряд.", " rows")));
+            form->addRow(text("Ширина часового зрізу:", "Time slice rows:"),
+                         valueSlider(&workspaceSpectrumRows, dialog, 1, 2048,
+                                     blockSettings.value(QStringLiteral("waterfall3DSpectrumSliceRows")).toInt(
+                                         waterfall3DSpectrumSliceRows), text(" ряд.", " rows")));
+            workspaceCapture = new QCheckBox(text("Захват", "Capture"), dialog);
+            workspaceCaptureFixed = new QCheckBox(text("Зафіксувати захват", "Freeze capture"), dialog);
+            workspaceVncInput = new QCheckBox(
+                text("Зрізи без Alt/Shift (VNC)", "Slices without Alt/Shift (VNC)"), dialog);
+            workspaceCapture->setChecked(blockSettings.value(
+                QStringLiteral("waterfall3DSpectrumSliceCapture")).toBool(waterfall3DSpectrumSliceCapture));
+            workspaceCaptureFixed->setChecked(blockSettings.value(
+                QStringLiteral("waterfall3DSpectrumSliceCaptureFixed")).toBool(
+                    waterfall3DSpectrumSliceCaptureFixed));
+            workspaceCaptureFixed->setEnabled(workspaceCapture->isChecked());
+            workspaceVncInput->setChecked(blockSettings.value(
+                QStringLiteral("waterfall3DVncSliceInput")).toBool(waterfall3DVncSliceInput));
+            auto *captureRow = new QWidget(dialog);
+            auto *captureLayout = new QHBoxLayout(captureRow);
+            captureLayout->setContentsMargins(0, 0, 0, 0);
+            captureLayout->addWidget(workspaceCapture);
+            captureLayout->addWidget(workspaceCaptureFixed);
+            captureLayout->addStretch(1);
+            form->addRow(QString(), captureRow);
+            form->addRow(QString(), workspaceVncInput);
+        }
+        if (type != QStringLiteral("workspace_ruler")) {
+            form->addRow(text("Масштаб:", "Scale:"), linkedSlider(scaleSlider, dialog, syncTimer, QStringLiteral("%"), SCALE_SLIDER_FACTOR));
+            form->addRow(text("Дод. масштаб:", "Extra scale:"),
+                         linkedSlider(additionalScaleDivisorSlider, dialog, syncTimer));
+        }
+
+        const auto levelOverride = std::make_shared<bool>(
+            blockSettings.value(QStringLiteral("levelOverride")).toBool(false));
+        QRadioButton *globalLevels = nullptr;
+        QRadioButton *individualLevels = nullptr;
+        if (type != QStringLiteral("workspace_ruler")) {
+            auto *modeRow = new QWidget(dialog);
+            auto *modeLayout = new QHBoxLayout(modeRow);
+            modeLayout->setContentsMargins(0, 0, 0, 0);
+            globalLevels = new QRadioButton(text("Загально", "Global"), modeRow);
+            individualLevels = new QRadioButton(text("Індивідуально", "Individual"), modeRow);
+            auto *modeGroup = new QButtonGroup(modeRow);
+            modeGroup->addButton(globalLevels);
+            modeGroup->addButton(individualLevels);
+            globalLevels->setChecked(!*levelOverride);
+            individualLevels->setChecked(*levelOverride);
+            modeLayout->addWidget(globalLevels);
+            modeLayout->addWidget(individualLevels);
+            modeLayout->addStretch(1);
+            form->addRow(text("Рівні dBFS:", "dBFS levels:"), modeRow);
+        }
+
+        QSlider *minimumSlider = nullptr;
+        QSlider *maximumSlider = nullptr;
+        QLabel *minimumLabel = nullptr;
+        QLabel *maximumLabel = nullptr;
+        if (type != QStringLiteral("workspace_ruler")) {
+            minimumSlider = new QSlider(Qt::Horizontal, dialog);
+            maximumSlider = new QSlider(Qt::Horizontal, dialog);
+            minimumLabel = new QLabel(dialog);
+            maximumLabel = new QLabel(dialog);
+            minimumSlider->setRange(MIN_LEVEL_SLIDER_VALUE, MAX_LEVEL_SLIDER_VALUE - 1);
+            maximumSlider->setRange(MIN_LEVEL_SLIDER_VALUE + 1, MAX_LEVEL_SLIDER_VALUE);
+            minimumSlider->setValue(levelToSliderValue(static_cast<float>(blockSettings.value(QStringLiteral("minimumDbfs")).toDouble(displayLevelMin))));
+            maximumSlider->setValue(levelToSliderValue(static_cast<float>(blockSettings.value(QStringLiteral("maximumDbfs")).toDouble(displayLevelMax))));
+            if (minimumSlider->value() >= maximumSlider->value()) {
+                maximumSlider->setValue((std::min)(MAX_LEVEL_SLIDER_VALUE, minimumSlider->value() + 1));
+            }
+            const auto makeRow = [dialog](QSlider *slider, QLabel *label) {
+                auto *container = new QWidget(dialog);
+                auto *layout = new QHBoxLayout(container);
+                layout->setContentsMargins(0, 0, 0, 0);
+                label->setMinimumWidth(62);
+                label->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+                layout->addWidget(slider, 1);
+                layout->addWidget(label);
+                return container;
+            };
+            form->addRow(text("Мінімум:", "Minimum:"), makeRow(minimumSlider, minimumLabel));
+            form->addRow(text("Максимум:", "Maximum:"), makeRow(maximumSlider, maximumLabel));
+            minimumSlider->setEnabled(*levelOverride);
+            maximumSlider->setEnabled(*levelOverride);
+        }
+
+        const auto applyWorkspaceSettings = [this, id, type, paused, workspaceDisplayMode,
+                                             minimumSlider, maximumSlider,
+                                             minimumLabel, maximumLabel, levelOverride,
+                                             workspaceColor, workspaceGradient,
+                                             workspaceGradientOpacity, workspaceSensitivity,
+                                             workspaceContrast, workspaceFixedPlane,
+                                             workspaceMonochrome, workspaceResolution,
+                                             workspaceSurface, workspaceSmoothing, workspaceLighting,
+                                             workspaceHistory, workspaceFrequencyStep,
+                                             workspaceFrequencyWidth, workspaceSpectrumStep,
+                                             workspaceSpectrumRows, workspaceCapture,
+                                             workspaceCaptureFixed, workspaceVncInput]() {
+            if (!dspFlowPanel) return;
+            QJsonObject settings = dspFlowPanel->blockSettings(id);
+            settings.insert(QStringLiteral("paused"), paused->isChecked());
+            if (workspaceDisplayMode) {
+                settings.insert(QStringLiteral("displayMode"),
+                                workspaceDisplayMode->currentData().toInt());
+            }
+            if (workspaceSensitivity)
+                settings.insert(QStringLiteral("sensitivity"), workspaceSensitivity->value());
+            else if (type == QStringLiteral("workspace_spectrum"))
+                settings.remove(QStringLiteral("sensitivity"));
+            if (workspaceContrast)
+                settings.insert(QStringLiteral("contrast"), workspaceContrast->value());
+            else if (type == QStringLiteral("workspace_spectrum"))
+                settings.remove(QStringLiteral("contrast"));
+            if (workspaceColor)
+                settings.insert(QStringLiteral("colorSpectrum"), workspaceColor->isChecked());
+            if (workspaceGradient)
+                settings.insert(QStringLiteral("spectrumGradientFill"),
+                                workspaceGradient->isChecked());
+            if (workspaceGradientOpacity)
+                settings.insert(QStringLiteral("spectrumGradientOpacity"),
+                                workspaceGradientOpacity->value());
+            if (workspaceFixedPlane)
+                settings.insert(QStringLiteral("waterfall3DFixedPlane"),
+                                workspaceFixedPlane->isChecked());
+            if (workspaceMonochrome)
+                settings.insert(QStringLiteral("waterfall3DMonochrome"),
+                                workspaceMonochrome->isChecked());
+            if (workspaceResolution) {
+                settings.insert(QStringLiteral("resolutionDivisor"),
+                                workspaceResolution->currentData().toInt());
+                settings.insert(QStringLiteral("waterfall3DSurfaceStyle"),
+                                workspaceSurface->currentData().toInt());
+                settings.insert(QStringLiteral("waterfall3DSmoothing"),
+                                workspaceSmoothing->currentData().toInt());
+                settings.insert(QStringLiteral("waterfall3DLighting"),
+                                workspaceLighting->currentData().toInt());
+                settings.insert(QStringLiteral("historyRows"), workspaceHistory->value());
+                settings.insert(QStringLiteral("waterfall3DSliceScrollStep"),
+                                workspaceFrequencyStep->value());
+                settings.insert(QStringLiteral("waterfall3DSliceWidth"),
+                                workspaceFrequencyWidth->value());
+                settings.insert(QStringLiteral("waterfall3DSpectrumSliceScrollStep"),
+                                workspaceSpectrumStep->value());
+                settings.insert(QStringLiteral("waterfall3DSpectrumSliceRows"),
+                                workspaceSpectrumRows->value());
+                settings.insert(QStringLiteral("waterfall3DSpectrumSliceCapture"),
+                                workspaceCapture->isChecked());
+                settings.insert(QStringLiteral("waterfall3DSpectrumSliceCaptureFixed"),
+                                workspaceCaptureFixed->isChecked());
+                settings.insert(QStringLiteral("waterfall3DVncSliceInput"),
+                                workspaceVncInput->isChecked());
+            }
+            if (minimumSlider && maximumSlider) {
+                if (minimumSlider->value() >= maximumSlider->value()) {
+                    const QSignalBlocker blocker(maximumSlider);
+                    maximumSlider->setValue((std::min)(maximumSlider->maximum(),
+                                                       minimumSlider->value() + 1));
+                }
+                settings.insert(QStringLiteral("minimumDbfs"), sliderValueToLevel(minimumSlider->value()));
+                settings.insert(QStringLiteral("maximumDbfs"), sliderValueToLevel(maximumSlider->value()));
+                settings.insert(QStringLiteral("levelOverride"), *levelOverride);
+                minimumLabel->setText(QStringLiteral("%1 dBFS").arg(sliderValueToLevel(minimumSlider->value()), 0, 'f', 1));
+                maximumLabel->setText(QStringLiteral("%1 dBFS").arg(sliderValueToLevel(maximumSlider->value()), 0, 'f', 1));
+            }
+            dspFlowPanel->setBlockSettings(id, settings);
+        };
+        connect(paused, &QCheckBox::toggled, dialog,
+                [applyWorkspaceSettings](bool) { applyWorkspaceSettings(); });
+        if (workspaceDisplayMode) {
+            connect(workspaceDisplayMode, QOverload<int>::of(&QComboBox::currentIndexChanged), dialog,
+                    [applyWorkspaceSettings](int) { applyWorkspaceSettings(); });
+        }
+        if (workspaceSensitivity)
+            connect(workspaceSensitivity, &QSlider::valueChanged, dialog,
+                    [applyWorkspaceSettings](int) { applyWorkspaceSettings(); });
+        if (workspaceContrast)
+            connect(workspaceContrast, &QSlider::valueChanged, dialog,
+                    [applyWorkspaceSettings](int) { applyWorkspaceSettings(); });
+        if (workspaceColor)
+            connect(workspaceColor, &QCheckBox::toggled, dialog,
+                    [applyWorkspaceSettings](bool) { applyWorkspaceSettings(); });
+        if (workspaceGradient)
+            connect(workspaceGradient, &QCheckBox::toggled, dialog,
+                    [applyWorkspaceSettings](bool) { applyWorkspaceSettings(); });
+        if (workspaceGradientOpacity)
+            connect(workspaceGradientOpacity, &QSlider::valueChanged, dialog,
+                    [applyWorkspaceSettings](int) { applyWorkspaceSettings(); });
+        if (workspaceFixedPlane)
+            connect(workspaceFixedPlane, &QCheckBox::toggled, dialog,
+                    [applyWorkspaceSettings](bool) { applyWorkspaceSettings(); });
+        if (workspaceMonochrome)
+            connect(workspaceMonochrome, &QCheckBox::toggled, dialog,
+                    [applyWorkspaceSettings](bool) { applyWorkspaceSettings(); });
+        for (QComboBox *combo : {workspaceResolution, workspaceSurface,
+                                 workspaceSmoothing, workspaceLighting}) {
+            if (combo) connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged), dialog,
+                               [applyWorkspaceSettings](int) { applyWorkspaceSettings(); });
+        }
+        for (QSlider *slider : {workspaceHistory, workspaceFrequencyStep,
+                                workspaceFrequencyWidth, workspaceSpectrumStep,
+                                workspaceSpectrumRows}) {
+            if (slider) connect(slider, &QSlider::valueChanged, dialog,
+                                [applyWorkspaceSettings](int) { applyWorkspaceSettings(); });
+        }
+        if (workspaceCapture) {
+            connect(workspaceCapture, &QCheckBox::toggled, dialog,
+                    [applyWorkspaceSettings, workspaceCaptureFixed](bool checked) {
+                        workspaceCaptureFixed->setEnabled(checked);
+                        applyWorkspaceSettings();
+                    });
+            connect(workspaceCaptureFixed, &QCheckBox::toggled, dialog,
+                    [applyWorkspaceSettings](bool) { applyWorkspaceSettings(); });
+            connect(workspaceVncInput, &QCheckBox::toggled, dialog,
+                    [applyWorkspaceSettings](bool) { applyWorkspaceSettings(); });
+        }
+        if (minimumSlider && maximumSlider) {
+            connect(minimumSlider, &QSlider::valueChanged, dialog,
+                    [applyWorkspaceSettings](int) { applyWorkspaceSettings(); });
+            connect(maximumSlider, &QSlider::valueChanged, dialog,
+                    [applyWorkspaceSettings](int) { applyWorkspaceSettings(); });
+            connect(globalLevels, &QRadioButton::toggled, dialog,
+                    [applyWorkspaceSettings, levelOverride, minimumSlider, maximumSlider](bool checked) {
+                        if (!checked) return;
+                        *levelOverride = false;
+                        minimumSlider->setEnabled(false);
+                        maximumSlider->setEnabled(false);
+                        applyWorkspaceSettings();
+                    });
+            connect(individualLevels, &QRadioButton::toggled, dialog,
+                    [applyWorkspaceSettings, levelOverride, minimumSlider, maximumSlider](bool checked) {
+                        if (!checked) return;
+                        *levelOverride = true;
+                        minimumSlider->setEnabled(true);
+                        maximumSlider->setEnabled(true);
+                        applyWorkspaceSettings();
+                    });
+        }
+        applyWorkspaceSettings();
     } else if (type == QStringLiteral("vfo_spectrum") || type == QStringLiteral("vfo_waterfall")) {
         title = type == QStringLiteral("vfo_spectrum")
                     ? text("Спектр VFO", "VFO spectrum")
@@ -760,10 +1408,10 @@ void YourClassName::openDspBlockReference(const QString &type, const QString &id
         auto *maximumSlider = new QSlider(Qt::Horizontal, dialog);
         auto *minimumLabel = new QLabel(dialog);
         auto *maximumLabel = new QLabel(dialog);
-        minimumSlider->setRange(-200, 19);
-        maximumSlider->setRange(-199, 20);
-        minimumSlider->setValue(blockSettings.value(QStringLiteral("minimumDbfs")).toInt(-140));
-        maximumSlider->setValue(blockSettings.value(QStringLiteral("maximumDbfs")).toInt(-40));
+        minimumSlider->setRange(MIN_LEVEL_SLIDER_VALUE, MAX_LEVEL_SLIDER_VALUE - 1);
+        maximumSlider->setRange(MIN_LEVEL_SLIDER_VALUE + 1, MAX_LEVEL_SLIDER_VALUE);
+        minimumSlider->setValue(levelToSliderValue(static_cast<float>(blockSettings.value(QStringLiteral("minimumDbfs")).toDouble(displayLevelMin))));
+        maximumSlider->setValue(levelToSliderValue(static_cast<float>(blockSettings.value(QStringLiteral("maximumDbfs")).toDouble(displayLevelMax))));
         if (minimumSlider->value() >= maximumSlider->value()) {
             minimumSlider->setValue((std::max)(minimumSlider->minimum(),
                                                maximumSlider->value() - 1));
@@ -780,14 +1428,14 @@ void YourClassName::openDspBlockReference(const QString &type, const QString &id
             return container;
         };
         const auto updateLabels = [minimumSlider, maximumSlider, minimumLabel, maximumLabel]() {
-            minimumLabel->setText(QStringLiteral("%1 dBFS").arg(minimumSlider->value()));
-            maximumLabel->setText(QStringLiteral("%1 dBFS").arg(maximumSlider->value()));
+            minimumLabel->setText(QStringLiteral("%1 dBFS").arg(sliderValueToLevel(minimumSlider->value()), 0, 'f', 1));
+            maximumLabel->setText(QStringLiteral("%1 dBFS").arg(sliderValueToLevel(maximumSlider->value()), 0, 'f', 1));
         };
         const auto applyRange = [this, id, minimumSlider, maximumSlider]() {
             if (!dspFlowPanel) return;
             QJsonObject settings = dspFlowPanel->blockSettings(id);
-            settings.insert(QStringLiteral("minimumDbfs"), minimumSlider->value());
-            settings.insert(QStringLiteral("maximumDbfs"), maximumSlider->value());
+            settings.insert(QStringLiteral("minimumDbfs"), sliderValueToLevel(minimumSlider->value()));
+            settings.insert(QStringLiteral("maximumDbfs"), sliderValueToLevel(maximumSlider->value()));
             dspFlowPanel->setBlockSettings(id, settings);
         };
         form->addRow(text("Мінімум:", "Minimum:"), sliderRow(minimumSlider, minimumLabel));
@@ -971,42 +1619,350 @@ void YourClassName::openDspBlockReference(const QString &type, const QString &id
             }
         });
         dialog->setMinimumSize(620, 390);
-    } else if (type == QStringLiteral("spectrum_display")) {
-        title = text("Відображення спектра", "Spectrum display");
-        form->addRow(QString(), linkedCheckBox(spectrumCheckbox, text("Спектр", "Spectrum"), dialog, syncTimer));
-        form->addRow(QString(), linkedCheckBox(colorCheckbox, text("Кольоровий спектр", "Colored spectrum"), dialog, syncTimer));
-        form->addRow(text("Мінімум:", "Minimum:"), linkedSlider(levelMinSlider, dialog, syncTimer));
-        form->addRow(text("Максимум:", "Maximum:"), linkedSlider(levelMaxSlider, dialog, syncTimer));
-        form->addRow(text("Чутливість:", "Sensitivity:"), linkedSlider(sensitivitySlider, dialog, syncTimer));
-        form->addRow(text("Контраст:", "Contrast:"), linkedSlider(contrastSlider, dialog, syncTimer));
-        form->addRow(text("Масштаб:", "Scale:"), linkedSlider(scaleSlider, dialog, syncTimer));
-        form->addRow(text("Дод. масштаб:", "Extra scale:"), linkedSlider(additionalScaleDivisorSlider, dialog, syncTimer));
-    } else if (type == QStringLiteral("waterfall_2d")) {
-        title = text("Водоспад 2D", "2D waterfall");
-        form->addRow(text("Режим:", "Mode:"), linkedCombo(waterfallDisplayModeCombo, dialog, syncTimer));
-        form->addRow(text("Мінімум:", "Minimum:"), linkedSlider(levelMinSlider, dialog, syncTimer));
-        form->addRow(text("Максимум:", "Maximum:"), linkedSlider(levelMaxSlider, dialog, syncTimer));
-        form->addRow(text("Чутливість:", "Sensitivity:"), linkedSlider(sensitivitySlider, dialog, syncTimer));
-        form->addRow(text("Контраст:", "Contrast:"), linkedSlider(contrastSlider, dialog, syncTimer));
-    } else if (type == QStringLiteral("waterfall_3d")) {
-        title = text("Водоспад 3D", "3D waterfall");
-        form->addRow(text("Режим:", "Mode:"), linkedCombo(waterfallDisplayModeCombo, dialog, syncTimer));
-        form->addRow(text("Роздільність:", "Resolution:"), linkedCombo(waterfall3DResolutionCombo, dialog, syncTimer));
-        form->addRow(text("Пам'ять:", "Memory:"), linkedSpin(waterfall3DHistoryRowsSpin, dialog, syncTimer));
-        form->addRow(text("Крок частотного зрізу:", "Frequency slice step:"), linkedSpin(waterfall3DSliceStepSpin, dialog, syncTimer));
-        form->addRow(text("Ширина зрізу:", "Slice width:"), linkedSpin(waterfall3DSliceWidthSpin, dialog, syncTimer));
-        form->addRow(text("Крок часового зрізу:", "Time slice step:"), linkedSpin(waterfall3DSpectrumSliceStepSpin, dialog, syncTimer));
-        form->addRow(text("Рядки зрізу:", "Slice rows:"), linkedSpin(waterfall3DSpectrumSliceRowsSpin, dialog, syncTimer));
-        form->addRow(QString(), linkedCheckBox(waterfall3DSpectrumSliceCaptureCheckbox,
-                                               text("Захват", "Capture"), dialog, syncTimer));
-        form->addRow(QString(), linkedCheckBox(waterfall3DSpectrumSliceCaptureFixedCheckbox,
-                                               text("Зафіксувати захват", "Fix capture"), dialog, syncTimer));
-        form->addRow(QString(), linkedCheckBox(waterfall3DFixedPlaneCheckbox,
-                                               text("Зафіксувати площину", "Fix plane"), dialog, syncTimer));
-        form->addRow(QString(), linkedCheckBox(alternativeSpectrumGradientCheckbox,
-                                               text("Градієнт спектра", "Spectrum gradient"), dialog, syncTimer));
-        form->addRow(text("Прозорість:", "Opacity:"),
-                     linkedSlider(alternativeSpectrumGradientOpacitySlider, dialog, syncTimer, QStringLiteral("%")));
+    } else if (type == QStringLiteral("spectrum_display") ||
+               type == QStringLiteral("waterfall_2d") ||
+               type == QStringLiteral("waterfall_3d")) {
+        const bool spectrumProfile = type == QStringLiteral("spectrum_display");
+        const bool waterfall3DProfile = type == QStringLiteral("waterfall_3d");
+        title = spectrumProfile
+                    ? text("Налаштування спектра", "Spectrum settings")
+                    : (waterfall3DProfile
+                           ? text("Налаштування 3D-водоспаду", "3D waterfall settings")
+                           : text("Налаштування 2D-водоспаду", "2D waterfall settings"));
+        const QJsonObject stored = dspFlowPanel ? dspFlowPanel->blockSettings(id) : QJsonObject();
+        auto *targetSelector = new QComboBox(dialog);
+        targetSelector->addItem(text("Не призначено", "Not assigned"), QString());
+        if (dspFlowPanel) {
+            const QJsonArray targets = dspFlowPanel->workspaceDisplayTargets(id);
+            for (const QJsonValue &value : targets) {
+                const QJsonObject target = value.toObject();
+                const QString targetId = target.value(QStringLiteral("id")).toString();
+                const QString targetTitle = target.value(QStringLiteral("title")).toString();
+                targetSelector->addItem(QStringLiteral("%1 [%2]").arg(targetTitle, targetId.left(8)),
+                                        targetId);
+                if (target.value(QStringLiteral("bound")).toBool())
+                    targetSelector->setCurrentIndex(targetSelector->count() - 1);
+            }
+        }
+        form->addRow(text("Керувати віджетом:", "Control widget:"), targetSelector);
+        connect(targetSelector, QOverload<int>::of(&QComboBox::currentIndexChanged), dialog,
+                [this, id, targetSelector](int) {
+                    if (dspFlowPanel)
+                        dspFlowPanel->bindWorkspaceSettingsBlock(id,
+                            targetSelector->currentData().toString());
+                });
+
+        const auto levelOverride = std::make_shared<bool>(
+            stored.value(QStringLiteral("levelOverride")).toBool(false));
+        auto *levelModeRow = new QWidget(dialog);
+        auto *levelModeLayout = new QHBoxLayout(levelModeRow);
+        levelModeLayout->setContentsMargins(0, 0, 0, 0);
+        auto *globalLevels = new QRadioButton(text("Загально", "Global"), levelModeRow);
+        auto *individualLevels = new QRadioButton(text("Індивідуально", "Individual"), levelModeRow);
+        auto *levelModeGroup = new QButtonGroup(levelModeRow);
+        levelModeGroup->addButton(globalLevels);
+        levelModeGroup->addButton(individualLevels);
+        globalLevels->setChecked(!*levelOverride);
+        individualLevels->setChecked(*levelOverride);
+        levelModeLayout->addWidget(globalLevels);
+        levelModeLayout->addWidget(individualLevels);
+        levelModeLayout->addStretch(1);
+        form->addRow(text("Рівні dBFS:", "dBFS levels:"), levelModeRow);
+
+        QSlider *minimum = nullptr;
+        QSlider *maximum = nullptr;
+        QSlider *profileSensitivity = nullptr;
+        QSlider *profileContrast = nullptr;
+        form->addRow(text("Мінімум:", "Minimum:"),
+                     valueSlider(&minimum, dialog, -2000, 190,
+                                 qRound(stored.value(QStringLiteral("minimumDbfs")).toDouble(displayLevelMin) * 10.0),
+                                 QStringLiteral(" dBFS"), 10.0));
+        form->addRow(text("Максимум:", "Maximum:"),
+                     valueSlider(&maximum, dialog, -1990, 200,
+                                 qRound(stored.value(QStringLiteral("maximumDbfs")).toDouble(displayLevelMax) * 10.0),
+                                 QStringLiteral(" dBFS"), 10.0));
+        minimum->setEnabled(*levelOverride);
+        maximum->setEnabled(*levelOverride);
+        if (!spectrumProfile) {
+            form->addRow(text("Чутливість:", "Sensitivity:"),
+                         valueSlider(&profileSensitivity, dialog, 1, 30,
+                                     stored.value(QStringLiteral("sensitivity")).toInt(sensitivity)));
+            form->addRow(text("Контраст:", "Contrast:"),
+                         valueSlider(&profileContrast, dialog, 1, 20,
+                                     stored.value(QStringLiteral("contrast")).toInt(contrast)));
+        }
+
+        QComboBox *profileMode = nullptr;
+        if (!spectrumProfile) {
+            profileMode = new QComboBox(dialog);
+            profileMode->addItem(text("2D водоспад", "2D waterfall"), 0);
+            profileMode->addItem(text("3D водоспад", "3D waterfall"), 1);
+            profileMode->addItem(text("3D + міні", "3D + mini"), 2);
+            const int defaultMode = waterfall3DProfile ? 1 : 0;
+            const int modeIndex = profileMode->findData(
+                stored.value(QStringLiteral("displayMode")).toInt(defaultMode));
+            profileMode->setCurrentIndex(modeIndex >= 0 ? modeIndex : defaultMode);
+            profileMode->setEnabled(waterfall3DProfile);
+            form->addRow(text("Режим:", "Mode:"), profileMode);
+        }
+
+        auto *profileColor = new QCheckBox(text("Кольоровий спектр", "Colored spectrum"), dialog);
+        auto *profileGradient = new QCheckBox(text("Градієнт спектра", "Spectrum gradient"), dialog);
+        QSlider *profileOpacity = nullptr;
+        profileColor->setChecked(stored.value(QStringLiteral("colorSpectrum")).toBool(
+            colorCheckbox ? colorCheckbox->isChecked() : true));
+        profileGradient->setChecked(stored.value(QStringLiteral("spectrumGradientFill")).toBool(
+            alternativeSpectrumGradientCheckbox
+                ? alternativeSpectrumGradientCheckbox->isChecked()
+                : false));
+        const bool showSpectrumProfileControls = spectrumProfile || waterfall3DProfile;
+        profileColor->setVisible(showSpectrumProfileControls);
+        profileGradient->setVisible(showSpectrumProfileControls);
+        if (showSpectrumProfileControls) {
+            form->addRow(QString(), profileColor);
+            form->addRow(QString(), profileGradient);
+            form->addRow(text("Прозорість градієнта:", "Gradient opacity:"),
+                         valueSlider(&profileOpacity, dialog, 0, 100,
+                                     stored.value(QStringLiteral("spectrumGradientOpacity")).toInt(
+                                         alternativeSpectrumGradientOpacity),
+                                     QStringLiteral("%")));
+        }
+
+        auto *profileFixedPlane = new QCheckBox(
+            text("Зафіксувати площину", "Fix plane"), dialog);
+        auto *profileMonochrome = new QCheckBox(
+            text("Однотонний синій 3D", "Monochrome blue 3D"), dialog);
+        profileFixedPlane->setChecked(
+            stored.value(QStringLiteral("waterfall3DFixedPlane")).toBool(waterfall3DFixedPlane));
+        profileMonochrome->setChecked(
+            stored.value(QStringLiteral("waterfall3DMonochrome")).toBool(waterfall3DMonochrome));
+        profileFixedPlane->setVisible(waterfall3DProfile);
+        profileMonochrome->setVisible(waterfall3DProfile);
+        QComboBox *profileResolution = nullptr;
+        QComboBox *profileSurface = nullptr;
+        QComboBox *profileSmoothing = nullptr;
+        QComboBox *profileLighting = nullptr;
+        QSlider *profileHistory = nullptr;
+        QSlider *profileFrequencyStep = nullptr;
+        QSlider *profileFrequencyWidth = nullptr;
+        QSlider *profileSpectrumStep = nullptr;
+        QSlider *profileSpectrumRows = nullptr;
+        QCheckBox *profileCapture = nullptr;
+        QCheckBox *profileCaptureFixed = nullptr;
+        QCheckBox *profileVncInput = nullptr;
+        if (waterfall3DProfile) {
+            form->addRow(QString(), profileFixedPlane);
+            form->addRow(QString(), profileMonochrome);
+            profileResolution = new QComboBox(dialog);
+            for (int divisor : {1, 2, 4, 8, 16, 32, 64})
+                profileResolution->addItem(QStringLiteral("1/%1").arg(divisor), divisor);
+            const int resolutionIndex = profileResolution->findData(
+                stored.value(QStringLiteral("resolutionDivisor")).toInt(waterfall3DResolutionDivisor));
+            profileResolution->setCurrentIndex(resolutionIndex >= 0 ? resolutionIndex : 0);
+            form->addRow(text("Роздільність:", "Resolution:"), profileResolution);
+
+            profileSurface = new QComboBox(dialog);
+            profileSurface->addItem(text("Оригінал / голки", "Original / needles"), 0);
+            profileSurface->addItem(text("Суцільна поверхня", "Solid surface"), 1);
+            profileSurface->setCurrentIndex(profileSurface->findData(
+                stored.value(QStringLiteral("waterfall3DSurfaceStyle")).toInt(waterfall3DSurfaceStyle)));
+            form->addRow(text("Поверхня:", "Surface:"), profileSurface);
+            profileSmoothing = new QComboBox(dialog);
+            profileSmoothing->addItem(text("Вимкнено", "Off"), 0);
+            profileSmoothing->addItem(text("М'яке", "Soft"), 1);
+            profileSmoothing->addItem(text("Сильне", "Strong"), 2);
+            profileSmoothing->setCurrentIndex(profileSmoothing->findData(
+                stored.value(QStringLiteral("waterfall3DSmoothing")).toInt(waterfall3DSmoothing)));
+            form->addRow(text("Згладжування:", "Smoothing:"), profileSmoothing);
+            profileLighting = new QComboBox(dialog);
+            profileLighting->addItem(text("Вимкнено", "Off"), 0);
+            profileLighting->addItem(text("М'які тіні", "Soft shadows"), 1);
+            profileLighting->addItem(text("Сильні тіні", "Strong shadows"), 2);
+            profileLighting->setCurrentIndex(profileLighting->findData(
+                stored.value(QStringLiteral("waterfall3DLighting")).toInt(waterfall3DLighting)));
+            form->addRow(text("Освітлення:", "Lighting:"), profileLighting);
+
+            form->addRow(text("Пам'ять:", "Memory:"),
+                         valueSlider(&profileHistory, dialog, 16, 2048,
+                                     stored.value(QStringLiteral("historyRows")).toInt(waterfall3DHistoryRows),
+                                     text(" рядків", " rows")));
+            form->addRow(text("Крок частотного зрізу:", "Frequency slice step:"),
+                         valueSlider(&profileFrequencyStep, dialog, 1, 256,
+                                     stored.value(QStringLiteral("waterfall3DSliceScrollStep")).toInt(
+                                         waterfall3DSliceScrollStep), text(" тчк", " pt")));
+            form->addRow(text("Ширина частотного зрізу:", "Frequency slice width:"),
+                         valueSlider(&profileFrequencyWidth, dialog, 1, 4096,
+                                     stored.value(QStringLiteral("waterfall3DSliceWidth")).toInt(
+                                         waterfall3DSliceWidth), text(" тчк", " pt")));
+            form->addRow(text("Крок часового зрізу:", "Time slice step:"),
+                         valueSlider(&profileSpectrumStep, dialog, 1, 2048,
+                                     stored.value(QStringLiteral("waterfall3DSpectrumSliceScrollStep")).toInt(
+                                         waterfall3DSpectrumSliceScrollStep), text(" ряд.", " rows")));
+            form->addRow(text("Ширина часового зрізу:", "Time slice rows:"),
+                         valueSlider(&profileSpectrumRows, dialog, 1, 2048,
+                                     stored.value(QStringLiteral("waterfall3DSpectrumSliceRows")).toInt(
+                                         waterfall3DSpectrumSliceRows), text(" ряд.", " rows")));
+            profileCapture = new QCheckBox(text("Захват", "Capture"), dialog);
+            profileCaptureFixed = new QCheckBox(text("Зафіксувати захват", "Freeze capture"), dialog);
+            profileVncInput = new QCheckBox(
+                text("Зрізи без Alt/Shift (VNC)", "Slices without Alt/Shift (VNC)"), dialog);
+            profileCapture->setChecked(stored.value(
+                QStringLiteral("waterfall3DSpectrumSliceCapture")).toBool(waterfall3DSpectrumSliceCapture));
+            profileCaptureFixed->setChecked(stored.value(
+                QStringLiteral("waterfall3DSpectrumSliceCaptureFixed")).toBool(
+                    waterfall3DSpectrumSliceCaptureFixed));
+            profileCaptureFixed->setEnabled(profileCapture->isChecked());
+            profileVncInput->setChecked(stored.value(
+                QStringLiteral("waterfall3DVncSliceInput")).toBool(waterfall3DVncSliceInput));
+            auto *captureRow = new QWidget(dialog);
+            auto *captureLayout = new QHBoxLayout(captureRow);
+            captureLayout->setContentsMargins(0, 0, 0, 0);
+            captureLayout->addWidget(profileCapture);
+            captureLayout->addWidget(profileCaptureFixed);
+            captureLayout->addStretch(1);
+            form->addRow(QString(), captureRow);
+            form->addRow(QString(), profileVncInput);
+        }
+
+        auto *bindingHint = new QLabel(
+            text("Виберіть віджет у списку вище. Стрілка з цього блока у віджет лишається рівнозначним способом прив'язки.",
+                 "Choose a widget above. Connecting this block to a view with an arrow remains an equivalent binding method."),
+            dialog);
+        bindingHint->setWordWrap(true);
+        form->addRow(QString(), bindingHint);
+
+        const auto applyProfile = [this, id, spectrumProfile, waterfall3DProfile,
+                                   minimum, maximum, profileSensitivity, profileContrast,
+                                   profileMode, profileColor, profileGradient, profileOpacity,
+                                   profileFixedPlane, profileMonochrome, profileResolution,
+                                   profileSurface, profileSmoothing, profileLighting, profileHistory,
+                                   profileFrequencyStep, profileFrequencyWidth, profileSpectrumStep,
+                                   profileSpectrumRows, profileCapture, profileCaptureFixed,
+                                   profileVncInput, levelOverride]() {
+            if (!dspFlowPanel) return;
+            QJsonObject settings = dspFlowPanel->blockSettings(id);
+            double low = minimum->value() / 10.0;
+            double high = maximum->value() / 10.0;
+            if (low >= high) high = low + 1.0;
+            settings.insert(QStringLiteral("minimumDbfs"), low);
+            settings.insert(QStringLiteral("maximumDbfs"), high);
+            settings.insert(QStringLiteral("levelOverride"), *levelOverride);
+            if (profileSensitivity)
+                settings.insert(QStringLiteral("sensitivity"), profileSensitivity->value());
+            else
+                settings.remove(QStringLiteral("sensitivity"));
+            if (profileContrast)
+                settings.insert(QStringLiteral("contrast"), profileContrast->value());
+            else
+                settings.remove(QStringLiteral("contrast"));
+            if (!spectrumProfile)
+                settings.insert(QStringLiteral("displayMode"),
+                                waterfall3DProfile ? profileMode->currentData().toInt() : 0);
+            if (spectrumProfile || waterfall3DProfile) {
+                settings.insert(QStringLiteral("colorSpectrum"), profileColor->isChecked());
+                settings.insert(QStringLiteral("spectrumGradientFill"), profileGradient->isChecked());
+                settings.insert(QStringLiteral("spectrumGradientOpacity"), profileOpacity->value());
+            }
+            if (waterfall3DProfile) {
+                settings.insert(QStringLiteral("waterfall3DFixedPlane"),
+                                profileFixedPlane->isChecked());
+                settings.insert(QStringLiteral("waterfall3DMonochrome"),
+                                profileMonochrome->isChecked());
+                settings.insert(QStringLiteral("resolutionDivisor"),
+                                profileResolution->currentData().toInt());
+                settings.insert(QStringLiteral("waterfall3DSurfaceStyle"),
+                                profileSurface->currentData().toInt());
+                settings.insert(QStringLiteral("waterfall3DSmoothing"),
+                                profileSmoothing->currentData().toInt());
+                settings.insert(QStringLiteral("waterfall3DLighting"),
+                                profileLighting->currentData().toInt());
+                settings.insert(QStringLiteral("historyRows"), profileHistory->value());
+                settings.insert(QStringLiteral("waterfall3DSliceScrollStep"),
+                                profileFrequencyStep->value());
+                settings.insert(QStringLiteral("waterfall3DSliceWidth"),
+                                profileFrequencyWidth->value());
+                settings.insert(QStringLiteral("waterfall3DSpectrumSliceScrollStep"),
+                                profileSpectrumStep->value());
+                settings.insert(QStringLiteral("waterfall3DSpectrumSliceRows"),
+                                profileSpectrumRows->value());
+                settings.insert(QStringLiteral("waterfall3DSpectrumSliceCapture"),
+                                profileCapture->isChecked());
+                settings.insert(QStringLiteral("waterfall3DSpectrumSliceCaptureFixed"),
+                                profileCaptureFixed->isChecked());
+                settings.insert(QStringLiteral("waterfall3DVncSliceInput"),
+                                profileVncInput->isChecked());
+            }
+            dspFlowPanel->setBlockSettings(id, settings);
+        };
+        connect(minimum, &QSlider::valueChanged, dialog,
+                [applyProfile](int) { applyProfile(); });
+        connect(maximum, &QSlider::valueChanged, dialog,
+                [applyProfile](int) { applyProfile(); });
+        connect(globalLevels, &QRadioButton::toggled, dialog,
+                [applyProfile, levelOverride, minimum, maximum](bool checked) {
+                    if (!checked) return;
+                    *levelOverride = false;
+                    minimum->setEnabled(false);
+                    maximum->setEnabled(false);
+                    applyProfile();
+                });
+        connect(individualLevels, &QRadioButton::toggled, dialog,
+                [applyProfile, levelOverride, minimum, maximum](bool checked) {
+                    if (!checked) return;
+                    *levelOverride = true;
+                    minimum->setEnabled(true);
+                    maximum->setEnabled(true);
+                    applyProfile();
+                });
+        if (profileSensitivity)
+            connect(profileSensitivity, &QSlider::valueChanged, dialog,
+                    [applyProfile](int) { applyProfile(); });
+        if (profileContrast)
+            connect(profileContrast, &QSlider::valueChanged, dialog,
+                    [applyProfile](int) { applyProfile(); });
+        if (profileMode)
+            connect(profileMode, QOverload<int>::of(&QComboBox::currentIndexChanged), dialog,
+                    [applyProfile](int) { applyProfile(); });
+        connect(profileColor, &QCheckBox::toggled, dialog,
+                [applyProfile](bool) { applyProfile(); });
+        connect(profileGradient, &QCheckBox::toggled, dialog,
+                [applyProfile](bool) { applyProfile(); });
+        if (profileOpacity)
+            connect(profileOpacity, &QSlider::valueChanged, dialog,
+                    [applyProfile](int) { applyProfile(); });
+        connect(profileFixedPlane, &QCheckBox::toggled, dialog,
+                [applyProfile](bool) { applyProfile(); });
+        connect(profileMonochrome, &QCheckBox::toggled, dialog,
+                [applyProfile](bool) { applyProfile(); });
+        if (profileResolution)
+            connect(profileResolution, QOverload<int>::of(&QComboBox::currentIndexChanged), dialog,
+                    [applyProfile](int) { applyProfile(); });
+        if (profileSurface)
+            connect(profileSurface, QOverload<int>::of(&QComboBox::currentIndexChanged), dialog,
+                    [applyProfile](int) { applyProfile(); });
+        if (profileSmoothing)
+            connect(profileSmoothing, QOverload<int>::of(&QComboBox::currentIndexChanged), dialog,
+                    [applyProfile](int) { applyProfile(); });
+        if (profileLighting)
+            connect(profileLighting, QOverload<int>::of(&QComboBox::currentIndexChanged), dialog,
+                    [applyProfile](int) { applyProfile(); });
+        for (QSlider *slider : {profileHistory, profileFrequencyStep, profileFrequencyWidth,
+                                profileSpectrumStep, profileSpectrumRows}) {
+            if (slider) connect(slider, &QSlider::valueChanged, dialog,
+                                [applyProfile](int) { applyProfile(); });
+        }
+        if (profileCapture) {
+            connect(profileCapture, &QCheckBox::toggled, dialog,
+                    [applyProfile, profileCaptureFixed](bool checked) {
+                        profileCaptureFixed->setEnabled(checked);
+                        applyProfile();
+                    });
+            connect(profileCaptureFixed, &QCheckBox::toggled, dialog,
+                    [applyProfile](bool) { applyProfile(); });
+            connect(profileVncInput, &QCheckBox::toggled, dialog,
+                    [applyProfile](bool) { applyProfile(); });
+        }
+        applyProfile();
     } else if (type == QStringLiteral("second_spectrum")) {
         title = text("Другий спектр", "Second spectrum");
         form->addRow(QString(), linkedCheckBox(graphCheckbox, text("Показати другий спектр", "Show second spectrum"),
@@ -1048,21 +2004,52 @@ void YourClassName::openDspBlockReference(const QString &type, const QString &id
                                           actionButton(listeningScanDeletePresetButton, text("Видалити", "Delete"))}));
     } else if (type == QStringLiteral("spectrum_measurement")) {
         title = text("Вимірювання спектра", "Spectrum measurement");
-        form->addRow(QString(), linkedCheckBox(scanMeasurementCheckbox, text("Накопичення вимірювань", "Measurement accumulation"),
+        form->addRow(QString(), linkedCheckBox(scanMeasurementCheckbox,
+                                               text("Накопичення вимірювань", "Measurement accumulation"),
                                                dialog, syncTimer));
-        form->addRow(text("Крок біну:", "Bin width:"), linkedDoubleSpin(scanMeasurementBinSpin, dialog, syncTimer));
-        form->addRow(QString(), linkedCheckBox(spectrumScienceMaxHoldCheckbox, QStringLiteral("Max hold"), dialog, syncTimer));
-        form->addRow(QString(), linkedCheckBox(spectrumScienceMinHoldCheckbox, QStringLiteral("Min hold"), dialog, syncTimer));
-        form->addRow(QString(), linkedCheckBox(spectrumScienceAverageCheckbox, text("Усереднення", "Average"), dialog, syncTimer));
-        form->addRow(text("Час усереднення:", "Average time:"), linkedDoubleSpin(spectrumScienceAverageSpin, dialog, syncTimer));
-        form->addRow(text("Маркер:", "Marker:"), linkedCombo(spectrumScienceMarkerCombo, dialog, syncTimer));
-        form->addRow(QString(), buttonRow({actionButton(spectrumScienceSetButton, text("Встановити", "Set")),
-                                          actionButton(spectrumSciencePeakButton, text("Пік", "Peak")),
-                                          actionButton(spectrumSciencePreviousButton, text("Попередній", "Previous")),
-                                          actionButton(spectrumScienceNextButton, text("Наступний", "Next"))}));
-        form->addRow(QString(), buttonRow({actionButton(scanMeasurementBaselineButton, QStringLiteral("Baseline")),
-                                          actionButton(scanMeasurementResetPeakButton, text("Скинути піки", "Reset peaks")),
-                                          actionButton(spectrumScienceExportButton, text("Експорт", "Export"))}));
+        form->addRow(text("Крок біну:", "Bin width:"),
+                     linkedDoubleSpin(scanMeasurementBinSpin, dialog, syncTimer));
+        form->addRow(QString(), linkedCheckBox(spectrumScienceMaxHoldCheckbox,
+                                               QStringLiteral("Max hold"), dialog, syncTimer));
+        form->addRow(QString(), linkedCheckBox(spectrumScienceMinHoldCheckbox,
+                                               QStringLiteral("Min hold"), dialog, syncTimer));
+        form->addRow(QString(), linkedCheckBox(spectrumScienceAverageCheckbox,
+                                               text("Усереднення", "Average"), dialog, syncTimer));
+        form->addRow(text("Час усереднення:", "Average time:"),
+                     linkedDoubleSpin(spectrumScienceAverageSpin, dialog, syncTimer));
+        form->addRow(QString(), linkedCheckBox(waterfallAreaMeasurementCheckbox,
+                                               text("Лінійка водоспаду", "Waterfall ruler"),
+                                               dialog, syncTimer));
+        form->addRow(text("Маркер:", "Marker:"),
+                     linkedCombo(spectrumScienceMarkerCombo, dialog, syncTimer));
+        form->addRow(QString(), buttonRow({
+            actionButton(spectrumScienceSetButton, text("Встановити", "Set")),
+            actionButton(spectrumSciencePeakButton, text("Пік", "Peak")),
+            actionButton(spectrumScienceClearButton, text("Очистити", "Clear"))
+        }));
+        form->addRow(QString(), buttonRow({
+            actionButton(spectrumSciencePreviousButton, text("Попередній", "Previous")),
+            actionButton(spectrumScienceNextButton, text("Наступний", "Next"))
+        }));
+        form->addRow(QString(), buttonRow({
+            actionButton(scanMeasurementBaselineButton, QStringLiteral("Baseline")),
+            actionButton(scanMeasurementResetPeakButton, text("Скинути піки", "Reset peaks")),
+            actionButton(scanMeasurementExportButton, QStringLiteral("CSV"))
+        }));
+        form->addRow(QString(), buttonRow({
+            actionButton(spectrumScienceResetButton, text("Скинути", "Reset")),
+            actionButton(spectrumScienceExportButton, text("Звіт", "Report"))
+        }));
+        form->addRow(QString(), buttonRow({
+            actionButton(zeroSpanButton, QStringLiteral("Zero-span")),
+            actionButton(researchToolsButton, text("Дослідження", "Research"))
+        }));
+        form->addRow(text("Накопичення:", "Accumulation:"),
+                     linkedLabel(scanMeasurementStatusLabel, dialog, syncTimer));
+        form->addRow(text("Маркери:", "Markers:"),
+                     linkedLabel(spectrumScienceMarkerStatusLabel, dialog, syncTimer));
+        form->addRow(text("Результати:", "Results:"),
+                     linkedLabel(spectrumScienceMetricsLabel, dialog, syncTimer));
     } else if (type == QStringLiteral("spectrum_recorder")) {
         title = text("Запис кадрів спектра", "Spectrum frame recorder");
         form->addRow(QString(), linkedCheckBox(spectrumFrameBufferCheckbox, text("Постійний передбуфер", "Continuous prebuffer"),
@@ -1120,6 +2107,8 @@ void YourClassName::openDspBlockReference(const QString &type, const QString &id
         form->addRow(text("Абетка:", "Alphabet:"), linkedCombo(cwDecoderAlphabetCombo, dialog, syncTimer));
         form->addRow(text("Тон:", "Tone:"), linkedSpin(cwDecoderToneSpin, dialog, syncTimer));
         form->addRow(text("Швидкість:", "Speed:"), linkedSpin(cwDecoderWpmSpin, dialog, syncTimer));
+        form->addRow(text("Вибірковість:", "Selectivity:"),
+                     linkedSpin(cwDecoderSelectivitySpin, dialog, syncTimer));
         form->addRow(QString(), linkedCheckBox(cwDecoderAdaptiveCheckbox, text("Авто швидкість", "Adaptive speed"),
                                                dialog, syncTimer));
         form->addRow(QString(), commandButton(text("Відкрити текстовий вихід", "Open text output"),
@@ -1167,7 +2156,11 @@ void YourClassName::openDspBlockReference(const QString &type, const QString &id
             else if (type == QStringLiteral("fpv_hunter")) tuneFpvHunterCandidate();
             else tuneDigitalVideoHunterCandidate();
         }));
-        form->addRow(QString(), showDockButton(controlsDock, text("Відкрити бічну панель", "Open side panel")));
+        auto *note = new QLabel(text(
+            "Керування пошуком доступне безпосередньо в цьому вікні.",
+            "Hunter controls are available directly in this window."), dialog);
+        note->setWordWrap(true);
+        form->addRow(QString(), note);
     } else if (type == QStringLiteral("gnss_sdr")) {
         title = text("GNSS через SDR", "GNSS via SDR");
         form->addRow(text("Система:", "System:"), linkedCombo(gnssSystemCombo, dialog, syncTimer));
@@ -1219,6 +2212,7 @@ void YourClassName::openDspBlockReference(const QString &type, const QString &id
 
     dialog->setWindowTitle(title);
     auto *stayOnTop = new QCheckBox(text("Залишатися поверх вікон", "Stay on top"), dialog);
+    stayOnTop->setObjectName(QStringLiteral("dspStayOnTopCheckBox"));
     stayOnTop->setChecked(true);
     dialog->setWindowFlag(Qt::WindowStaysOnTopHint, true);
     connect(stayOnTop, &QCheckBox::toggled, dialog, [dialog](bool enabled) {
@@ -1228,6 +2222,34 @@ void YourClassName::openDspBlockReference(const QString &type, const QString &id
         dialog->activateWindow();
     });
     root->addWidget(stayOnTop);
+    auto *dockSectorCombo = new QComboBox(dialog);
+    dockSectorCombo->setObjectName(QStringLiteral("dspDockSectorCombo"));
+    const int sectorCount = dspFlowPanel ? (std::max)(1, dspFlowPanel->workspaceSectorCount()) : 1;
+    for (int sector = 0; sector < sectorCount; ++sector) {
+        dockSectorCombo->addItem(text("Сектор %1", "Sector %1").arg(sector + 1), sector);
+    }
+    if (dspFlowPanel) {
+        const QJsonObject currentSettings = dspFlowPanel->blockSettings(id);
+        const int currentSector = currentSettings.value(QStringLiteral("dockedSettingsSector")).toInt(
+            currentSettings.value(QStringLiteral("workspaceSector")).toInt(0));
+        dockSectorCombo->setCurrentIndex(std::clamp(currentSector, 0, sectorCount - 1));
+    }
+    auto *dockToWorkspace = new QPushButton(
+        text("Закріпити", "Dock"), dialog);
+    dockToWorkspace->setObjectName(QStringLiteral("dspDockToWorkspaceButton"));
+    connect(dockToWorkspace, &QPushButton::clicked, dialog,
+            [this, id, dialog, dockToWorkspace, dockSectorCombo]() {
+                if (dspFlowPanel && dspFlowPanel->dockSettingsDialog(
+                        id, dialog, dockSectorCombo->currentData().toInt())) {
+                    dockToWorkspace->hide();
+                    dockSectorCombo->hide();
+                }
+            });
+    auto *dockRow = new QHBoxLayout();
+    dockRow->setContentsMargins(0, 0, 0, 0);
+    dockRow->addWidget(dockSectorCombo, 1);
+    dockRow->addWidget(dockToWorkspace);
+    root->addLayout(dockRow);
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, dialog);
     buttons->button(QDialogButtonBox::Close)->setText(text("Закрити", "Close"));
     connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::close);
@@ -1237,8 +2259,15 @@ void YourClassName::openDspBlockReference(const QString &type, const QString &id
     connect(dialog, &QObject::destroyed, this, [this, editorKey]() {
         dspBlockEditors.remove(editorKey);
     });
+    const bool restoreDocked = dspFlowPanel &&
+        dspFlowPanel->blockSettings(id).contains(QStringLiteral("dockedSettingsSector"));
     dialog->show();
     dialog->adjustSize();
-    dialog->raise();
-    dialog->activateWindow();
+    if (restoreDocked && dspFlowPanel->dockSettingsDialog(id, dialog)) {
+        dockToWorkspace->hide();
+        dockSectorCombo->hide();
+    } else {
+        dialog->raise();
+        dialog->activateWindow();
+    }
 }

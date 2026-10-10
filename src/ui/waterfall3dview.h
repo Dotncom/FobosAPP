@@ -5,6 +5,7 @@
 #include <QOpenGLFunctions>
 #include <QOpenGLWidget>
 #include <QPoint>
+#include <QString>
 
 #include <memory>
 #include <vector>
@@ -33,6 +34,21 @@ public:
     void setSpectrumSliceCapture(bool enabled);
     void setSpectrumSliceCaptureFixed(bool enabled);
     void setModifierFreeSliceInput(bool enabled);
+    void setDensityAxes(bool enabled);
+    void setDensityAxisMapping(int xDimension, int yDimension);
+    void setDensityFrontProfile(const std::vector<float> &normalizedLevels);
+    void setDensityFrontProfileStyle(int style);
+    void setSurfaceStyle(int style);
+    void setSurfaceSmoothing(int smoothing);
+    void setSurfaceLighting(int lighting);
+    void setDensityAxisLabels(const QString &frequency,
+                              const QString &density,
+                              const QString &level);
+    void setDensityAxisRanges(double firstFrequencyHz,
+                              double lastFrequencyHz,
+                              double minimumDb,
+                              double maximumDb,
+                              double maximumDensity);
     void setOverview(const QImage &image,
                      int windowStart,
                      int windowEnd,
@@ -54,6 +70,7 @@ protected:
 
 private:
     void drawOverview();
+    void drawDensityAxes();
     void emitSelectedFrequency();
 
     std::unique_ptr<Waterfall3DRenderer> renderer;
@@ -63,6 +80,15 @@ private:
     bool frequencySliceActive = false;
     bool spectrumSliceActive = false;
     bool modifierFreeSliceInput = false;
+    bool densityAxes = false;
+    QString densityFrequencyLabel;
+    QString densityAccumulationLabel;
+    QString densityLevelLabel;
+    double densityFirstFrequencyHz = 0.0;
+    double densityLastFrequencyHz = 0.0;
+    double densityMinimumDb = -140.0;
+    double densityMaximumDb = -20.0;
+    double densityMaximumValue = 1.0;
     bool overviewVisible = false;
     QImage overviewImage;
     QImage overviewThumbnail;

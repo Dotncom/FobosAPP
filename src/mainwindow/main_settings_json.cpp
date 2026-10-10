@@ -37,6 +37,7 @@ QJsonObject YourClassName::settingsToJson() const {
     settings["sampleRate"] = pendingSettings.sampleRate;
     settings["bandwidth"] = pendingSettings.bandwidth;
     settings["modulationType"] = pendingSettings.modulationType;
+    settings["cwDecoderSelectivity"] = pendingSettings.cwDecoderSelectivity;
     settings["sstvDemodulationMode"] =
         normalizedSstvDemodulationMode(pendingSettings.sstvDemodulationMode);
     settings["fftLength"] = pendingSettings.fftLength;
@@ -47,6 +48,28 @@ QJsonObject YourClassName::settingsToJson() const {
     settings["vgaGain"] = pendingSettings.vgaGain;
     settings["hackRfLnaGainDb"] = pendingSettings.hackRfLnaGainDb;
     settings["hackRfVgaGainDb"] = pendingSettings.hackRfVgaGainDb;
+    settings["hackRfAmpEnabled"] = pendingSettings.hackRfAmpEnabled;
+    settings["hackRfBiasTeeEnabled"] = pendingSettings.hackRfBiasTeeEnabled;
+    settings["hackRfAutomaticBandwidth"] = pendingSettings.hackRfAutomaticBandwidth;
+    settings["hackRfBandwidthHz"] = pendingSettings.hackRfBandwidthHz;
+    settings["hackRfExplicitTuningEnabled"] = pendingSettings.hackRfExplicitTuningEnabled;
+    settings["hackRfExplicitIfHz"] = pendingSettings.hackRfExplicitIfHz;
+    settings["hackRfExplicitLoHz"] = pendingSettings.hackRfExplicitLoHz;
+    settings["hackRfExplicitPath"] = pendingSettings.hackRfExplicitPath;
+    settings["hackRfClockOutEnabled"] = pendingSettings.hackRfClockOutEnabled;
+    settings["hackRfHardwareSyncEnabled"] = pendingSettings.hackRfHardwareSyncEnabled;
+    settings["hackRfRxOverrunLimit"] = pendingSettings.hackRfRxOverrunLimit;
+    settings["hackRfOperaCakeEnabled"] = pendingSettings.hackRfOperaCakeEnabled;
+    settings["hackRfOperaCakeAddress"] = pendingSettings.hackRfOperaCakeAddress;
+    settings["hackRfOperaCakeMode"] = pendingSettings.hackRfOperaCakeMode;
+    settings["hackRfOperaCakePortA"] = pendingSettings.hackRfOperaCakePortA;
+    settings["hackRfOperaCakePortB"] = pendingSettings.hackRfOperaCakePortB;
+    settings["hackRfOperaCakeRangesJson"] = pendingSettings.hackRfOperaCakeRangesJson;
+    settings["hackRfOperaCakeDwellsJson"] = pendingSettings.hackRfOperaCakeDwellsJson;
+    settings["hackRfSweepRanges"] = pendingSettings.hackRfSweepRanges;
+    settings["hackRfSweepStepHz"] = pendingSettings.hackRfSweepStepHz;
+    settings["hackRfSweepBytesPerTune"] = pendingSettings.hackRfSweepBytesPerTune;
+    settings["hackRfSweepInterleaved"] = pendingSettings.hackRfSweepInterleaved;
     settings["rtlAgc"] = pendingSettings.rtlAgc;
     settings["rtlTunerGainTenthsDb"] = pendingSettings.rtlTunerGainTenthsDb;
     settings["audioLowPassHz"] = pendingSettings.audioLowPassHz;
@@ -95,6 +118,7 @@ QJsonObject YourClassName::settingsToJson() const {
     settings["listeningScanDwellMs"] = listeningScanDwellMs;
     settings["listeningScanSettleMs"] = listeningScanSettleMs;
     settings["scanMeasurementEnabled"] = scanMeasurementEnabled;
+    settings["waterfallAreaMeasurementEnabled"] = waterfallAreaMeasurementEnabled;
     settings["scanMeasurementBinMhz"] = scanMeasurementBinMhz;
     settings["scanMeasurementUpdateIntervalMs"] = scanMeasurementUpdateIntervalMs;
     settings["spectrumScienceMaxHold"] = spectrumScienceMaxHoldEnabled;
@@ -188,6 +212,9 @@ QJsonObject YourClassName::settingsToJson() const {
     settings["waterfallRowsPerFrame"] = waterfallRowsPerFrame;
     settings["waterfallDisplayMode"] = waterfallDisplayMode;
     settings["waterfall3DResolutionDivisor"] = waterfall3DResolutionDivisor;
+    settings["waterfall3DSurfaceStyle"] = waterfall3DSurfaceStyle;
+    settings["waterfall3DSmoothing"] = waterfall3DSmoothing;
+    settings["waterfall3DLighting"] = waterfall3DLighting;
     settings["waterfall3DHistoryRows"] = waterfall3DHistoryRows;
     settings["waterfall3DSliceScrollStep"] = waterfall3DSliceScrollStep;
     settings["waterfall3DSliceWidth"] = waterfall3DSliceWidth;
@@ -196,11 +223,14 @@ QJsonObject YourClassName::settingsToJson() const {
     settings["waterfall3DSpectrumSliceCapture"] = waterfall3DSpectrumSliceCapture;
     settings["waterfall3DSpectrumSliceCaptureFixed"] = waterfall3DSpectrumSliceCaptureFixed;
     settings["waterfall3DFixedPlane"] = waterfall3DFixedPlane;
+    settings["waterfall3DMonochrome"] = waterfall3DMonochrome;
+    settings["waterfall3DAlternativeView"] = waterfall3DAlternativeView;
     settings["waterfall3DVncSliceInput"] = waterfall3DVncSliceInput;
     settings["alternativeInterfaceMode"] = alternativeInterfaceMode;
     settings["alternativeSpectrumGradientFill"] = alternativeSpectrumGradientFill;
     settings["alternativeSpectrumGradientOpacity"] = alternativeSpectrumGradientOpacity;
     settings["experimentalGpuWaterfall"] = experimentalGpuWaterfall;
+    settings["spectrumDisplayReductionMode"] = spectrumDisplayReductionMode;
     settings["spurSuppressionEnabled"] = spurSuppressionEnabled;
     QJsonArray spurMask;
     for (const SpurMaskEntry &entry : spurMaskEntries) {
@@ -245,6 +275,11 @@ void YourClassName::applySettingsFromJson(const QJsonObject &settingsJson, bool 
     pendingSettings.sampleRate = readDouble("sampleRate", pendingSettings.sampleRate);
     pendingSettings.bandwidth = readDouble("bandwidth", pendingSettings.bandwidth);
     pendingSettings.modulationType = readInt("modulationType", pendingSettings.modulationType);
+    pendingSettings.cwDecoderSelectivity = (std::clamp)(
+        readInt("cwDecoderSelectivity", pendingSettings.cwDecoderSelectivity), 1, 10);
+    if (cwDecoderSelectivitySpin) {
+        cwDecoderSelectivitySpin->setValue(pendingSettings.cwDecoderSelectivity);
+    }
     pendingSettings.sstvDemodulationMode = normalizedSstvDemodulationMode(
         readInt("sstvDemodulationMode", pendingSettings.sstvDemodulationMode));
     if (sstvDemodulationCombo) {
@@ -270,6 +305,49 @@ void YourClassName::applySettingsFromJson(const QJsonObject &settingsJson, bool 
         (std::clamp)(readInt("hackRfLnaGainDb", pendingSettings.hackRfLnaGainDb), 0, 40) / 8 * 8;
     pendingSettings.hackRfVgaGainDb =
         (std::clamp)(readInt("hackRfVgaGainDb", pendingSettings.hackRfVgaGainDb), 0, 62) / 2 * 2;
+    pendingSettings.hackRfAmpEnabled = readBool("hackRfAmpEnabled", pendingSettings.hackRfAmpEnabled);
+    pendingSettings.hackRfBiasTeeEnabled = readBool("hackRfBiasTeeEnabled", pendingSettings.hackRfBiasTeeEnabled);
+    pendingSettings.hackRfAutomaticBandwidth =
+        readBool("hackRfAutomaticBandwidth", pendingSettings.hackRfAutomaticBandwidth);
+    pendingSettings.hackRfBandwidthHz =
+        (std::clamp)(readInt("hackRfBandwidthHz", pendingSettings.hackRfBandwidthHz), 0, 28000000);
+    pendingSettings.hackRfExplicitTuningEnabled =
+        readBool("hackRfExplicitTuningEnabled", pendingSettings.hackRfExplicitTuningEnabled);
+    pendingSettings.hackRfExplicitIfHz =
+        readDouble("hackRfExplicitIfHz", pendingSettings.hackRfExplicitIfHz);
+    pendingSettings.hackRfExplicitLoHz =
+        readDouble("hackRfExplicitLoHz", pendingSettings.hackRfExplicitLoHz);
+    pendingSettings.hackRfExplicitPath =
+        (std::clamp)(readInt("hackRfExplicitPath", pendingSettings.hackRfExplicitPath), 0, 2);
+    pendingSettings.hackRfClockOutEnabled =
+        readBool("hackRfClockOutEnabled", pendingSettings.hackRfClockOutEnabled);
+    pendingSettings.hackRfHardwareSyncEnabled =
+        readBool("hackRfHardwareSyncEnabled", pendingSettings.hackRfHardwareSyncEnabled);
+    pendingSettings.hackRfRxOverrunLimit =
+        (std::max)(0, readInt("hackRfRxOverrunLimit", pendingSettings.hackRfRxOverrunLimit));
+    pendingSettings.hackRfOperaCakeEnabled =
+        readBool("hackRfOperaCakeEnabled", pendingSettings.hackRfOperaCakeEnabled);
+    pendingSettings.hackRfOperaCakeAddress =
+        (std::clamp)(readInt("hackRfOperaCakeAddress", pendingSettings.hackRfOperaCakeAddress), 0, 7);
+    pendingSettings.hackRfOperaCakeMode =
+        (std::clamp)(readInt("hackRfOperaCakeMode", pendingSettings.hackRfOperaCakeMode), 0, 2);
+    pendingSettings.hackRfOperaCakePortA =
+        (std::clamp)(readInt("hackRfOperaCakePortA", pendingSettings.hackRfOperaCakePortA), 0, 7);
+    pendingSettings.hackRfOperaCakePortB =
+        (std::clamp)(readInt("hackRfOperaCakePortB", pendingSettings.hackRfOperaCakePortB), 0, 7);
+    pendingSettings.hackRfOperaCakeRangesJson =
+        readString("hackRfOperaCakeRangesJson", pendingSettings.hackRfOperaCakeRangesJson);
+    pendingSettings.hackRfOperaCakeDwellsJson =
+        readString("hackRfOperaCakeDwellsJson", pendingSettings.hackRfOperaCakeDwellsJson);
+    pendingSettings.hackRfSweepRanges =
+        readString("hackRfSweepRanges", pendingSettings.hackRfSweepRanges);
+    pendingSettings.hackRfSweepStepHz =
+        (std::clamp)(readInt("hackRfSweepStepHz", pendingSettings.hackRfSweepStepHz), 1000, 20000000);
+    pendingSettings.hackRfSweepBytesPerTune =
+        (std::clamp)(readInt("hackRfSweepBytesPerTune", pendingSettings.hackRfSweepBytesPerTune),
+                     16384, 16384 * 64);
+    pendingSettings.hackRfSweepInterleaved =
+        readBool("hackRfSweepInterleaved", pendingSettings.hackRfSweepInterleaved);
     pendingSettings.rtlAgc = readBool("rtlAgc", pendingSettings.rtlAgc);
     pendingSettings.rtlTunerGainTenthsDb =
         (std::clamp)(readInt("rtlTunerGainTenthsDb", pendingSettings.rtlTunerGainTenthsDb), 0, 496);
@@ -381,6 +459,15 @@ void YourClassName::applySettingsFromJson(const QJsonObject &settingsJson, bool 
     const bool previousScanMeasurementEnabled = scanMeasurementEnabled;
     const double previousScanMeasurementBinMhz = scanMeasurementBinMhz;
     scanMeasurementEnabled = readBool("scanMeasurementEnabled", scanMeasurementEnabled);
+    waterfallAreaMeasurementEnabled =
+        readBool("waterfallAreaMeasurementEnabled", waterfallAreaMeasurementEnabled);
+    if (waterfallAreaMeasurementCheckbox) {
+        QSignalBlocker blocker(waterfallAreaMeasurementCheckbox);
+        waterfallAreaMeasurementCheckbox->setChecked(waterfallAreaMeasurementEnabled);
+    }
+    if (waterfallWidget) {
+        waterfallWidget->setAreaMeasurementEnabled(waterfallAreaMeasurementEnabled);
+    }
     scanMeasurementBinMhz = (std::clamp)(readDouble("scanMeasurementBinMhz", scanMeasurementBinMhz),
                                          SCAN_MEASUREMENT_MIN_BIN_MHZ,
                                          SCAN_MEASUREMENT_MAX_BIN_MHZ);
@@ -592,8 +679,26 @@ void YourClassName::applySettingsFromJson(const QJsonObject &settingsJson, bool 
             waterfall3DResolutionCombo->setCurrentIndex(index);
         }
     }
+    waterfall3DSurfaceStyle = (std::clamp)(
+        readInt("waterfall3DSurfaceStyle", waterfall3DSurfaceStyle), 0, 1);
+    waterfall3DSmoothing = (std::clamp)(
+        readInt("waterfall3DSmoothing", waterfall3DSmoothing), 0, 2);
+    waterfall3DLighting = (std::clamp)(
+        readInt("waterfall3DLighting", waterfall3DLighting), 0, 2);
+    const auto restore3DCombo = [](QComboBox *combo, int value) {
+        if (!combo) return;
+        const QSignalBlocker blocker(combo);
+        const int index = combo->findData(value);
+        if (index >= 0) combo->setCurrentIndex(index);
+    };
+    restore3DCombo(waterfall3DSurfaceStyleCombo, waterfall3DSurfaceStyle);
+    restore3DCombo(waterfall3DSmoothingCombo, waterfall3DSmoothing);
+    restore3DCombo(waterfall3DLightingCombo, waterfall3DLighting);
     if (waterfallWidget) {
         waterfallWidget->set3DResolutionDivisor(waterfall3DResolutionDivisor);
+        waterfallWidget->set3DSurfaceStyle(waterfall3DSurfaceStyle);
+        waterfallWidget->set3DSurfaceSmoothing(waterfall3DSmoothing);
+        waterfallWidget->set3DSurfaceLighting(waterfall3DLighting);
     }
     waterfall3DHistoryRows =
         (std::clamp)(readInt("waterfall3DHistoryRows", waterfall3DHistoryRows), 16, 2048);
@@ -622,6 +727,8 @@ void YourClassName::applySettingsFromJson(const QJsonObject &settingsJson, bool 
     waterfall3DSpectrumSliceCaptureFixed =
         readBool("waterfall3DSpectrumSliceCaptureFixed", waterfall3DSpectrumSliceCaptureFixed);
     waterfall3DFixedPlane = readBool("waterfall3DFixedPlane", waterfall3DFixedPlane);
+    waterfall3DMonochrome = readBool("waterfall3DMonochrome", waterfall3DMonochrome);
+    waterfall3DAlternativeView = readBool("waterfall3DAlternativeView", waterfall3DAlternativeView);
     waterfall3DVncSliceInput =
         readBool("waterfall3DVncSliceInput", waterfall3DVncSliceInput);
     if (waterfall3DSliceStepSpin) {
@@ -653,6 +760,14 @@ void YourClassName::applySettingsFromJson(const QJsonObject &settingsJson, bool 
         QSignalBlocker blocker(waterfall3DFixedPlaneCheckbox);
         waterfall3DFixedPlaneCheckbox->setChecked(waterfall3DFixedPlane);
     }
+    if (waterfall3DMonochromeCheckbox) {
+        QSignalBlocker blocker(waterfall3DMonochromeCheckbox);
+        waterfall3DMonochromeCheckbox->setChecked(waterfall3DMonochrome);
+    }
+    if (waterfall3DAlternativeViewCheckbox) {
+        QSignalBlocker blocker(waterfall3DAlternativeViewCheckbox);
+        waterfall3DAlternativeViewCheckbox->setChecked(waterfall3DAlternativeView);
+    }
     if (waterfall3DVncSliceInputCheckbox) {
         QSignalBlocker blocker(waterfall3DVncSliceInputCheckbox);
         waterfall3DVncSliceInputCheckbox->setChecked(waterfall3DVncSliceInput);
@@ -665,9 +780,16 @@ void YourClassName::applySettingsFromJson(const QJsonObject &settingsJson, bool 
         waterfallWidget->set3DSpectrumSliceCapture(waterfall3DSpectrumSliceCapture);
         waterfallWidget->set3DSpectrumSliceCaptureFixed(waterfall3DSpectrumSliceCaptureFixed);
         waterfallWidget->set3DFixedPlane(waterfall3DFixedPlane);
+        waterfallWidget->set3DMonochrome(waterfall3DMonochrome);
         waterfallWidget->set3DModifierFreeSliceInput(waterfall3DVncSliceInput);
     }
-    alternativeInterfaceMode = readBool("alternativeInterfaceMode", alternativeInterfaceMode);
+    if (!settingsJson.contains("waterfall3DAlternativeView") &&
+        settingsJson.value("alternativeInterfaceMode").toBool(false)) {
+        waterfall3DAlternativeView = true;
+        alternativeInterfaceMode = false;
+    } else {
+        alternativeInterfaceMode = readBool("alternativeInterfaceMode", alternativeInterfaceMode);
+    }
     alternativeSpectrumGradientFill =
         readBool("alternativeSpectrumGradientFill", alternativeSpectrumGradientFill);
     alternativeSpectrumGradientOpacity =
@@ -693,6 +815,8 @@ void YourClassName::applySettingsFromJson(const QJsonObject &settingsJson, bool 
     }
     applyAlternativeInterfaceMode();
     experimentalGpuWaterfall = readBool("experimentalGpuWaterfall", experimentalGpuWaterfall);
+    spectrumDisplayReductionMode = (std::clamp)(
+        readInt("spectrumDisplayReductionMode", spectrumDisplayReductionMode), 0, 4);
     if (waterfallWidget) {
         waterfallWidget->setRenderBackend(experimentalGpuWaterfall
                                               ? MyWaterfallWidget::RenderBackend::GpuPrepared

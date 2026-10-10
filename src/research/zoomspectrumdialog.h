@@ -10,9 +10,12 @@ class QCheckBox;
 class QDoubleSpinBox;
 class QSpinBox;
 class QTimer;
+class QComboBox;
+class QStackedWidget;
 class MyGraphWidget;
 class MyWaterfallWidget;
 class ScaleWidget;
+class Waterfall3DView;
 class ZoomSpectrumProcessor;
 
 class ZoomSpectrumDialog : public QDialog {
@@ -47,6 +50,10 @@ private:
     MyGraphWidget *graph = nullptr;
     ScaleWidget *scale = nullptr;
     MyWaterfallWidget *waterfall = nullptr;
+    Waterfall3DView *waterfall3D = nullptr;
+    QStackedWidget *waterfallStack = nullptr;
+    QComboBox *displayModeCombo = nullptr;
+    std::vector<unsigned char> colorScratch;
     QCheckBox *enabledCheck = nullptr;
     QDoubleSpinBox *binWidthSpin = nullptr;
     QSpinBox *updateIntervalSpin = nullptr;

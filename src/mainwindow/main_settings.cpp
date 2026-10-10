@@ -177,6 +177,73 @@ void YourClassName::loadPersistentSettings() {
                                     pendingSettings.hackRfVgaGainDb).toInt(),
                      0,
                      62) / 2 * 2;
+    pendingSettings.hackRfAmpEnabled =
+        settings.value("receiver/hackRfAmpEnabled", pendingSettings.hackRfAmpEnabled).toBool();
+    pendingSettings.hackRfBiasTeeEnabled =
+        settings.value("receiver/hackRfBiasTeeEnabled", pendingSettings.hackRfBiasTeeEnabled).toBool();
+    pendingSettings.hackRfAutomaticBandwidth =
+        settings.value("receiver/hackRfAutomaticBandwidth",
+                       pendingSettings.hackRfAutomaticBandwidth).toBool();
+    pendingSettings.hackRfBandwidthHz =
+        (std::clamp)(settings.value("receiver/hackRfBandwidthHz",
+                                    pendingSettings.hackRfBandwidthHz).toInt(),
+                     0, 28000000);
+    pendingSettings.hackRfExplicitTuningEnabled =
+        settings.value("receiver/hackRfExplicitTuningEnabled",
+                       pendingSettings.hackRfExplicitTuningEnabled).toBool();
+    pendingSettings.hackRfExplicitIfHz =
+        settings.value("receiver/hackRfExplicitIfHz",
+                       pendingSettings.hackRfExplicitIfHz).toDouble();
+    pendingSettings.hackRfExplicitLoHz =
+        settings.value("receiver/hackRfExplicitLoHz",
+                       pendingSettings.hackRfExplicitLoHz).toDouble();
+    pendingSettings.hackRfExplicitPath =
+        (std::clamp)(settings.value("receiver/hackRfExplicitPath",
+                                    pendingSettings.hackRfExplicitPath).toInt(), 0, 2);
+    pendingSettings.hackRfClockOutEnabled =
+        settings.value("receiver/hackRfClockOutEnabled",
+                       pendingSettings.hackRfClockOutEnabled).toBool();
+    pendingSettings.hackRfHardwareSyncEnabled =
+        settings.value("receiver/hackRfHardwareSyncEnabled",
+                       pendingSettings.hackRfHardwareSyncEnabled).toBool();
+    pendingSettings.hackRfRxOverrunLimit =
+        (std::max)(0, settings.value("receiver/hackRfRxOverrunLimit",
+                                     pendingSettings.hackRfRxOverrunLimit).toInt());
+    pendingSettings.hackRfOperaCakeEnabled =
+        settings.value("receiver/hackRfOperaCakeEnabled",
+                       pendingSettings.hackRfOperaCakeEnabled).toBool();
+    pendingSettings.hackRfOperaCakeAddress =
+        (std::clamp)(settings.value("receiver/hackRfOperaCakeAddress",
+                                    pendingSettings.hackRfOperaCakeAddress).toInt(), 0, 7);
+    pendingSettings.hackRfOperaCakeMode =
+        (std::clamp)(settings.value("receiver/hackRfOperaCakeMode",
+                                    pendingSettings.hackRfOperaCakeMode).toInt(), 0, 2);
+    pendingSettings.hackRfOperaCakePortA =
+        (std::clamp)(settings.value("receiver/hackRfOperaCakePortA",
+                                    pendingSettings.hackRfOperaCakePortA).toInt(), 0, 7);
+    pendingSettings.hackRfOperaCakePortB =
+        (std::clamp)(settings.value("receiver/hackRfOperaCakePortB",
+                                    pendingSettings.hackRfOperaCakePortB).toInt(), 0, 7);
+    pendingSettings.hackRfOperaCakeRangesJson =
+        settings.value("receiver/hackRfOperaCakeRangesJson",
+                       pendingSettings.hackRfOperaCakeRangesJson).toString();
+    pendingSettings.hackRfOperaCakeDwellsJson =
+        settings.value("receiver/hackRfOperaCakeDwellsJson",
+                       pendingSettings.hackRfOperaCakeDwellsJson).toString();
+    pendingSettings.hackRfSweepRanges =
+        settings.value("receiver/hackRfSweepRanges",
+                       pendingSettings.hackRfSweepRanges).toString();
+    pendingSettings.hackRfSweepStepHz =
+        (std::clamp)(settings.value("receiver/hackRfSweepStepHz",
+                                    pendingSettings.hackRfSweepStepHz).toInt(),
+                     1000, 20000000);
+    pendingSettings.hackRfSweepBytesPerTune =
+        (std::clamp)(settings.value("receiver/hackRfSweepBytesPerTune",
+                                    pendingSettings.hackRfSweepBytesPerTune).toInt(),
+                     16384, 16384 * 64);
+    pendingSettings.hackRfSweepInterleaved =
+        settings.value("receiver/hackRfSweepInterleaved",
+                       pendingSettings.hackRfSweepInterleaved).toBool();
     pendingSettings.rtlAgc = settings.value("receiver/rtlAgc", pendingSettings.rtlAgc).toBool();
     pendingSettings.rtlTunerGainTenthsDb =
         (std::clamp)(settings.value("receiver/rtlTunerGainTenthsDb",
@@ -387,6 +454,9 @@ void YourClassName::loadPersistentSettings() {
     scanMeasurementEnabled =
         settings.value("spectrumMeasurement/enabled",
                        settings.value("agileScan/measurementEnabled", scanMeasurementEnabled)).toBool();
+    waterfallAreaMeasurementEnabled =
+        settings.value("spectrumMeasurement/waterfallAreaMeasurement",
+                       waterfallAreaMeasurementEnabled).toBool();
     scanMeasurementBinMhz = (std::clamp)(settings.value("spectrumMeasurement/binMhz",
                                                         settings.value("agileScan/measurementBinMhz", scanMeasurementBinMhz)).toDouble(),
                                          SCAN_MEASUREMENT_MIN_BIN_MHZ,
@@ -800,6 +870,26 @@ void YourClassName::loadPersistentSettings() {
     if (waterfallWidget) {
         waterfallWidget->set3DResolutionDivisor(waterfall3DResolutionDivisor);
     }
+    waterfall3DSurfaceStyle = (std::clamp)(
+        settings.value("ui/waterfall3DSurfaceStyle", waterfall3DSurfaceStyle).toInt(), 0, 1);
+    waterfall3DSmoothing = (std::clamp)(
+        settings.value("ui/waterfall3DSmoothing", waterfall3DSmoothing).toInt(), 0, 2);
+    waterfall3DLighting = (std::clamp)(
+        settings.value("ui/waterfall3DLighting", waterfall3DLighting).toInt(), 0, 2);
+    const auto restore3DCombo = [](QComboBox *combo, int value) {
+        if (!combo) return;
+        const QSignalBlocker blocker(combo);
+        const int index = combo->findData(value);
+        if (index >= 0) combo->setCurrentIndex(index);
+    };
+    restore3DCombo(waterfall3DSurfaceStyleCombo, waterfall3DSurfaceStyle);
+    restore3DCombo(waterfall3DSmoothingCombo, waterfall3DSmoothing);
+    restore3DCombo(waterfall3DLightingCombo, waterfall3DLighting);
+    if (waterfallWidget) {
+        waterfallWidget->set3DSurfaceStyle(waterfall3DSurfaceStyle);
+        waterfallWidget->set3DSurfaceSmoothing(waterfall3DSmoothing);
+        waterfallWidget->set3DSurfaceLighting(waterfall3DLighting);
+    }
     waterfall3DHistoryRows =
         (std::clamp)(settings.value("ui/waterfall3DHistoryRows", waterfall3DHistoryRows).toInt(),
                      16,
@@ -839,6 +929,10 @@ void YourClassName::loadPersistentSettings() {
                        waterfall3DSpectrumSliceCaptureFixed).toBool();
     waterfall3DFixedPlane =
         settings.value("ui/waterfall3DFixedPlane", waterfall3DFixedPlane).toBool();
+    waterfall3DMonochrome =
+        settings.value("ui/waterfall3DMonochrome", waterfall3DMonochrome).toBool();
+    waterfall3DAlternativeView =
+        settings.value("ui/waterfall3DAlternativeView", waterfall3DAlternativeView).toBool();
     waterfall3DVncSliceInput =
         settings.value("ui/waterfall3DVncSliceInput",
                        waterfall3DVncSliceInput).toBool();
@@ -871,6 +965,14 @@ void YourClassName::loadPersistentSettings() {
         QSignalBlocker blocker(waterfall3DFixedPlaneCheckbox);
         waterfall3DFixedPlaneCheckbox->setChecked(waterfall3DFixedPlane);
     }
+    if (waterfall3DMonochromeCheckbox) {
+        QSignalBlocker blocker(waterfall3DMonochromeCheckbox);
+        waterfall3DMonochromeCheckbox->setChecked(waterfall3DMonochrome);
+    }
+    if (waterfall3DAlternativeViewCheckbox) {
+        QSignalBlocker blocker(waterfall3DAlternativeViewCheckbox);
+        waterfall3DAlternativeViewCheckbox->setChecked(waterfall3DAlternativeView);
+    }
     if (waterfall3DVncSliceInputCheckbox) {
         QSignalBlocker blocker(waterfall3DVncSliceInputCheckbox);
         waterfall3DVncSliceInputCheckbox->setChecked(waterfall3DVncSliceInput);
@@ -883,10 +985,18 @@ void YourClassName::loadPersistentSettings() {
         waterfallWidget->set3DSpectrumSliceCapture(waterfall3DSpectrumSliceCapture);
         waterfallWidget->set3DSpectrumSliceCaptureFixed(waterfall3DSpectrumSliceCaptureFixed);
         waterfallWidget->set3DFixedPlane(waterfall3DFixedPlane);
+        waterfallWidget->set3DMonochrome(waterfall3DMonochrome);
         waterfallWidget->set3DModifierFreeSliceInput(waterfall3DVncSliceInput);
     }
-    alternativeInterfaceMode =
+    const bool hasWorkspaceModeSetting = settings.contains("ui/waterfall3DAlternativeView");
+    const bool legacyAlternativeInterface =
         settings.value("ui/alternativeInterfaceMode", alternativeInterfaceMode).toBool();
+    if (!hasWorkspaceModeSetting && legacyAlternativeInterface) {
+        waterfall3DAlternativeView = true;
+        alternativeInterfaceMode = false;
+    } else {
+        alternativeInterfaceMode = legacyAlternativeInterface;
+    }
     alternativeSpectrumGradientFill =
         settings.value("ui/alternativeSpectrumGradientFill",
                        alternativeSpectrumGradientFill).toBool();
@@ -913,6 +1023,10 @@ void YourClassName::loadPersistentSettings() {
     }
     applyAlternativeInterfaceMode();
     experimentalGpuWaterfall = settings.value("ui/experimentalGpuWaterfall", experimentalGpuWaterfall).toBool();
+    spectrumDisplayReductionMode = (std::clamp)(
+        settings.value("ui/spectrumDisplayReductionMode", spectrumDisplayReductionMode).toInt(),
+        0,
+        4);
     if (waterfallWidget) {
         waterfallWidget->setRenderBackend(experimentalGpuWaterfall
                                               ? MyWaterfallWidget::RenderBackend::GpuPrepared
@@ -920,9 +1034,13 @@ void YourClassName::loadPersistentSettings() {
     }
     showSpectrumFps = settings.value("ui/showSpectrumFps", showSpectrumFps).toBool();
     showWaterfallFps = settings.value("ui/showWaterfallFps", showWaterfallFps).toBool();
+    showSpectrumPeakMeter = settings.value("ui/showSpectrumPeakMeter", showSpectrumPeakMeter).toBool();
+    spectrumPeakMeterStyle = std::clamp(settings.value("ui/spectrumPeakMeterStyle", spectrumPeakMeterStyle).toInt(), 0, 1);
     showExtendedSpectrumInfo = settings.value("ui/showExtendedSpectrumInfo", showExtendedSpectrumInfo).toBool();
     if (graphWidget) {
         graphWidget->setFpsOverlayEnabled(showSpectrumFps);
+        graphWidget->setAnalogPeakMeterEnabled(showSpectrumPeakMeter);
+        graphWidget->setAnalogPeakMeterStyle(spectrumPeakMeterStyle);
     }
     if (waterfallWidget) {
         waterfallWidget->setFpsOverlayEnabled(showWaterfallFps);
@@ -1004,6 +1122,11 @@ void YourClassName::loadPersistentSettings() {
         (std::clamp)(settings.value("digital/cwAlphabet", pendingSettings.cwDecoderAlphabet).toInt(),
                      0,
                      2);
+    pendingSettings.cwDecoderSelectivity =
+        (std::clamp)(settings.value("digital/cwSelectivity",
+                                    pendingSettings.cwDecoderSelectivity).toInt(),
+                     1,
+                     10);
     if (cwDecoderToneSpin) cwDecoderToneSpin->setValue(qRound(pendingSettings.cwDecoderToneHz));
     if (cwDecoderWpmSpin) cwDecoderWpmSpin->setValue(pendingSettings.cwDecoderWpm);
     if (cwDecoderAdaptiveCheckbox) {
@@ -1012,6 +1135,9 @@ void YourClassName::loadPersistentSettings() {
     if (cwDecoderAlphabetCombo) {
         const int index = cwDecoderAlphabetCombo->findData(pendingSettings.cwDecoderAlphabet);
         if (index >= 0) cwDecoderAlphabetCombo->setCurrentIndex(index);
+    }
+    if (cwDecoderSelectivitySpin) {
+        cwDecoderSelectivitySpin->setValue(pendingSettings.cwDecoderSelectivity);
     }
     if (cwDecoderControlsWidget) {
         cwDecoderControlsWidget->setVisible(pendingSettings.modulationType == MOD_CW);
@@ -1340,6 +1466,28 @@ void YourClassName::savePersistentSettings() {
     settings.setValue("receiver/vgaGain", settingsToSave.vgaGain);
     settings.setValue("receiver/hackRfLnaGainDb", settingsToSave.hackRfLnaGainDb);
     settings.setValue("receiver/hackRfVgaGainDb", settingsToSave.hackRfVgaGainDb);
+    settings.setValue("receiver/hackRfAmpEnabled", settingsToSave.hackRfAmpEnabled);
+    settings.setValue("receiver/hackRfBiasTeeEnabled", settingsToSave.hackRfBiasTeeEnabled);
+    settings.setValue("receiver/hackRfAutomaticBandwidth", settingsToSave.hackRfAutomaticBandwidth);
+    settings.setValue("receiver/hackRfBandwidthHz", settingsToSave.hackRfBandwidthHz);
+    settings.setValue("receiver/hackRfExplicitTuningEnabled", settingsToSave.hackRfExplicitTuningEnabled);
+    settings.setValue("receiver/hackRfExplicitIfHz", settingsToSave.hackRfExplicitIfHz);
+    settings.setValue("receiver/hackRfExplicitLoHz", settingsToSave.hackRfExplicitLoHz);
+    settings.setValue("receiver/hackRfExplicitPath", settingsToSave.hackRfExplicitPath);
+    settings.setValue("receiver/hackRfClockOutEnabled", settingsToSave.hackRfClockOutEnabled);
+    settings.setValue("receiver/hackRfHardwareSyncEnabled", settingsToSave.hackRfHardwareSyncEnabled);
+    settings.setValue("receiver/hackRfRxOverrunLimit", settingsToSave.hackRfRxOverrunLimit);
+    settings.setValue("receiver/hackRfOperaCakeEnabled", settingsToSave.hackRfOperaCakeEnabled);
+    settings.setValue("receiver/hackRfOperaCakeAddress", settingsToSave.hackRfOperaCakeAddress);
+    settings.setValue("receiver/hackRfOperaCakeMode", settingsToSave.hackRfOperaCakeMode);
+    settings.setValue("receiver/hackRfOperaCakePortA", settingsToSave.hackRfOperaCakePortA);
+    settings.setValue("receiver/hackRfOperaCakePortB", settingsToSave.hackRfOperaCakePortB);
+    settings.setValue("receiver/hackRfOperaCakeRangesJson", settingsToSave.hackRfOperaCakeRangesJson);
+    settings.setValue("receiver/hackRfOperaCakeDwellsJson", settingsToSave.hackRfOperaCakeDwellsJson);
+    settings.setValue("receiver/hackRfSweepRanges", settingsToSave.hackRfSweepRanges);
+    settings.setValue("receiver/hackRfSweepStepHz", settingsToSave.hackRfSweepStepHz);
+    settings.setValue("receiver/hackRfSweepBytesPerTune", settingsToSave.hackRfSweepBytesPerTune);
+    settings.setValue("receiver/hackRfSweepInterleaved", settingsToSave.hackRfSweepInterleaved);
     settings.setValue("receiver/rtlAgc", settingsToSave.rtlAgc);
     settings.setValue("receiver/rtlTunerGainTenthsDb", settingsToSave.rtlTunerGainTenthsDb);
     settings.setValue("receiver/audioDeviceId", settingsToSave.audioDeviceId);
@@ -1424,6 +1572,8 @@ void YourClassName::savePersistentSettings() {
     }
     settings.endArray();
     settings.setValue("spectrumMeasurement/enabled", scanMeasurementEnabled);
+    settings.setValue("spectrumMeasurement/waterfallAreaMeasurement",
+                      waterfallAreaMeasurementEnabled);
     settings.setValue("spectrumMeasurement/binMhz", scanMeasurementBinMhz);
     settings.setValue("spectrumMeasurement/updateIntervalMs", scanMeasurementUpdateIntervalMs);
     settings.setValue("spectrumScience/maxHold", spectrumScienceMaxHoldEnabled);
@@ -1632,6 +1782,9 @@ void YourClassName::savePersistentSettings() {
     settings.setValue("ui/waterfallRowsPerFrame", waterfallRowsPerFrame);
     settings.setValue("ui/waterfallDisplayMode", waterfallDisplayMode);
     settings.setValue("ui/waterfall3DResolutionDivisor", waterfall3DResolutionDivisor);
+    settings.setValue("ui/waterfall3DSurfaceStyle", waterfall3DSurfaceStyle);
+    settings.setValue("ui/waterfall3DSmoothing", waterfall3DSmoothing);
+    settings.setValue("ui/waterfall3DLighting", waterfall3DLighting);
     settings.setValue("ui/waterfall3DHistoryRows", waterfall3DHistoryRows);
     settings.setValue("ui/waterfall3DSliceScrollStep", waterfall3DSliceScrollStep);
     settings.setValue("ui/waterfall3DSliceWidth", waterfall3DSliceWidth);
@@ -1640,13 +1793,18 @@ void YourClassName::savePersistentSettings() {
     settings.setValue("ui/waterfall3DSpectrumSliceCapture", waterfall3DSpectrumSliceCapture);
     settings.setValue("ui/waterfall3DSpectrumSliceCaptureFixed", waterfall3DSpectrumSliceCaptureFixed);
     settings.setValue("ui/waterfall3DFixedPlane", waterfall3DFixedPlane);
+    settings.setValue("ui/waterfall3DMonochrome", waterfall3DMonochrome);
+    settings.setValue("ui/waterfall3DAlternativeView", waterfall3DAlternativeView);
     settings.setValue("ui/waterfall3DVncSliceInput", waterfall3DVncSliceInput);
     settings.setValue("ui/alternativeInterfaceMode", alternativeInterfaceMode);
     settings.setValue("ui/alternativeSpectrumGradientFill", alternativeSpectrumGradientFill);
     settings.setValue("ui/alternativeSpectrumGradientOpacity", alternativeSpectrumGradientOpacity);
     settings.setValue("ui/experimentalGpuWaterfall", experimentalGpuWaterfall);
+    settings.setValue("ui/spectrumDisplayReductionMode", spectrumDisplayReductionMode);
     settings.setValue("ui/showSpectrumFps", showSpectrumFps);
     settings.setValue("ui/showWaterfallFps", showWaterfallFps);
+    settings.setValue("ui/showSpectrumPeakMeter", showSpectrumPeakMeter);
+    settings.setValue("ui/spectrumPeakMeterStyle", spectrumPeakMeterStyle);
     settings.setValue("ui/showExtendedSpectrumInfo", showExtendedSpectrumInfo);
     settings.setValue("ui/agileLiveRetuneIntervalMs", agileLiveRetuneCommandIntervalMs);
     settings.setValue("ui/fineTuneScaleHoldMode", fineTuneScaleHoldMode);
@@ -1701,6 +1859,9 @@ void YourClassName::savePersistentSettings() {
     settings.setValue("digital/cwAlphabet",
                       cwDecoderAlphabetCombo ? cwDecoderAlphabetCombo->currentData().toInt()
                                              : pendingSettings.cwDecoderAlphabet);
+    settings.setValue("digital/cwSelectivity",
+                      cwDecoderSelectivitySpin ? cwDecoderSelectivitySpin->value()
+                                               : pendingSettings.cwDecoderSelectivity);
     settings.setValue("digital/dmrLockEnabled", dmrLabCaptureCheckbox && dmrLabCaptureCheckbox->isChecked());
     settings.setValue("digital/dmrLabColorCode", dmrLabColorCodeCombo ? dmrLabColorCodeCombo->currentData().toInt() : -1);
     settings.setValue("digital/dmrLabTimeslot", dmrLabSlotCombo ? dmrLabSlotCombo->currentData().toInt() : 0);

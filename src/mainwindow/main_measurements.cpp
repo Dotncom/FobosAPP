@@ -1,8 +1,11 @@
 #include "main.h"
 #include "appconstants.h"
+#include "diagnosticlogging.h"
+#include "dspflowpanel.h"
 #include "gnssqthhelpers.h"
 #include "researchanalysisdialog.h"
 #include "zerospandialog.h"
+#include "zoomdensitydialog.h"
 
 #include <QDebug>
 #include <QDateTime>
@@ -15,6 +18,7 @@
 #include <QSignalBlocker>
 #include <QStringList>
 #include <QTextStream>
+#include <QTimer>
 
 #include <algorithm>
 #include <cmath>
@@ -58,12 +62,60 @@ void YourClassName::updateSpectrumScience(const std::vector<float> &frequencies,
                                                 spectrumPercentile90Enabled,
                                                 spectrumPercentile99Enabled);
     spectrumScienceAnalyzer.update(frequencies, levels);
-    if (researchAnalysisDialog && researchAnalysisDialog->isVisible()) {
+    if (researchAnalysisDialog &&
+        (researchAnalysisDialog->isVisible() ||
+         researchAnalysisDialog->hasActiveMeasurementSession())) {
         researchAnalysisDialog->appendSpectrumFrame(frequencies,
                                                     levels,
                                                     spectrumScienceAnalyzer.metrics());
     }
+    if (zoomDensityDialog && zoomDensityDialog->isVisible()) {
+        zoomDensityDialog->appendSpectrumFrame(frequencies,
+                                               levels,
+                                               spectrumAmplitudeUnit,
+                                               pendingSettings.listeningFrequency);
+    }
+    const SpectrumSciencePendingAction pendingAction = spectrumSciencePendingAction;
+    spectrumSciencePendingAction = SpectrumScienceActionNone;
+    if (pendingAction == SpectrumScienceActionPeak) {
+        spectrumScienceAnalyzer.setMarker(spectrumScienceActiveMarker,
+                                          spectrumScienceAnalyzer.strongestPeakFrequency());
+    } else if (pendingAction == SpectrumScienceActionPreviousPeak) {
+        spectrumScienceAnalyzer.setMarker(
+            spectrumScienceActiveMarker,
+            spectrumScienceAnalyzer.adjacentPeakFrequency(spectrumScienceActiveMarker, -1));
+    } else if (pendingAction == SpectrumScienceActionNextPeak) {
+        spectrumScienceAnalyzer.setMarker(
+            spectrumScienceActiveMarker,
+            spectrumScienceAnalyzer.adjacentPeakFrequency(spectrumScienceActiveMarker, 1));
+    }
+    const bool exportPending = spectrumScienceExportPending;
+    spectrumScienceExportPending = false;
     updateSpectrumScienceUi();
+    if (exportPending) {
+        QTimer::singleShot(0, this, [this]() { exportSpectrumScienceCsv(); });
+    }
+}
+
+bool YourClassName::spectrumScienceAnalysisRequired() const {
+    return spectrumScienceAnalyzer.marker(0).enabled ||
+           spectrumScienceAnalyzer.marker(1).enabled ||
+           spectrumScienceMaxHoldEnabled ||
+           spectrumScienceMinHoldEnabled ||
+           spectrumScienceAverageEnabled ||
+           spectrumPercentile50Enabled ||
+           spectrumPercentile90Enabled ||
+           spectrumPercentile99Enabled ||
+           spectrumDetectorMode != SPECTRUM_DETECTOR_SAMPLE ||
+           spectrumVbwHz > 0.0 ||
+           spectrumAverageFrameCount > 0 ||
+           spectrumSciencePendingAction != SpectrumScienceActionNone ||
+           spectrumScienceExportPending ||
+           (researchAnalysisDialog &&
+            (researchAnalysisDialog->isVisible() ||
+             researchAnalysisDialog->hasActiveMeasurementSession())) ||
+           (zeroSpanDialog && zeroSpanDialog->isVisible()) ||
+           (zoomDensityDialog && zoomDensityDialog->isVisible());
 }
 
 void YourClassName::openResearchAnalysis(int tabIndex) {
@@ -146,11 +198,21 @@ void YourClassName::openResearchAnalysis(int tabIndex) {
                     audioProcessor->configure(audioProcessorSettings());
                 }
             },
+            [this]() {
+                if (!spectrumFrameRecorder.isRecording()) {
+                    startSpectrumFrameRecording();
+                }
+            },
+            [this](double frequencyHz) {
+                if (listeningFrequencyControl && std::isfinite(frequencyHz)) {
+                    listeningFrequencyControl->setValueHz(frequencyHz);
+                }
+            },
             this);
     }
     const int clampedTab = (std::clamp)(tabIndex,
                                         static_cast<int>(ResearchAnalysisDialog::InterferenceTab),
-                                        static_cast<int>(ResearchAnalysisDialog::AnalyzerTab));
+                                        static_cast<int>(ResearchAnalysisDialog::SessionTab));
     researchAnalysisDialog->selectTab(static_cast<ResearchAnalysisDialog::Tab>(clampedTab));
     if (!spectrumScienceAnalyzer.frequencies().empty() &&
         !spectrumScienceAnalyzer.levels().empty()) {
@@ -198,7 +260,10 @@ void YourClassName::updateSpectrumScienceUi() {
     markers.reserve(2);
     markers.append(spectrumScienceAnalyzer.marker(0));
     markers.append(spectrumScienceAnalyzer.marker(1));
+    const int activeMarkerIndex = std::clamp(spectrumScienceActiveMarker, 0, markers.size() - 1);
+    const SpectrumScienceMarker activeMarker = markers.at(activeMarkerIndex);
     if (graphWidget) {
+        graphWidget->setAnalogPeakMeterTarget(activeMarker.frequencyHz, activeMarker.enabled);
         graphWidget->setScienceAnalysisData(spectrumScienceAnalyzer.maxHoldTrace(),
                                             spectrumScienceAnalyzer.minHoldTrace(),
                                             spectrumScienceAnalyzer.averageTrace(),
@@ -212,6 +277,9 @@ void YourClassName::updateSpectrumScienceUi() {
                                             spectrumPercentile90Enabled,
                                             spectrumPercentile99Enabled,
                                             markers);
+    }
+    if (dspFlowPanel) {
+        dspFlowPanel->setAnalogPeakMeterTarget(activeMarker.frequencyHz, activeMarker.enabled);
     }
     if (waterfallWidget) {
         waterfallWidget->setScienceAnalysisData(spectrumScienceAnalyzer.maxHoldTrace(),
@@ -762,7 +830,8 @@ void YourClassName::updateSpurSuppressionStatus() {
 void YourClassName::updateGnssSpurWatch(const std::vector<float> &frequencies,
                                         const std::vector<float> &magnitudes,
                                         double centerFrequency) {
-    if (frequencies.empty() || magnitudes.empty() || frequencies.size() != magnitudes.size()) {
+    if (!fobosVerboseLoggingEnabled() ||
+        frequencies.empty() || magnitudes.empty() || frequencies.size() != magnitudes.size()) {
         return;
     }
 

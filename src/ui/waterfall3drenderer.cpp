@@ -21,6 +21,39 @@ float normalizedHeight(float level, float levelMin, float levelMax) {
     return std::clamp((level - levelMin) / (levelMax - levelMin), 0.0f, 1.0f);
 }
 
+std::array<unsigned char, 3> blueAmplitudeColor(float value) {
+    const float t = std::clamp(std::isfinite(value) ? value : 0.0f, 0.0f, 1.0f);
+    const float root = std::sqrt(t);
+    return {
+        static_cast<unsigned char>(std::lround(5.0f + 95.0f * t * t)),
+        static_cast<unsigned char>(std::lround(18.0f + 190.0f * t)),
+        static_cast<unsigned char>(std::lround(55.0f + 200.0f * root))
+    };
+}
+QVector3D densityProfileColor(float value) {
+    const float t = std::clamp(value, 0.0f, 1.0f);
+    if (t < 0.16f) {
+        const float u = t / 0.16f;
+        return QVector3D(0.03f * (1.0f - u),
+                         0.07f + 0.06f * u,
+                         0.19f + 0.28f * u);
+    }
+    if (t < 0.38f) {
+        const float u = (t - 0.16f) / 0.22f;
+        return QVector3D(0.0f, 0.13f + 0.74f * u, 0.47f + 0.47f * u);
+    }
+    if (t < 0.64f) {
+        const float u = (t - 0.38f) / 0.26f;
+        return QVector3D(0.96f * u, 0.87f + 0.10f * u, 0.94f * (1.0f - u));
+    }
+    if (t < 0.84f) {
+        const float u = (t - 0.64f) / 0.20f;
+        return QVector3D(0.96f, 0.97f * (1.0f - u) + 0.20f * u, 0.0f);
+    }
+    const float u = (t - 0.84f) / 0.16f;
+    return QVector3D(0.96f + 0.04f * u, 0.20f + 0.80f * u, u);
+}
+
 }
 
 void Waterfall3DRenderer::appendRow(const std::vector<float> &levels,
@@ -180,6 +213,7 @@ void Waterfall3DRenderer::resampleHistoryColumns(int outputColumns) {
 
 void Waterfall3DRenderer::clear() {
     historyRows.clear();
+    densityFrontProfile.clear();
     selectedSliceColumn = -1;
     frequencySliceActive = false;
     highlightedHistoryRow = -1;
@@ -723,6 +757,122 @@ void Waterfall3DRenderer::setFrontFaceGradient(bool enabled, int opacityPercent)
     frontFaceGradientOpacity = std::clamp(opacityPercent, 0, 100);
 }
 
+void Waterfall3DRenderer::setDensityAxes(bool enabled) {
+    if (densityAxes == enabled) {
+        return;
+    }
+    densityAxes = enabled;
+    gpuMeshDirty = true;
+}
+
+void Waterfall3DRenderer::setDensityAxisMapping(int xDimension, int yDimension) {
+    xDimension = std::clamp(xDimension, 0, 2);
+    yDimension = std::clamp(yDimension, 0, 2);
+    if (xDimension == yDimension) {
+        return;
+    }
+    densityAxisXDimension = xDimension;
+    densityAxisYDimension = yDimension;
+    densityAxisZDimension = 3 - xDimension - yDimension;
+}
+
+void Waterfall3DRenderer::setDensityFrontProfile(
+    const std::vector<float> &normalizedLevels) {
+    densityFrontProfile = normalizedLevels;
+    for (float &level : densityFrontProfile) {
+        level = std::clamp(level, 0.0f, 1.0f);
+    }
+}
+
+void Waterfall3DRenderer::setDensityFrontProfileStyle(int style) {
+    densityFrontProfileStyle = std::clamp(style, 0, 1);
+}
+
+void Waterfall3DRenderer::setSurfaceStyle(int style) {
+    style = std::clamp(style, 0, 1);
+    if (surfaceStyle == style) {
+        return;
+    }
+    surfaceStyle = style;
+    gpuMeshDirty = true;
+}
+
+void Waterfall3DRenderer::setSurfaceSmoothing(int smoothing) {
+    smoothing = std::clamp(smoothing, 0, 2);
+    if (surfaceSmoothing == smoothing) {
+        return;
+    }
+    surfaceSmoothing = smoothing;
+    gpuTexturesResetRequired = true;
+}
+
+void Waterfall3DRenderer::setSurfaceLighting(int lighting) {
+    surfaceLighting = std::clamp(lighting, 0, 2);
+}
+
+void Waterfall3DRenderer::setMonochrome(bool enabled) {
+    if (monochrome == enabled) return;
+    monochrome = enabled;
+    gpuTexturesResetRequired = true;
+    pendingGpuRows.clear();
+}
+
+void Waterfall3DRenderer::applySampleColor(const VertexSample &sample) const {
+    if (monochrome) {
+        const auto color = blueAmplitudeColor(sample.height);
+        glColor3ub(color[0], color[1], color[2]);
+    } else {
+        glColor3ub(sample.color[0], sample.color[1], sample.color[2]);
+    }
+}
+QVector3D Waterfall3DRenderer::densityPosition(float densityRatio,
+                                               float frequencyRatio,
+                                               float levelRatio) const {
+    const std::array<float, 3> values{{std::clamp(frequencyRatio, 0.0f, 1.0f),
+                                       std::clamp(densityRatio, 0.0f, 1.0f),
+                                       std::clamp(levelRatio, 0.0f, 1.0f)}};
+    return QVector3D(-1.0f + 2.0f * values[static_cast<std::size_t>(densityAxisXDimension)],
+                     -1.0f + 2.0f * values[static_cast<std::size_t>(densityAxisYDimension)],
+                     0.72f * values[static_cast<std::size_t>(densityAxisZDimension)]);
+}
+
+bool Waterfall3DRenderer::densityPointToScreen(float densityRatio,
+                                               float frequencyRatio,
+                                               float levelRatio,
+                                               int viewportWidth,
+                                               int viewportHeight,
+                                               QPointF &screen) const {
+    if (!densityAxes || viewportWidth <= 0 || viewportHeight <= 0) {
+        return false;
+    }
+    const QMatrix4x4 transform = viewParameters(viewportWidth, viewportHeight).transform;
+    const QVector3D position = densityPosition(densityRatio, frequencyRatio, levelRatio);
+    const QVector4D clip = transform * QVector4D(position, 1.0f);
+    if (!std::isfinite(clip.w()) || std::abs(clip.w()) < 1.0e-6f) {
+        return false;
+    }
+    const float x = clip.x() / clip.w();
+    const float y = clip.y() / clip.w();
+    if (!std::isfinite(x) || !std::isfinite(y)) {
+        return false;
+    }
+    screen.setX((x + 1.0f) * 0.5f * static_cast<float>(viewportWidth));
+    screen.setY((1.0f - y) * 0.5f * static_cast<float>(viewportHeight));
+    return true;
+}
+
+bool Waterfall3DRenderer::densityAxisScreenPoints(int viewportWidth,
+                                                  int viewportHeight,
+                                                  QPointF &origin,
+                                                  QPointF &frequencyEnd,
+                                                  QPointF &densityEnd,
+                                                  QPointF &levelEnd) const {
+    return densityPointToScreen(0.0f, 0.0f, 0.0f, viewportWidth, viewportHeight, origin) &&
+           densityPointToScreen(0.0f, 1.0f, 0.0f, viewportWidth, viewportHeight, frequencyEnd) &&
+           densityPointToScreen(1.0f, 0.0f, 0.0f, viewportWidth, viewportHeight, densityEnd) &&
+           densityPointToScreen(0.0f, 0.0f, 1.0f, viewportWidth, viewportHeight, levelEnd);
+}
+
 bool Waterfall3DRenderer::ensureSurfaceProgram() {
     if (surfaceProgramReady) {
         return true;
@@ -733,7 +883,7 @@ bool Waterfall3DRenderer::ensureSurfaceProgram() {
     surfaceProgramTried = true;
 
     static const char *vertexSource =
-        "attribute vec2 gridPosition;\n"
+        "attribute vec3 gridPosition;\n"
         "uniform mat4 transform;\n"
         "uniform sampler2D heightMap;\n"
         "uniform sampler2D colorMap;\n"
@@ -741,21 +891,114 @@ bool Waterfall3DRenderer::ensureSurfaceProgram() {
         "uniform float columnCount;\n"
         "uniform float textureRows;\n"
         "uniform float oldestRow;\n"
+        "uniform float densityAxes;\n"
+        "uniform float densityAxisX;\n"
+        "uniform float densityAxisY;\n"
+        "uniform float densityAxisZ;\n"
+        "uniform float smoothingMode;\n"
         "varying vec3 vertexColor;\n"
+        "varying float pointDensity;\n"
+        "varying vec3 surfaceNormal;\n"
+        "float axisValue(float dimension, vec3 values) {\n"
+        "    if (dimension < 0.5) return values.x;\n"
+        "    if (dimension < 1.5) return values.y;\n"
+        "    return values.z;\n"
+        "}\n"
+        "float rawHeight(float row, float column) {\n"
+        "    float clampedRow = clamp(row, 0.0, max(0.0, rowCount - 1.0));\n"
+        "    float clampedColumn = clamp(column, 0.0, max(0.0, columnCount - 1.0));\n"
+        "    float physicalRow = mod(oldestRow + clampedRow, textureRows);\n"
+        "    vec2 coord = vec2((clampedColumn + 0.5) / columnCount,\n"
+        "                      (physicalRow + 0.5) / textureRows);\n"
+        "    return texture2D(heightMap, coord).r;\n"
+        "}\n"
+        "float filteredHeight(float row, float column) {\n"
+        "    float center = rawHeight(row, column);\n"
+        "    if (smoothingMode < 0.5) return center;\n"
+        "    float crossValue = rawHeight(row - 1.0, column) +\n"
+        "                       rawHeight(row + 1.0, column) +\n"
+        "                       rawHeight(row, column - 1.0) +\n"
+        "                       rawHeight(row, column + 1.0);\n"
+        "    if (smoothingMode < 1.5) return (center * 4.0 + crossValue) / 8.0;\n"
+        "    float corners = rawHeight(row - 1.0, column - 1.0) +\n"
+        "                    rawHeight(row - 1.0, column + 1.0) +\n"
+        "                    rawHeight(row + 1.0, column - 1.0) +\n"
+        "                    rawHeight(row + 1.0, column + 1.0);\n"
+        "    return (center * 4.0 + crossValue * 2.0 + corners) / 16.0;\n"
+        "}\n"
+        "vec3 densityPosition(float frequencyRatio, float densityRatio, float levelRatio) {\n"
+        "    vec3 values = vec3(frequencyRatio, densityRatio, levelRatio);\n"
+        "    return vec3(-1.0 + 2.0 * axisValue(densityAxisX, values),\n"
+        "                -1.0 + 2.0 * axisValue(densityAxisY, values),\n"
+        "                0.72 * axisValue(densityAxisZ, values));\n"
+        "}\n"
         "void main() {\n"
         "    float physicalRow = mod(oldestRow + gridPosition.x, textureRows);\n"
         "    vec2 texCoord = vec2((gridPosition.y + 0.5) / columnCount,\n"
         "                         (physicalRow + 0.5) / textureRows);\n"
         "    float time = -1.0 + 2.0 * gridPosition.x / max(1.0, rowCount - 1.0);\n"
         "    float frequency = -1.0 + 2.0 * gridPosition.y / max(1.0, columnCount - 1.0);\n"
-        "    float height = texture2D(heightMap, texCoord).r * 0.72;\n"
-        "    gl_Position = transform * vec4(time, frequency, height, 1.0);\n"
+        "    float value = filteredHeight(gridPosition.x, gridPosition.y);\n"
+        "    vec3 logicalValues = vec3((frequency + 1.0) * 0.5,\n"
+        "                              value * gridPosition.z,\n"
+        "                              (time + 1.0) * 0.5);\n"
+        "    vec3 position = densityAxes > 0.5\n"
+        "        ? densityPosition(logicalValues.x, logicalValues.y, logicalValues.z)\n"
+        "        : vec3(time, frequency, value * 0.72);\n"
+        "    float rowBefore = max(0.0, gridPosition.x - 1.0);\n"
+        "    float rowAfter = min(rowCount - 1.0, gridPosition.x + 1.0);\n"
+        "    float columnBefore = max(0.0, gridPosition.y - 1.0);\n"
+        "    float columnAfter = min(columnCount - 1.0, gridPosition.y + 1.0);\n"
+        "    float rowSpan = max(1.0, rowCount - 1.0);\n"
+        "    float columnSpan = max(1.0, columnCount - 1.0);\n"
+        "    vec3 tangentRow;\n"
+        "    vec3 tangentColumn;\n"
+        "    if (densityAxes > 0.5) {\n"
+        "        tangentRow = densityPosition(logicalValues.x,\n"
+        "                    filteredHeight(rowAfter, gridPosition.y),\n"
+        "                    rowAfter / rowSpan) -\n"
+        "                     densityPosition(logicalValues.x,\n"
+        "                    filteredHeight(rowBefore, gridPosition.y),\n"
+        "                    rowBefore / rowSpan);\n"
+        "        tangentColumn = densityPosition(columnAfter / columnSpan,\n"
+        "                       filteredHeight(gridPosition.x, columnAfter),\n"
+        "                       logicalValues.z) -\n"
+        "                        densityPosition(columnBefore / columnSpan,\n"
+        "                       filteredHeight(gridPosition.x, columnBefore),\n"
+        "                       logicalValues.z);\n"
+        "    } else {\n"
+        "        tangentRow = vec3(2.0 * (rowAfter - rowBefore) / rowSpan, 0.0,\n"
+        "                          0.72 * (filteredHeight(rowAfter, gridPosition.y) -\n"
+        "                                  filteredHeight(rowBefore, gridPosition.y)));\n"
+        "        tangentColumn = vec3(0.0, 2.0 * (columnAfter - columnBefore) / columnSpan,\n"
+        "                             0.72 * (filteredHeight(gridPosition.x, columnAfter) -\n"
+        "                                     filteredHeight(gridPosition.x, columnBefore)));\n"
+        "    }\n"
+        "    surfaceNormal = normalize(cross(tangentRow, tangentColumn));\n"
+        "    gl_Position = transform * vec4(position, 1.0);\n"
         "    vertexColor = texture2D(colorMap, texCoord).rgb;\n"
+        "    pointDensity = value;\n"
         "}\n";
     static const char *fragmentSource =
+        "uniform float densityAxes;\n"
+        "uniform float lightingMode;\n"
         "varying vec3 vertexColor;\n"
+        "varying float pointDensity;\n"
+        "varying vec3 surfaceNormal;\n"
         "void main() {\n"
-        "    gl_FragColor = vec4(vertexColor, 1.0);\n"
+        "    if (densityAxes > 0.5 && pointDensity <= 0.001) discard;\n"
+        "    vec3 color = vertexColor;\n"
+        "    if (lightingMode > 0.5) {\n"
+        "        vec3 normal = normalize(surfaceNormal);\n"
+        "        vec3 lightDirection = normalize(vec3(-0.42, -0.32, 0.86));\n"
+        "        float diffuse = abs(dot(normal, lightDirection));\n"
+        "        float strength = lightingMode > 1.5 ? 0.72 : 0.42;\n"
+        "        float slopeShadow = 1.0 - strength * 0.22 *\n"
+        "                            clamp(1.0 - abs(normal.z), 0.0, 1.0);\n"
+        "        color *= ((1.0 - strength) + strength * (0.30 + 0.70 * diffuse)) * slopeShadow;\n"
+        "        color += vertexColor * strength * 0.10 * pow(diffuse, 8.0);\n"
+        "    }\n"
+        "    gl_FragColor = vec4(color, 1.0);\n"
         "}\n";
 
     if (!surfaceProgram.addShaderFromSourceCode(QOpenGLShader::Vertex, vertexSource) ||
@@ -798,6 +1041,23 @@ void Waterfall3DRenderer::rebuildGpuSurface() {
 
     const int rowCount = static_cast<int>(historyRows.size());
     const int columnCount = static_cast<int>(historyRows.front().size());
+    if (densityAxes && surfaceStyle == 0) {
+        gpuGridVertices.reserve(static_cast<std::size_t>(rowCount) *
+                                static_cast<std::size_t>(columnCount) * 2U);
+        for (int row = 0; row < rowCount; ++row) {
+            for (int column = 0; column < columnCount; ++column) {
+                GpuGridVertex vertex;
+                vertex.row = static_cast<float>(row);
+                vertex.column = static_cast<float>(column);
+                vertex.densityScale = 0.0f;
+                gpuGridVertices.push_back(vertex);
+                vertex.densityScale = 1.0f;
+                gpuGridVertices.push_back(vertex);
+            }
+        }
+        gpuMeshDirty = false;
+        return;
+    }
     const std::size_t stripVertices = static_cast<std::size_t>(rowCount - 1) *
                                       static_cast<std::size_t>(columnCount) * 2U;
     const std::size_t degenerateVertices = rowCount > 2
@@ -859,8 +1119,9 @@ bool Waterfall3DRenderer::uploadGpuSurfaceRows() {
     if (resetTextures) {
         functions->glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, heightTexture);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        const GLint textureFilter = surfaceSmoothing > 0 ? GL_LINEAR : GL_NEAREST;
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, textureFilter);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, textureFilter);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glTexImage2D(GL_TEXTURE_2D,
@@ -875,8 +1136,8 @@ bool Waterfall3DRenderer::uploadGpuSurfaceRows() {
 
         functions->glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, colorTexture);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, textureFilter);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, textureFilter);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glTexImage2D(GL_TEXTURE_2D,
@@ -910,9 +1171,16 @@ bool Waterfall3DRenderer::uploadGpuSurfaceRows() {
             gpuHeightScratch[static_cast<std::size_t>(column)] =
                 static_cast<std::uint8_t>(std::lround(std::clamp(sample.height, 0.0f, 1.0f) * 255.0f));
             const std::size_t colorOffset = static_cast<std::size_t>(column) * 3U;
-            gpuColorScratch[colorOffset] = sample.color[0];
-            gpuColorScratch[colorOffset + 1U] = sample.color[1];
-            gpuColorScratch[colorOffset + 2U] = sample.color[2];
+            if (monochrome) {
+                const auto color = blueAmplitudeColor(sample.height);
+                gpuColorScratch[colorOffset] = color[0];
+                gpuColorScratch[colorOffset + 1U] = color[1];
+                gpuColorScratch[colorOffset + 2U] = color[2];
+            } else {
+                gpuColorScratch[colorOffset] = sample.color[0];
+                gpuColorScratch[colorOffset + 1U] = sample.color[1];
+                gpuColorScratch[colorOffset + 2U] = sample.color[2];
+            }
         }
 
         const int destinationRow = gpuTextureWriteRow;
@@ -980,6 +1248,12 @@ bool Waterfall3DRenderer::renderGpuSurface(const QMatrix4x4 &transform) {
     surfaceProgram.setUniformValue("columnCount", static_cast<float>(gpuTextureColumns));
     surfaceProgram.setUniformValue("textureRows", static_cast<float>(gpuTextureRows));
     surfaceProgram.setUniformValue("oldestRow", static_cast<float>(gpuTextureOldestRow));
+    surfaceProgram.setUniformValue("densityAxes", densityAxes ? 1.0f : 0.0f);
+    surfaceProgram.setUniformValue("densityAxisX", static_cast<float>(densityAxisXDimension));
+    surfaceProgram.setUniformValue("densityAxisY", static_cast<float>(densityAxisYDimension));
+    surfaceProgram.setUniformValue("densityAxisZ", static_cast<float>(densityAxisZDimension));
+    surfaceProgram.setUniformValue("smoothingMode", static_cast<float>(surfaceSmoothing));
+    surfaceProgram.setUniformValue("lightingMode", static_cast<float>(surfaceLighting));
     const int gridLocation = surfaceProgram.attributeLocation("gridPosition");
     if (gridLocation < 0) {
         surfaceProgram.release();
@@ -995,9 +1269,15 @@ bool Waterfall3DRenderer::renderGpuSurface(const QMatrix4x4 &transform) {
     surfaceProgram.setAttributeBuffer(gridLocation,
                                       GL_FLOAT,
                                       static_cast<int>(offsetof(GpuGridVertex, row)),
-                                      2,
+                                      3,
                                       static_cast<int>(sizeof(GpuGridVertex)));
-    glDrawArrays(GL_TRIANGLE_STRIP, 0, static_cast<GLsizei>(gpuGridVertices.size()));
+    if (densityAxes && surfaceStyle == 0) {
+        glLineWidth(1.25f);
+        glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(gpuGridVertices.size()));
+        glLineWidth(1.0f);
+    } else {
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, static_cast<GLsizei>(gpuGridVertices.size()));
+    }
     surfaceProgram.disableAttributeArray(gridLocation);
     surfaceProgram.release();
     surfaceVbo.release();
@@ -1161,6 +1441,35 @@ void Waterfall3DRenderer::render(int viewportWidth, int viewportHeight) {
         } else if (!frequencySliceActive && !spectrumSliceActive &&
                    renderGpuSurface(parameters.transform)) {
             // The normal full surface is submitted as one GPU batch.
+        } else if (densityAxes && surfaceStyle == 0 &&
+                   !frequencySliceActive && !spectrumSliceActive) {
+            glLineWidth(1.25f);
+            glBegin(GL_LINES);
+            for (int row = firstRow; row <= lastRow; ++row) {
+                const HistoryRow &densityRow = rowAt(row);
+                if (static_cast<int>(densityRow.size()) != columnCount) {
+                    continue;
+                }
+                const float levelRatio = static_cast<float>(row) /
+                                         static_cast<float>((std::max)(1, rowCount - 1));
+                for (int column = firstColumn; column <= lastColumn; ++column) {
+                    const VertexSample &sample = densityRow[static_cast<std::size_t>(column)];
+                    if (sample.height <= 0.001f) {
+                        continue;
+                    }
+                    const float frequencyRatio = columnCount > 1
+                                                     ? static_cast<float>(column) /
+                                                           static_cast<float>(columnCount - 1)
+                                                     : 0.5f;
+                    const QVector3D base = densityPosition(0.0f, frequencyRatio, levelRatio);
+                    const QVector3D tip = densityPosition(sample.height, frequencyRatio, levelRatio);
+                    applySampleColor(sample);
+                    glVertex3f(base.x(), base.y(), base.z());
+                    glVertex3f(tip.x(), tip.y(), tip.z());
+                }
+            }
+            glEnd();
+            glLineWidth(1.0f);
         } else if (frequencySliceActive && firstColumn == lastColumn) {
             glLineWidth(3.0f);
             glBegin(GL_LINE_STRIP);
@@ -1176,8 +1485,21 @@ void Waterfall3DRenderer::render(int viewportWidth, int viewportHeight) {
                                                           static_cast<float>(columnCount - 1)
                                             : 0.0f;
                 const VertexSample &sample = historyRow[static_cast<std::size_t>(firstColumn)];
-                glColor3ub(sample.color[0], sample.color[1], sample.color[2]);
-                glVertex3f(time, frequency, sample.height * 0.72f);
+                applySampleColor(sample);
+                if (densityAxes) {
+                    const QVector3D point = densityPosition(
+                        sample.height,
+                        columnCount > 1
+                            ? static_cast<float>(firstColumn) /
+                                  static_cast<float>(columnCount - 1)
+                            : 0.5f,
+                        rowCount > 1
+                            ? static_cast<float>(row) / static_cast<float>(rowCount - 1)
+                            : 0.5f);
+                    glVertex3f(point.x(), point.y(), point.z());
+                } else {
+                    glVertex3f(time, frequency, sample.height * 0.72f);
+                }
             }
             glEnd();
             glLineWidth(1.0f);
@@ -1194,8 +1516,22 @@ void Waterfall3DRenderer::render(int viewportWidth, int viewportHeight) {
                                                               static_cast<float>(columnCount - 1)
                                                 : 0.0f;
                     const VertexSample &sample = selected[static_cast<std::size_t>(column)];
-                    glColor3ub(sample.color[0], sample.color[1], sample.color[2]);
-                    glVertex3f(time, frequency, sample.height * 0.72f);
+                    applySampleColor(sample);
+                    if (densityAxes) {
+                        const QVector3D point = densityPosition(
+                            sample.height,
+                            columnCount > 1
+                                ? static_cast<float>(column) /
+                                      static_cast<float>(columnCount - 1)
+                                : 0.5f,
+                            rowCount > 1
+                                ? static_cast<float>(firstRow) /
+                                      static_cast<float>(rowCount - 1)
+                                : 0.5f);
+                        glVertex3f(point.x(), point.y(), point.z());
+                    } else {
+                        glVertex3f(time, frequency, sample.height * 0.72f);
+                    }
                 }
                 glEnd();
                 glLineWidth(1.0f);
@@ -1220,10 +1556,39 @@ void Waterfall3DRenderer::render(int viewportWidth, int viewportHeight) {
                                             : 0.0f;
                 const VertexSample &sample0 = first[static_cast<std::size_t>(column)];
                 const VertexSample &sample1 = second[static_cast<std::size_t>(column)];
-                glColor3ub(sample0.color[0], sample0.color[1], sample0.color[2]);
-                glVertex3f(time0, frequency, sample0.height * 0.72f);
-                glColor3ub(sample1.color[0], sample1.color[1], sample1.color[2]);
-                glVertex3f(time1, frequency, sample1.height * 0.72f);
+                applySampleColor(sample0);
+                if (densityAxes) {
+                    const float frequencyRatio = columnCount > 1
+                                                     ? static_cast<float>(column) /
+                                                           static_cast<float>(columnCount - 1)
+                                                     : 0.5f;
+                    const QVector3D point = densityPosition(
+                        sample0.height,
+                        frequencyRatio,
+                        rowCount > 1
+                            ? static_cast<float>(row) / static_cast<float>(rowCount - 1)
+                            : 0.5f);
+                    glVertex3f(point.x(), point.y(), point.z());
+                } else {
+                    glVertex3f(time0, frequency, sample0.height * 0.72f);
+                }
+                applySampleColor(sample1);
+                if (densityAxes) {
+                    const float frequencyRatio = columnCount > 1
+                                                     ? static_cast<float>(column) /
+                                                           static_cast<float>(columnCount - 1)
+                                                     : 0.5f;
+                    const QVector3D point = densityPosition(
+                        sample1.height,
+                        frequencyRatio,
+                        rowCount > 1
+                            ? static_cast<float>(row + 1) /
+                                  static_cast<float>(rowCount - 1)
+                            : 0.5f);
+                    glVertex3f(point.x(), point.y(), point.z());
+                } else {
+                    glVertex3f(time1, frequency, sample1.height * 0.72f);
+                }
             }
             glEnd();
         }
@@ -1248,18 +1613,88 @@ void Waterfall3DRenderer::render(int viewportWidth, int viewportHeight) {
                                                           static_cast<float>(columnCount - 1)
                                             : 0.0f;
                 const VertexSample &sample = frontRow[static_cast<std::size_t>(column)];
-                glColor4ub(static_cast<unsigned char>(sample.color[0] * BottomBrightness),
-                           static_cast<unsigned char>(sample.color[1] * BottomBrightness),
-                           static_cast<unsigned char>(sample.color[2] * BottomBrightness),
+                const auto monochromeColor = blueAmplitudeColor(sample.height);
+                const unsigned char red = monochrome ? monochromeColor[0] : sample.color[0];
+                const unsigned char green = monochrome ? monochromeColor[1] : sample.color[1];
+                const unsigned char blue = monochrome ? monochromeColor[2] : sample.color[2];
+                glColor4ub(static_cast<unsigned char>(red * BottomBrightness),
+                           static_cast<unsigned char>(green * BottomBrightness),
+                           static_cast<unsigned char>(blue * BottomBrightness),
                            faceAlpha);
                 glVertex3f(FrontTime, frequency, 0.0f);
-                glColor4ub(sample.color[0], sample.color[1], sample.color[2], faceAlpha);
+                glColor4ub(red, green, blue, faceAlpha);
                 glVertex3f(FrontTime, frequency, sample.height * 0.72f);
             }
             glEnd();
             glEnable(GL_DEPTH_TEST);
             glDepthMask(GL_TRUE);
             glDisable(GL_BLEND);
+        }
+
+        if (densityAxes && densityFrontProfile.size() >= 2U) {
+            glDisable(GL_DEPTH_TEST);
+            if (densityFrontProfileStyle == 1) {
+                glEnable(GL_BLEND);
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                glBegin(GL_TRIANGLE_STRIP);
+                for (std::size_t index = 0; index < densityFrontProfile.size(); ++index) {
+                    const float frequencyRatio = static_cast<float>(index) /
+                                                 static_cast<float>(densityFrontProfile.size() - 1U);
+                    const QVector3D bottom = densityPosition(0.0f, frequencyRatio, 0.0f);
+                    const QVector3D top = densityPosition(0.0f,
+                                                          frequencyRatio,
+                                                          densityFrontProfile[index]);
+                    const QVector3D bottomColor = densityProfileColor(0.0f);
+                    const QVector3D topColor = densityProfileColor(densityFrontProfile[index]);
+                    glColor4f(bottomColor.x(), bottomColor.y(), bottomColor.z(), 0.78f);
+                    glVertex3f(bottom.x(), bottom.y(), bottom.z());
+                    glColor4f(topColor.x(), topColor.y(), topColor.z(), 0.92f);
+                    glVertex3f(top.x(), top.y(), top.z());
+                }
+                glEnd();
+                glDisable(GL_BLEND);
+                glLineWidth(2.0f);
+                glBegin(GL_LINE_STRIP);
+                for (std::size_t index = 0; index < densityFrontProfile.size(); ++index) {
+                    const float frequencyRatio = static_cast<float>(index) /
+                                                 static_cast<float>(densityFrontProfile.size() - 1U);
+                    const QVector3D point = densityPosition(0.0f,
+                                                            frequencyRatio,
+                                                            densityFrontProfile[index]);
+                    const QVector3D color = densityProfileColor(densityFrontProfile[index]);
+                    glColor3f(color.x(), color.y(), color.z());
+                    glVertex3f(point.x(), point.y(), point.z());
+                }
+                glEnd();
+                glLineWidth(1.0f);
+            } else {
+                glLineWidth(4.0f);
+                glColor3f(0.0f, 0.0f, 0.0f);
+                glBegin(GL_LINE_STRIP);
+                for (std::size_t index = 0; index < densityFrontProfile.size(); ++index) {
+                    const float frequencyRatio = static_cast<float>(index) /
+                                                 static_cast<float>(densityFrontProfile.size() - 1U);
+                    const QVector3D point = densityPosition(0.0f,
+                                                            frequencyRatio,
+                                                            densityFrontProfile[index]);
+                    glVertex3f(point.x(), point.y(), point.z());
+                }
+                glEnd();
+                glLineWidth(2.0f);
+                glColor3f(0.48f, 1.0f, 0.62f);
+                glBegin(GL_LINE_STRIP);
+                for (std::size_t index = 0; index < densityFrontProfile.size(); ++index) {
+                    const float frequencyRatio = static_cast<float>(index) /
+                                                 static_cast<float>(densityFrontProfile.size() - 1U);
+                    const QVector3D point = densityPosition(0.0f,
+                                                            frequencyRatio,
+                                                            densityFrontProfile[index]);
+                    glVertex3f(point.x(), point.y(), point.z());
+                }
+                glEnd();
+                glLineWidth(1.0f);
+            }
+            glEnable(GL_DEPTH_TEST);
         }
 
         if (highlightedHistoryRow >= 0 && highlightedHistoryRow < rowCount) {

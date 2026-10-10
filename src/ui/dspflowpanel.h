@@ -1,11 +1,18 @@
 #pragma once
 
 #include <QDialog>
+#include <QElapsedTimer>
 #include <QHash>
+#include <QJsonArray>
 #include <QJsonObject>
+#include <QPoint>
 #include <vector>
 
 class DspFlowScene;
+class QCloseEvent;
+class QResizeEvent;
+class QComboBox;
+class QDialog;
 class QLabel;
 class QGraphicsView;
 class QMenu;
@@ -24,14 +31,35 @@ public:
     bool setConfigurationJson(const QString &json);
     void setControlStates(bool receiverRunning, const QHash<QString, bool> &enabledByBlockType);
     void setFineTuneRangeHz(double rangeHz);
+    bool shouldUpdateMultiVfoSpectrum();
     void updateMultiVfoSpectrum(const QString &configurationJson,
                                 const std::vector<float> &frequencies,
                                 const std::vector<float> &levels);
+    bool shouldUpdateWorkspaceSpectrum();
+    void updateWorkspaceSpectrum(const std::vector<float> &frequencies,
+                                 const std::vector<float> &levels,
+                                 double centerHz,
+                                 double listeningHz,
+                                 double sampleRate,
+                                 double bandwidthHz,
+                                 int modulationType);
+    void setWorkspaceMode(bool enabled);
+    void setAnalogPeakMeterEnabled(bool enabled);
+    void setAnalogPeakMeterStyle(int style);
+    void setAnalogPeakMeterTarget(double frequencyHz, bool valid);
+    void setWorkspaceVisualizationSettings(const QJsonObject &settings);
+    bool isWorkspaceMode() const { return workspaceMode_; }
     void addMultiVfoBranch(int channelIndex = -1);
     int vfoIndexForBlock(const QString &blockId) const;
     bool assignVfoIndexToBlock(const QString &blockId, int channelIndex);
     QJsonObject blockSettings(const QString &blockId) const;
+    QString blockTypeForId(const QString &blockId) const;
+    QString boundWorkspaceSettingsBlockId(const QString &viewBlockId) const;
+    QJsonArray workspaceDisplayTargets(const QString &settingsBlockId) const;
+    bool bindWorkspaceSettingsBlock(const QString &settingsBlockId, const QString &viewBlockId);
     bool setBlockSettings(const QString &blockId, const QJsonObject &settings);
+    int workspaceSectorCount() const;
+    bool dockSettingsDialog(const QString &blockId, QDialog *dialog, int sectorIndex = -1);
 
 signals:
     void configurationChanged(const QString &json);
@@ -43,24 +71,64 @@ signals:
                           const QString &targetId);
     void controlStateRefreshRequested();
     void fineTuneDeltaRequested(double deltaHz);
+    void workspaceScaleChanged(int direction);
+    void workspacePanRequested(int deltaPixels, int widthPixels);
+    void workspaceTuneContextRequested(double frequency, const QPoint &globalPos);
+    void workspaceAutoTuneRequested(double frequency);
+    void workspaceScienceMarkerRequested(double frequency);
+    void workspaceMultiVfoSelectionRequested(double lowHz, double highHz);
+    void workspaceListeningFrequencyRequested(double frequency);
+    void workspaceCenterFrequencyRequested(double frequency);
+    void workspaceTuningRequested(double listeningFrequency, double centerFrequency);
+    void workspaceAnalogPeakMeterToggled(bool enabled);
+    void workspaceAnalogPeakMeterStyleChanged(int style);
+    void workspaceModeExitRequested();
+    void workspaceCloseRequested();
+
+protected:
+    void closeEvent(QCloseEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
 
 private:
     void rebuildAddMenu();
+    void refreshWorkspaceProfiles(const QString &selectedName = QString());
+    void saveWorkspaceProfile();
+    void loadWorkspaceProfile(int index);
+    void deleteWorkspaceProfile();
     void scheduleConfigurationChanged();
     void addBlock(const QString &type);
     QString blockTitle(const QString &type) const;
+    void refreshSectorControls();
+    void syncWorkspaceViewport();
 
     bool ukrainian_ = false;
     bool loading_ = false;
     DspFlowScene *scene_ = nullptr;
     QGraphicsView *view_ = nullptr;
     QToolButton *addButton_ = nullptr;
+    QLabel *profileLabel_ = nullptr;
+    QComboBox *profileCombo_ = nullptr;
+    QPushButton *saveProfileButton_ = nullptr;
+    QPushButton *deleteProfileButton_ = nullptr;
     QPushButton *openButton_ = nullptr;
     QPushButton *renameButton_ = nullptr;
     QPushButton *deleteButton_ = nullptr;
     QPushButton *defaultButton_ = nullptr;
     QPushButton *fitButton_ = nullptr;
+    QLabel *sectorLayoutLabel_ = nullptr;
+    QComboBox *sectorLayoutCombo_ = nullptr;
+    QComboBox *sectorIndexCombo_ = nullptr;
+    QPushButton *placeInSectorButton_ = nullptr;
+    QPushButton *fullScreenButton_ = nullptr;
+    QPushButton *returnToMainButton_ = nullptr;
     QLabel *statusLabel_ = nullptr;
     QMenu *addMenu_ = nullptr;
     QTimer *saveTimer_ = nullptr;
+    QElapsedTimer multiVfoSpectrumUpdateTimer_;
+    QElapsedTimer workspaceSpectrumUpdateTimer_;
+    bool workspaceMode_ = false;
+    bool analogPeakMeterEnabled_ = false;
+    int analogPeakMeterStyle_ = 0;
+    bool analogPeakMeterTargetValid_ = false;
+    double analogPeakMeterTargetHz_ = 0.0;
 };

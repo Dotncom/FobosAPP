@@ -172,7 +172,6 @@ VideoProcessor::VideoProcessor(QObject *parent)
     resetSstvState(true);
     resetAptState(true);
     resetWefaxState(true);
-    configureLrptImage();
 }
 
 void VideoProcessor::configure(bool newEnabled,
@@ -2690,15 +2689,16 @@ void VideoProcessor::renderCurrentLine() {
     }
 
     const float invSpan = 1.0f / (levelMax - levelMin);
+    const int activeCount = (std::max)(1, sourceCount - blankingSamples);
     for (int x = 0; x < width; ++x) {
         const float sourcePos = width > 1
-                                    ? static_cast<float>(x) * static_cast<float>(sourceCount - 1) /
+                                    ? static_cast<float>(x) * static_cast<float>(activeCount - 1) /
                                           static_cast<float>(width - 1)
                                     : 0.0f;
-        const int rawIndex = (std::clamp)(static_cast<int>(sourcePos), 0, sourceCount - 1);
-        const int rawNextIndex = (std::min)(rawIndex + 1, sourceCount - 1);
-        const int index = (rawIndex + sourceOffset) % sourceCount;
-        const int nextIndex = (rawNextIndex + sourceOffset) % sourceCount;
+        const int rawIndex = (std::clamp)(static_cast<int>(sourcePos), 0, activeCount - 1);
+        const int rawNextIndex = (std::min)(rawIndex + 1, activeCount - 1);
+        const int index = (rawIndex + sourceOffset + blankingSamples) % sourceCount;
+        const int nextIndex = (rawNextIndex + sourceOffset + blankingSamples) % sourceCount;
         const float frac = sourcePos - static_cast<float>(rawIndex);
         const float value = currentLine[index] * (1.0f - frac) + currentLine[nextIndex] * frac;
         float normalized = (value - levelMin) * invSpan;

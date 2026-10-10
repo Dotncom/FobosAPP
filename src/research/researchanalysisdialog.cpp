@@ -2,6 +2,8 @@
 
 #include "iqbuffer.h"
 #include "radiosettings.h"
+#include "scientificsessiontools.h"
+#include "spectrumpersistencetools.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -644,13 +646,17 @@ ResearchAnalysisDialog::ResearchAnalysisDialog(Translator translator,
                                                SpectrumSettingsProvider settingsProvider,
                                                SpectrumSettingsApplier settingsApplier,
                                                LiveSyncApplier liveSyncApplier,
+                                               MaskTriggerHandler maskTriggerHandler,
+                                               SessionFrequencySetter sessionFrequencySetter,
                                                QWidget *parent)
     : QDialog(parent),
       translator(std::move(translator)),
       contextProvider(std::move(contextProvider)),
       spectrumSettingsProvider(std::move(settingsProvider)),
       spectrumSettingsApplier(std::move(settingsApplier)),
-      liveSyncApplier(std::move(liveSyncApplier)) {
+      liveSyncApplier(std::move(liveSyncApplier)),
+      maskTriggerHandler(std::move(maskTriggerHandler)),
+      sessionFrequencySetter(std::move(sessionFrequencySetter)) {
     setWindowTitle(trText(QStringLiteral("research_tools_title"), QStringLiteral("Research tools")));
     resize(980, 680);
     setAttribute(Qt::WA_DeleteOnClose, false);
@@ -916,6 +922,24 @@ ResearchAnalysisDialog::ResearchAnalysisDialog(Translator translator,
     analyzerLayout->addStretch(1);
     tabs->addTab(analyzerPage, trText(QStringLiteral("research_analyzer_tab"), QStringLiteral("Spectrum analyzer")));
 
+    densityWidget = new SignalDensityWidget(translator, tabs);
+    tabs->addTab(densityWidget,
+                 trText(QStringLiteral("research_density_tab"),
+                        QStringLiteral("Density / persistence")));
+    maskWidget = new SpectrumMaskWidget(translator, this->maskTriggerHandler, tabs);
+    tabs->addTab(maskWidget,
+                 trText(QStringLiteral("research_masks_tab"),
+                        QStringLiteral("Masks / baseline")));
+    pulseWidget = new PulseAnalysisWidget(translator, tabs);
+    tabs->addTab(pulseWidget,
+                 trText(QStringLiteral("research_pulse_tab"),
+                        QStringLiteral("Pulses / periodicity")));
+    sessionWidget = new MeasurementSessionWidget(
+        translator, this->sessionFrequencySetter, tabs);
+    tabs->addTab(sessionWidget,
+                 trText(QStringLiteral("research_session_tab"),
+                        QStringLiteral("Measurement session")));
+
     const ResearchSpectrumSettings initialSettings = spectrumSettingsProvider
                                                           ? spectrumSettingsProvider()
                                                           : ResearchSpectrumSettings{};
@@ -1072,14 +1096,51 @@ void ResearchAnalysisDialog::setIqView(int viewMode) {
     selectTab(IqTab);
 }
 
+bool ResearchAnalysisDialog::hasActiveMeasurementSession() const {
+    return sessionWidget && sessionWidget->isRunning();
+}
+
 void ResearchAnalysisDialog::appendSpectrumFrame(const std::vector<float> &frequencies,
                                                  const std::vector<float> &levels,
                                                  const SpectrumScienceMetrics &metrics) {
-    if (!isVisible() || frequencies.empty() || levels.empty()) return;
-    updateAnalyzerStatus();
+    if ((!isVisible() && !hasActiveMeasurementSession()) ||
+        frequencies.empty() || levels.empty()) return;
+    if (isVisible()) updateAnalyzerStatus();
     const int tab = tabs ? tabs->currentIndex() : -1;
-    if (tab == InterferenceTab) updateInterference(frequencies, levels);
-    if (tab == StatisticsTab) updateStatistics(levels, metrics);
+    if (isVisible() && tab == InterferenceTab) updateInterference(frequencies, levels);
+    if (isVisible() && tab == StatisticsTab) updateStatistics(levels, metrics);
+    const int amplitudeUnit = amplitudeUnitCombo
+                                  ? amplitudeUnitCombo->currentData().toInt()
+                                  : 0;
+    if (isVisible() && tab == DensityTab && densityWidget) {
+        const ResearchRadioContext context =
+            contextProvider ? contextProvider() : ResearchRadioContext{};
+        densityWidget->appendSpectrumFrame(
+            frequencies, levels, amplitudeUnit, context.listeningFrequencyHz);
+    }
+    if (isVisible() && tab == MasksTab && maskWidget) {
+        maskWidget->appendSpectrumFrame(frequencies, levels, amplitudeUnit);
+    }
+    ResearchRadioContext radioContext =
+        contextProvider ? contextProvider() : ResearchRadioContext{};
+    ScientificSessionContext scientificContext;
+    scientificContext.sampleRateHz = radioContext.sampleRateHz;
+    scientificContext.centerFrequencyHz = radioContext.centerFrequencyHz;
+    scientificContext.listeningFrequencyHz = radioContext.listeningFrequencyHz;
+    scientificContext.bandwidthHz = radioContext.bandwidthHz;
+    scientificContext.inputMode = radioContext.inputMode;
+    scientificContext.modulationType = radioContext.modulationType;
+    scientificContext.fftLength = radioContext.fftLength;
+    scientificContext.fftWindowType = radioContext.fftWindowType;
+    if (isVisible() && tab == PulseTab && pulseWidget) {
+        pulseWidget->appendSpectrumFrame(
+            frequencies, levels, scientificContext, metrics, amplitudeUnit);
+    }
+    if (sessionWidget &&
+        (tab == SessionTab || sessionWidget->isRunning())) {
+        sessionWidget->appendSpectrumFrame(
+            frequencies, levels, scientificContext, metrics, amplitudeUnit);
+    }
 }
 
 void ResearchAnalysisDialog::captureInterferenceReference() {

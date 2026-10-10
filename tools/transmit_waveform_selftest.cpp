@@ -1,9 +1,15 @@
 #include "transmitwaveformgenerator.h"
+#include "transmitmediagenerator.h"
+#include "videoprocessor.h"
 
 #include <QCoreApplication>
+#include <QColor>
 #include <QDebug>
+#include <QImage>
 
+#include <algorithm>
 #include <cmath>
+#include <cstring>
 
 int main(int argc, char **argv) {
     QCoreApplication app(argc, argv);
@@ -53,5 +59,57 @@ int main(int argc, char **argv) {
             if (!std::isfinite(sample.real()) || !std::isfinite(sample.imag())) return 4;
         }
     }
+
+    QImage image(32, 24, QImage::Format_RGB32);
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x) {
+            image.setPixelColor(x, y, QColor::fromRgb((x * 255) / image.width(),
+                                                      (y * 255) / image.height(),
+                                                      ((x + y) * 255) /
+                                                          (image.width() + image.height())));
+        }
+    }
+    const TxAudioMedia sstv = TransmitMediaGenerator::generateSstv(
+        image, QStringLiteral("robot36"), 12000);
+    if (!sstv.ok() || sstv.samples.size() < 12000) return 5;
+
+    configuration.sampleRate = 2400000;
+    configuration.modulation = TxModulation::Am;
+    const QVector<std::complex<float>> atv =
+        TransmitMediaGenerator::generateAtvFrame(image, configuration, false, 384, 288);
+    if (atv.isEmpty()) return 6;
+    for (const std::complex<float> &sample : atv) {
+        if (!std::isfinite(sample.real()) || !std::isfinite(sample.imag())) return 7;
+    }
+
+    QByteArray atvIq;
+    atvIq.resize(atv.size() * 4);
+    char *atvBytes = atvIq.data();
+    for (int i = 0; i < atv.size(); ++i) {
+        const qint16 iSample = static_cast<qint16>(std::lround(
+            (std::clamp)(atv[i].real(), -1.0f, 1.0f) * 32767.0f));
+        const qint16 qSample = static_cast<qint16>(std::lround(
+            (std::clamp)(atv[i].imag(), -1.0f, 1.0f) * 32767.0f));
+        std::memcpy(atvBytes + i * 4, &iSample, sizeof(iSample));
+        std::memcpy(atvBytes + i * 4 + 2, &qSample, sizeof(qSample));
+    }
+    VideoProcessor decoder;
+    QImage decodedAtv;
+    QObject::connect(&decoder, &VideoProcessor::frameReady,
+                     [&decodedAtv](const QImage &frame) { decodedAtv = frame; });
+    decoder.configure(true, VideoProcessor::AmVideo, 15625.0, 384, 288,
+                      false, true, true);
+    decoder.processIqFrame(atvIq, configuration.sampleRate, atv.size());
+    if (decodedAtv.isNull()) return 8;
+    int darkest = 255;
+    int brightest = 0;
+    for (int y = 0; y < decodedAtv.height(); y += 8) {
+        const uchar *line = decodedAtv.constScanLine(y);
+        for (int x = 0; x < decodedAtv.width(); x += 8) {
+            darkest = (std::min)(darkest, static_cast<int>(line[x]));
+            brightest = (std::max)(brightest, static_cast<int>(line[x]));
+        }
+    }
+    if (brightest - darkest < 40) return 9;
     return 0;
 }

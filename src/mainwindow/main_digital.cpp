@@ -152,10 +152,10 @@ void YourClassName::processVideoIqFrame(const QByteArray &iqData, double sampleR
     if (videoTestPatternCheckbox && videoTestPatternCheckbox->isChecked()) {
         return;
     }
-    if (videoIqFramePending.exchange(true)) {
-        return;
-    }
     if (pendingSettings.modulationType == MOD_LRPT) {
+        if (videoIqFramePending.exchange(true)) {
+            return;
+        }
         const int bytesPerIq = iqData.size() >= sampleCount * 4 ? 4 : 2;
         std::vector<float> floatSamples;
         floatSamples.reserve(static_cast<std::size_t>(sampleCount) * 2);
@@ -210,14 +210,12 @@ void YourClassName::processVideoIqFrame(const QByteArray &iqData, double sampleR
         return;
     }
 
+    // Analog television needs every channel-IQ block in order. Dropping a block
+    // while the previous one is pending destroys raster timing even when HSync
+    // remains locally detectable inside each surviving block.
     QMetaObject::invokeMethod(videoProcessor,
-                              [this, processor = videoProcessor, iqData, sampleRate, sampleCount]() {
+                              [processor = videoProcessor, iqData, sampleRate, sampleCount]() {
                                   processor->processIqFrame(iqData, sampleRate, sampleCount);
-                                  QMetaObject::invokeMethod(this,
-                                                            [this]() {
-                                                                videoIqFramePending.store(false);
-                                                            },
-                                                            Qt::QueuedConnection);
                               },
                               Qt::QueuedConnection);
 }
@@ -361,7 +359,11 @@ void YourClassName::updateVideoProcessorMode() {
     const bool channelIqStreamMode =
         networkMode != NetworkMode::Disabled &&
         isChannelIqProcessingMode();
-    const bool snapshotVideoEnabled = iqVideoEnabled && !channelIqStreamMode;
+    // LRPT still uses the exploratory full-band snapshot path. ATV is fed by
+    // the continuous channel-IQ producer configured in updateIqFrameProducerSettings().
+    const bool snapshotVideoEnabled = iqVideoEnabled &&
+                                      pendingSettings.modulationType == MOD_LRPT &&
+                                      !channelIqStreamMode;
     if (videoSnapshotTimer) {
         if (snapshotVideoEnabled && !videoSnapshotTimer->isActive()) {
             videoSnapshotTimer->start();

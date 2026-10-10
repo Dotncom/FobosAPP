@@ -1095,6 +1095,7 @@ void DigitalDecoder::configure(const RadioSettings &settings, int sampleRate) {
     cwSettings.initialWpm = settings.cwDecoderWpm;
     cwSettings.adaptiveSpeed = settings.cwDecoderAdaptiveSpeed;
     cwSettings.alphabet = settings.cwDecoderAlphabet;
+    cwSettings.selectivity = settings.cwDecoderSelectivity;
     cwDecoder.configure(cwSettings);
     dmrDecoder.setLabHints(settings.dmrLabEnabled,
                            settings.dmrLabColorCode,
@@ -1171,6 +1172,7 @@ void DigitalDecoder::processPcmFrame(const QByteArray &pcmData, const RadioSetti
         cwSettings.initialWpm = settings.cwDecoderWpm;
         cwSettings.adaptiveSpeed = settings.cwDecoderAdaptiveSpeed;
         cwSettings.alphabet = settings.cwDecoderAlphabet;
+        cwSettings.selectivity = settings.cwDecoderSelectivity;
         cwDecoder.configure(cwSettings);
         const CwAudioDecoder::Result result = cwDecoder.processPcm16(pcmData);
         if (!result.status.isEmpty()) updateStatus(result.status);

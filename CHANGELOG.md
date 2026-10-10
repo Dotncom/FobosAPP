@@ -1,5 +1,55 @@
 # Changelog
 
+## 5.1.0 - 2026-10-11
+
+### Added
+
+- Added an explicitly armed native HackRF transmit backend with bounded
+  sessions, watchdog/error handling, underrun diagnostics, and simulator
+  fallback.
+- Added live microphone/PTT and manual CW keying, audio-file playback,
+  standards-based CW and FT8 generation, SSTV image preparation/transmission,
+  and experimental ATV/video waveform sources.
+- Added independent TX signal-bandwidth presets and filtering, live FM
+  deviation control, hardware-filter and generator/IQ-rate controls, and
+  clearer transmit-path diagnostics.
+- Added a full-screen alternative DSP workspace with independently split and
+  resizable sectors, movable live widgets, saved layouts, binding IDs, and
+  embedded spectrum, ruler, 2D/3D waterfall, Multi-VFO, digital, GNSS, TX, and
+  research tools.
+- Added selected-band density views, 2D/3D persistence controls, scientific
+  session helpers, richer pause/measurement overlays, and additional DSP-board
+  research widgets.
+
+### Changed
+
+- Expanded native HackRF receive controls, range validation, gain/filter/clock
+  handling, diagnostics, and safe live retuning.
+- Reworked DSP-board geometry, grouping, zoom/pan, sector assignment, per-view
+  settings, and persistence so the board can serve as the primary workspace.
+- Reused the production spectrum and 3D-waterfall rendering paths in embedded
+  views and reduced unnecessary redraws and background analysis work.
+- Improved Multi-VFO display updates, large-FFT throttling, waterfall history,
+  replay controls, audio filtering, CW selectivity, and SSTV timing/color
+  handling.
+
+### Fixed
+
+- Fixed crashes and stale bindings while adding, removing, moving, or
+  reconfiguring DSP-board and Multi-VFO widgets.
+- Fixed embedded spectrum/waterfall ranges, color mapping, frequency ruler,
+  pause overlays, 3D camera/slice interaction, and saved workspace placement.
+- Fixed several HackRF tuning, low-frequency range, sample-rate, microphone
+  enumeration, and transmit-control synchronization issues.
+
+### Notes
+
+- HackRF transmission is experimental. Basic RF output was exercised on real
+  hardware, but users must verify antenna/dummy-load safety, legal limits,
+  occupied bandwidth, level, and spectral purity with appropriate equipment.
+- ATV/video transmit and decode, DMR, SDR-only GNSS, SoapySDR, and external
+  digital backends remain experimental. bladeRF support remains unavailable.
+- Android is unchanged and is intentionally not included in this release.
 ## 5.0.0 - 2026-10-09
 
 ### Added

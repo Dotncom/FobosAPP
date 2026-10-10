@@ -339,11 +339,14 @@ void YourClassName::updateIqFrameProducerSettings() {
     const bool eventIq = spectrumEventIqProducerNeeded();
     const bool eventFullIq = eventIq && spectrumEventCaptureMode == 2;
     const bool eventChannelIq = eventIq && spectrumEventIqChannelized();
+    const bool atvChannelIq = isVideoDecodeActive() &&
+                              pendingSettings.modulationType == MOD_ATV;
     processor->configureNetworkIqStreaming(pendingSettings,
-                                           serverIqStreaming || channelIqRecording || eventIq,
+                                           serverIqStreaming || channelIqRecording || eventIq || atvChannelIq,
                                            !serverFullIqStreaming &&
                                                !eventFullIq &&
-                                               (serverChannelIqStreaming || channelIqRecording || eventChannelIq));
+                                               (serverChannelIqStreaming || channelIqRecording ||
+                                                eventChannelIq || atvChannelIq));
 }
 
 void YourClassName::updateRecordingStatus(const QString &status) {

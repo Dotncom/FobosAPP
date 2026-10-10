@@ -5,6 +5,7 @@
 #include <QVector>
 
 #include <complex>
+#include <cstdint>
 
 enum class TxModulation {
     Am,
@@ -23,9 +24,17 @@ struct TxConfiguration {
     int sampleRate = 48000;
     float level = 0.50f;
     double deviationHz = 2500.0;
+    double signalBandwidthHz = 0.0;
     double toneHz = 700.0;
     int cwWpm = 18;
     bool alignFt8ToUtcSlot = true;
+    int deviceIndex = 0;
+    int deviceSampleRate = 2000000;
+    std::uint32_t bandwidthHz = 0;
+    int txVgaGainDb = 0;
+    bool rfAmpEnabled = false;
+    std::uint32_t txUnderrunLimit = 100000;
+    bool liveSource = false;
 };
 
 class TransmitterBackend {
@@ -37,6 +46,7 @@ public:
     virtual bool isRfCapable() const = 0;
     virtual bool start(const TxConfiguration &configuration, QString *error) = 0;
     virtual bool writeIq(const std::complex<float> *samples, int count, QString *error) = 0;
+    virtual bool setOutputEnabled(bool enabled, QString *error) = 0;
     virtual void stop() = 0;
     virtual bool isRunning() const = 0;
 };
@@ -48,6 +58,7 @@ public:
     bool isRfCapable() const override;
     bool start(const TxConfiguration &configuration, QString *error) override;
     bool writeIq(const std::complex<float> *samples, int count, QString *error) override;
+    bool setOutputEnabled(bool enabled, QString *error) override;
     void stop() override;
     bool isRunning() const override;
 
@@ -59,6 +70,7 @@ private:
     TxConfiguration currentConfiguration;
     QVector<std::complex<float>> iq;
     bool running = false;
+    bool outputEnabled = true;
 };
 
 #endif // TRANSMITTERBACKEND_H

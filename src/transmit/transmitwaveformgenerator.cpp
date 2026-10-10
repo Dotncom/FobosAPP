@@ -67,8 +67,147 @@ float gfskPulse(float bt, float t) {
 }
 }
 
+void TxModulatorState::resetAudioFilter() {
+    audioFilterSampleRate = 0;
+    audioFilterCutoffHz = 0.0;
+    audioFilterZ1.fill(0.0);
+    audioFilterZ2.fill(0.0);
+}
+
+void TxBandwidthLimiterState::reset() {
+    sampleRate = 0;
+    bandwidthHz = 0.0;
+    centerHz = 0.0;
+    shiftOscillator = std::complex<double>(1.0, 0.0);
+    iZ1.fill(0.0);
+    iZ2.fill(0.0);
+    qZ1.fill(0.0);
+    qZ2.fill(0.0);
+}
+
+bool TransmitWaveformGenerator::limitSignalBandwidth(
+    const TxConfiguration &configuration,
+    const std::complex<float> *input,
+    int count,
+    QVector<std::complex<float>> *output,
+    TxBandwidthLimiterState *state) {
+    if (!input || count <= 0 || !output || !state || configuration.sampleRate <= 0 ||
+        !std::isfinite(configuration.signalBandwidthHz) || configuration.signalBandwidthHz <= 0.0) {
+        return false;
+    }
+    const double sampleRate = static_cast<double>(configuration.sampleRate);
+    const double bandwidth = (std::min)(configuration.signalBandwidthHz, sampleRate * 0.90);
+
+    double centerHz = 0.0;
+    if (configuration.modulation == TxModulation::Cw) {
+        centerHz = configuration.toneHz;
+    } else if (configuration.modulation == TxModulation::Ft8) {
+        centerHz = configuration.toneHz + 3.5 / FT8_SYMBOL_PERIOD;
+    }
+    if (state->sampleRate != configuration.sampleRate ||
+        std::abs(state->bandwidthHz - bandwidth) > 0.01 ||
+        std::abs(state->centerHz - centerHz) > 0.01) {
+        state->reset();
+        state->sampleRate = configuration.sampleRate;
+        state->bandwidthHz = bandwidth;
+        state->centerHz = centerHz;
+    }
+
+    const double cutoff = bandwidth * 0.5;
+    const double omega = 2.0 * Pi * cutoff / sampleRate;
+    const double cosine = std::cos(omega);
+    const double sine = std::sin(omega);
+    constexpr std::array<double, 2> ButterworthQ{{0.541196100146197, 1.306562964876377}};
+    std::array<double, 2> b0{};
+    std::array<double, 2> b1{};
+    std::array<double, 2> b2{};
+    std::array<double, 2> a1{};
+    std::array<double, 2> a2{};
+    for (int stage = 0; stage < 2; ++stage) {
+        const double alpha = sine / (2.0 * ButterworthQ[stage]);
+        const double a0 = 1.0 + alpha;
+        b0[stage] = (1.0 - cosine) * 0.5 / a0;
+        b1[stage] = (1.0 - cosine) / a0;
+        b2[stage] = b0[stage];
+        a1[stage] = -2.0 * cosine / a0;
+        a2[stage] = (1.0 - alpha) / a0;
+    }
+
+    const bool shifted = std::abs(centerHz) > 0.01;
+    const std::complex<double> oscillatorStep = shifted
+        ? std::polar(1.0, 2.0 * Pi * centerHz / sampleRate)
+        : std::complex<double>(1.0, 0.0);
+    std::complex<double> oscillator = state->shiftOscillator;
+    output->resize(count);
+    for (int index = 0; index < count; ++index) {
+        const std::complex<double> shiftedInput = shifted
+            ? std::complex<double>(input[index].real(), input[index].imag()) * std::conj(oscillator)
+            : std::complex<double>(input[index].real(), input[index].imag());
+        double iValue = shiftedInput.real();
+        double qValue = shiftedInput.imag();
+        for (int stage = 0; stage < 2; ++stage) {
+            const double filteredI = b0[stage] * iValue + state->iZ1[stage];
+            state->iZ1[stage] = b1[stage] * iValue - a1[stage] * filteredI + state->iZ2[stage];
+            state->iZ2[stage] = b2[stage] * iValue - a2[stage] * filteredI;
+            iValue = filteredI;
+
+            const double filteredQ = b0[stage] * qValue + state->qZ1[stage];
+            state->qZ1[stage] = b1[stage] * qValue - a1[stage] * filteredQ + state->qZ2[stage];
+            state->qZ2[stage] = b2[stage] * qValue - a2[stage] * filteredQ;
+            qValue = filteredQ;
+        }
+        std::complex<double> filtered(iValue, qValue);
+        if (shifted) {
+            filtered *= oscillator;
+            oscillator *= oscillatorStep;
+        }
+        (*output)[index] = std::complex<float>(static_cast<float>(filtered.real()),
+                                               static_cast<float>(filtered.imag()));
+    }
+    if (shifted) {
+        const double magnitude = std::abs(oscillator);
+        state->shiftOscillator = magnitude > 0.0 ? oscillator / magnitude
+                                                  : std::complex<double>(1.0, 0.0);
+    }
+    return true;
+}
 bool TransmitWaveformGenerator::isTextMode(TxModulation modulation) {
     return modulation == TxModulation::Cw || modulation == TxModulation::Ft8;
+}
+
+double TransmitWaveformGenerator::effectiveFmDeviationHz(
+    const TxConfiguration &configuration) {
+    if (configuration.modulation == TxModulation::Wfm) {
+        return (std::max)(10000.0, configuration.deviationHz);
+    }
+    if (configuration.modulation == TxModulation::Nfm) {
+        return (std::max)(100.0, configuration.deviationHz);
+    }
+    return 0.0;
+}
+
+double TransmitWaveformGenerator::audioLowPassCutoffHz(
+    const TxConfiguration &configuration) {
+    if (!std::isfinite(configuration.signalBandwidthHz) ||
+        configuration.signalBandwidthHz <= 0.0) {
+        return 0.0;
+    }
+    switch (configuration.modulation) {
+    case TxModulation::Am:
+    case TxModulation::Dsb:
+        return configuration.signalBandwidthHz * 0.5;
+    case TxModulation::Usb:
+    case TxModulation::Lsb:
+        return configuration.signalBandwidthHz;
+    case TxModulation::Nfm:
+    case TxModulation::Wfm:
+        return (std::max)(0.0, configuration.signalBandwidthHz * 0.5 -
+                                  effectiveFmDeviationHz(configuration));
+    case TxModulation::Cw:
+    case TxModulation::Ft8:
+        return 0.0;
+    }
+    return 0.0;
 }
 
 QString TransmitWaveformGenerator::modulationName(TxModulation modulation) {
@@ -112,12 +251,52 @@ QVector<std::complex<float>> TransmitWaveformGenerator::modulateAudio(
     TxModulatorState &s = state ? *state : localState;
     const double sampleRate = static_cast<double>(configuration.sampleRate);
     const float level = (std::clamp)(configuration.level, 0.0f, 0.95f);
-    const double deviation = configuration.modulation == TxModulation::Wfm
-                                 ? (std::max)(10000.0, configuration.deviationHz)
-                                 : (std::max)(100.0, configuration.deviationHz);
+    const double deviation = effectiveFmDeviationHz(configuration);
+    const double requestedAudioCutoff = audioLowPassCutoffHz(configuration);
+    const double audioCutoff = (std::min)(requestedAudioCutoff, sampleRate * 0.45);
+    const bool filterAudio = audioCutoff >= 20.0 && audioCutoff < sampleRate * 0.445;
+    std::array<double, 2> audioB0{};
+    std::array<double, 2> audioB1{};
+    std::array<double, 2> audioB2{};
+    std::array<double, 2> audioA1{};
+    std::array<double, 2> audioA2{};
+    if (filterAudio) {
+        if (s.audioFilterSampleRate != configuration.sampleRate ||
+            std::abs(s.audioFilterCutoffHz - audioCutoff) > 0.01) {
+            s.resetAudioFilter();
+            s.audioFilterSampleRate = configuration.sampleRate;
+            s.audioFilterCutoffHz = audioCutoff;
+        }
+        const double omega = 2.0 * Pi * audioCutoff / sampleRate;
+        const double cosine = std::cos(omega);
+        const double sine = std::sin(omega);
+        constexpr std::array<double, 2> ButterworthQ{{0.541196100146197, 1.306562964876377}};
+        for (int stage = 0; stage < 2; ++stage) {
+            const double alpha = sine / (2.0 * ButterworthQ[stage]);
+            const double a0 = 1.0 + alpha;
+            audioB0[stage] = (1.0 - cosine) * 0.5 / a0;
+            audioB1[stage] = (1.0 - cosine) / a0;
+            audioB2[stage] = audioB0[stage];
+            audioA1[stage] = -2.0 * cosine / a0;
+            audioA2[stage] = (1.0 - alpha) / a0;
+        }
+    } else if (s.audioFilterSampleRate != 0) {
+        s.resetAudioFilter();
+    }
 
     for (int i = 0; i < audio.size(); ++i) {
-        const float x = clampAudio(audio[i]);
+        double filteredAudio = clampAudio(audio[i]);
+        if (filterAudio) {
+            for (int stage = 0; stage < 2; ++stage) {
+                const double next = audioB0[stage] * filteredAudio + s.audioFilterZ1[stage];
+                s.audioFilterZ1[stage] = audioB1[stage] * filteredAudio -
+                                         audioA1[stage] * next + s.audioFilterZ2[stage];
+                s.audioFilterZ2[stage] = audioB2[stage] * filteredAudio -
+                                         audioA2[stage] * next;
+                filteredAudio = next;
+            }
+        }
+        const float x = clampAudio(static_cast<float>(filteredAudio));
         switch (configuration.modulation) {
         case TxModulation::Am:
             result[i] = std::complex<float>(level * (0.70f + 0.30f * x), 0.0f);

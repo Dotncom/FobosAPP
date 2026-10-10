@@ -9,6 +9,14 @@ struct SpectrumDisplayFrame {
     std::vector<float> overlayLevels;
 };
 
+enum class SpectrumDisplayReduction {
+    Peak = 0,
+    AverageDb = 1,
+    AveragePower = 2,
+    Sample = 3,
+    Minimum = 4
+};
+
 void prepareSpectrumDisplayFrame(const std::vector<float> &sourceFrequencies,
                                  const std::vector<float> &sourceLevels,
                                  const std::vector<float> *sourceOverlayLevels,
@@ -17,6 +25,7 @@ void prepareSpectrumDisplayFrame(const std::vector<float> &sourceFrequencies,
                                  double maxFrequency,
                                  int targetBins,
                                  float fallbackLevel,
+                                 SpectrumDisplayReduction reduction,
                                  SpectrumDisplayFrame &output);
 
 #endif // SPECTRUMDISPLAYREDUCER_H

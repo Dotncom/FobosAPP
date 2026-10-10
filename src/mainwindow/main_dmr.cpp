@@ -185,6 +185,9 @@ void YourClassName::processDigitalAudioFrame(const QByteArray &pcmData, int samp
                                              : settings.cwDecoderWpm;
     settings.cwDecoderAdaptiveSpeed =
         !cwDecoderAdaptiveCheckbox || cwDecoderAdaptiveCheckbox->isChecked();
+    settings.cwDecoderSelectivity = cwDecoderSelectivitySpin
+                                        ? cwDecoderSelectivitySpin->value()
+                                        : settings.cwDecoderSelectivity;
     settings.cwDecoderAlphabet =
         cwDecoderAlphabetCombo ? cwDecoderAlphabetCombo->currentData().toInt()
                                : settings.cwDecoderAlphabet;
@@ -334,6 +337,9 @@ void YourClassName::updateDigitalDecoderMode() {
                                              : settings.cwDecoderWpm;
     settings.cwDecoderAdaptiveSpeed =
         !cwDecoderAdaptiveCheckbox || cwDecoderAdaptiveCheckbox->isChecked();
+    settings.cwDecoderSelectivity = cwDecoderSelectivitySpin
+                                        ? cwDecoderSelectivitySpin->value()
+                                        : settings.cwDecoderSelectivity;
     settings.cwDecoderAlphabet =
         cwDecoderAlphabetCombo ? cwDecoderAlphabetCombo->currentData().toInt()
                                : settings.cwDecoderAlphabet;

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(ObriiSDR VERSION 5.0.0)
+project(ObriiSDR VERSION 5.1.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -129,6 +129,7 @@ set(SOURCES
     src/mainwindow/main_gnss_satellites.cpp
     src/mainwindow/main_gnss_serial.cpp
     src/mainwindow/main_hardware_controls.cpp
+    src/mainwindow/main_hackrf.cpp
     src/mainwindow/main_localization.cpp
     src/mainwindow/main_localization_translations.cpp
     src/mainwindow/main_measurements.cpp
@@ -219,16 +220,28 @@ set(SOURCES
     src/research/receivercalibrationtable.h
     src/research/researchanalysisdialog.cpp
     src/research/researchanalysisdialog.h
+    src/research/scientificsessiontools.cpp
+    src/research/scientificsessiontools.h
+    src/research/spectrumpersistencetools.cpp
+    src/research/spectrumpersistencetools.h
     src/research/zerospandialog.cpp
     src/research/zerospandialog.h
     src/research/zoomspectrumprocessor.cpp
     src/research/zoomspectrumprocessor.h
     src/research/zoomspectrumdialog.cpp
     src/research/zoomspectrumdialog.h
+    src/research/zoomdensitydialog.cpp
+    src/research/zoomdensitydialog.h
     src/transmit/transmitterbackend.cpp
     src/transmit/transmitterbackend.h
+    src/transmit/hackrftransmitterbackend.cpp
+    src/transmit/hackrftransmitterbackend.h
     src/transmit/transmitwaveformgenerator.cpp
     src/transmit/transmitwaveformgenerator.h
+    src/transmit/transmitmediagenerator.cpp
+    src/transmit/transmitmediagenerator.h
+    src/transmit/sstvimageeditordialog.cpp
+    src/transmit/sstvimageeditordialog.h
     src/transmit/transmitdialog.cpp
     src/transmit/transmitdialog.h
     third_party/ft8_lib/ft8/constants.c
@@ -421,7 +434,11 @@ if(FOBOS_BUILD_CW_SELFTEST)
         tools/transmit_waveform_selftest.cpp
         src/transmit/transmitwaveformgenerator.cpp
         src/transmit/transmitwaveformgenerator.h
+        src/transmit/transmitmediagenerator.cpp
+        src/transmit/transmitmediagenerator.h
         src/transmit/transmitterbackend.h
+        src/digital/videoprocessor.cpp
+        src/digital/videoprocessor.h
         third_party/ft8_lib/ft8/constants.c
         third_party/ft8_lib/ft8/crc.c
         third_party/ft8_lib/ft8/encode.c
@@ -429,10 +446,14 @@ if(FOBOS_BUILD_CW_SELFTEST)
         third_party/ft8_lib/ft8/text.c
     )
     target_include_directories(FobosTransmitSelfTest PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/core
+        ${CMAKE_SOURCE_DIR}/src/digital
         ${CMAKE_SOURCE_DIR}/src/transmit
+        ${CMAKE_SOURCE_DIR}/src/utils
         ${CMAKE_SOURCE_DIR}/third_party/ft8_lib
     )
-    target_link_libraries(FobosTransmitSelfTest PRIVATE Qt5::Core)
+    target_link_libraries(FobosTransmitSelfTest PRIVATE Qt5::Core Qt5::Gui Qt5::Widgets)
     if(MSVC)
         target_compile_options(FobosTransmitSelfTest PRIVATE /utf-8)
     endif()

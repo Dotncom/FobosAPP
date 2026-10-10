@@ -60,9 +60,11 @@ void CwAudioDecoder::configure(const Settings &settings) {
     normalized.toneHz = (std::clamp)(normalized.toneHz, 100.0, normalized.sampleRate * 0.45);
     normalized.initialWpm = (std::clamp)(normalized.initialWpm, 5, 60);
     normalized.alphabet = (std::clamp)(normalized.alphabet, 0, 2);
+    normalized.selectivity = (std::clamp)(normalized.selectivity, 1, 10);
     const bool timingChanged = normalized.sampleRate != currentSettings.sampleRate ||
                                std::abs(normalized.toneHz - currentSettings.toneHz) > 0.01 ||
-                               normalized.alphabet != currentSettings.alphabet;
+                               normalized.alphabet != currentSettings.alphabet ||
+                               normalized.selectivity != currentSettings.selectivity;
     currentSettings = normalized;
     if (timingChanged || !initialized) {
         reset();
@@ -98,9 +100,14 @@ CwAudioDecoder::Result CwAudioDecoder::processPcm16(const QByteArray &pcmData) {
         return result;
     }
 
+    const double selectivity = (currentSettings.selectivity - 1) / 9.0;
+    const double detectorBandwidthHz = 120.0 - 85.0 * selectivity;
+    const double envelopeBandwidthHz = 24.0 - 6.0 * selectivity;
     const double phaseStep = TwoPi * currentSettings.toneHz / currentSettings.sampleRate;
-    const double detectorAlpha = 1.0 - std::exp(-TwoPi * 35.0 / currentSettings.sampleRate);
-    const double envelopeAlpha = 1.0 - std::exp(-TwoPi * 18.0 / currentSettings.sampleRate);
+    const double detectorAlpha =
+        1.0 - std::exp(-TwoPi * detectorBandwidthHz / currentSettings.sampleRate);
+    const double envelopeAlpha =
+        1.0 - std::exp(-TwoPi * envelopeBandwidthHz / currentSettings.sampleRate);
     const int sampleCount = pcmData.size() / static_cast<int>(sizeof(qint16));
     const char *raw = pcmData.constData();
 
@@ -125,8 +132,8 @@ CwAudioDecoder::Result CwAudioDecoder::processPcm16(const QByteArray &pcmData) {
         signalPeak = (std::max)(signalPeak, noiseFloor * 3.0);
 
         const double dynamicRange = signalPeak - noiseFloor;
-        const double onThreshold = noiseFloor + dynamicRange * 0.42;
-        const double offThreshold = noiseFloor + dynamicRange * 0.26;
+        const double onThreshold = noiseFloor + dynamicRange * (0.34 + 0.16 * selectivity);
+        const double offThreshold = noiseFloor + dynamicRange * (0.20 + 0.10 * selectivity);
         const bool nextKeyDown = keyDown ? envelope >= offThreshold : envelope >= onThreshold;
         lastConfidence = (std::clamp)((envelope - noiseFloor) /
                                           (dynamicRange + 1.0e-12),
@@ -155,9 +162,10 @@ CwAudioDecoder::Result CwAudioDecoder::processPcm16(const QByteArray &pcmData) {
     result.confidence = lastConfidence;
     if (processedSamples - lastStatusSample >= currentSettings.sampleRate / 4) {
         lastStatusSample = processedSamples;
-        result.status = QStringLiteral("CW decoder: %1 Hz, %2 WPM, threshold %3, pattern %4")
+        result.status = QStringLiteral("CW decoder: %1 Hz, %2 WPM, selectivity %3, confidence %4, pattern %5")
                             .arg(currentSettings.toneHz, 0, 'f', 0)
                             .arg(result.estimatedWpm, 0, 'f', 1)
+                            .arg(currentSettings.selectivity)
                             .arg(lastConfidence, 0, 'f', 2)
                             .arg(currentPattern.isEmpty() ? QStringLiteral("-") : currentPattern);
     }
@@ -166,6 +174,11 @@ CwAudioDecoder::Result CwAudioDecoder::processPcm16(const QByteArray &pcmData) {
 
 void CwAudioDecoder::finishKeyDown(qint64 durationSamples, QString &) {
     const double duration = static_cast<double>(durationSamples);
+    const double selectivity = (currentSettings.selectivity - 1) / 9.0;
+    const double minimumMarkSamples = dotSamples * (0.06 + 0.14 * selectivity);
+    if (duration < minimumMarkSamples) {
+        return;
+    }
     const bool dash = duration >= dotSamples * 2.05;
     currentPattern.append(dash ? QLatin1Char('-') : QLatin1Char('.'));
     if (currentSettings.adaptiveSpeed) {

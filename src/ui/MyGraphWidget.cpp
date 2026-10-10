@@ -5,7 +5,9 @@
 #include <cmath>
 #include <limits>
 #include <QPainterPath>
+#include <QStyle>
 #include <QStringList>
+#include <QToolButton>
 
 namespace {
 constexpr int GRAPH_LEFT_MARGIN = 0;
@@ -28,6 +30,13 @@ struct SignalSample {
 MyGraphWidget::MyGraphWidget(QWidget *parent)
     : QOpenGLWidget(parent), xMin(60e6), xMax(140e6), yMin(-120), yMax(0), fftLength(32768), initialized(false) {
     setMouseTracking(true);
+    pauseControl = new QToolButton(this);
+    pauseControl->setAutoRaise(true);
+    pauseControl->setCheckable(true);
+    pauseControl->setFixedSize(24, 24);
+    pauseControl->hide();
+    connect(pauseControl, &QToolButton::toggled, this, &MyGraphWidget::setDisplayPaused);
+    updatePauseControl();
 }
 
 MyGraphWidget::~MyGraphWidget() {
@@ -60,9 +69,14 @@ void MyGraphWidget::initializeGL() {
 
 void MyGraphWidget::resizeGL(int w, int h) {
     glViewport(0, 0, w, h);
+    if (pauseControl) {
+        pauseControl->move((std::max)(2, w - pauseControl->width() - 6), 6);
+        pauseControl->raise();
+    }
 }
 
 void MyGraphWidget::setData(const std::vector<float> &xData, const std::vector<float> &yData, double xMin, double xMax, int fftLength, bool colorf, bool displayOrdered) {
+    if (displayPaused) return;
     this->xData = xData;
     this->yData = yData;
     this->xMin = xMin;
@@ -71,6 +85,32 @@ void MyGraphWidget::setData(const std::vector<float> &xData, const std::vector<f
     this->colorf = colorf;
     this->dataDisplayOrdered = displayOrdered;
     update();
+}
+
+void MyGraphWidget::setPauseControlVisible(bool visible) {
+    if (!pauseControl) return;
+    pauseControl->setVisible(visible);
+    if (visible) pauseControl->raise();
+}
+
+void MyGraphWidget::setDisplayPaused(bool paused) {
+    displayPaused = paused;
+    if (pauseControl && pauseControl->isChecked() != paused) {
+        pauseControl->blockSignals(true);
+        pauseControl->setChecked(paused);
+        pauseControl->blockSignals(false);
+    }
+    updatePauseControl();
+}
+
+void MyGraphWidget::updatePauseControl() {
+    if (!pauseControl) return;
+    pauseControl->setIcon(style()->standardIcon(displayPaused
+                                                    ? QStyle::SP_MediaPlay
+                                                    : QStyle::SP_MediaPause));
+    pauseControl->setToolTip(displayPaused
+                                 ? QString::fromUtf8(u8"Відновити оновлення спектра")
+                                 : QString::fromUtf8(u8"Призупинити лише відображення спектра"));
 }
 
 void MyGraphWidget::setOverlayData(const std::vector<float> &yData, bool enabled, bool displayOrdered) {
@@ -158,6 +198,28 @@ void MyGraphWidget::setExtendedInfoOverlayEnabled(bool enabled) {
         return;
     }
     extendedInfoOverlayEnabled = enabled;
+    update();
+}
+
+void MyGraphWidget::setAnalogPeakMeterEnabled(bool enabled) {
+    if (analogPeakMeterEnabled == enabled) return;
+    analogPeakMeterEnabled = enabled;
+    update();
+}
+
+void MyGraphWidget::setAnalogPeakMeterStyle(int style) {
+    const int normalized = std::clamp(style, 0, 1);
+    if (analogPeakMeterStyle == normalized) return;
+    analogPeakMeterStyle = normalized;
+    update();
+}
+
+void MyGraphWidget::setAnalogPeakMeterTarget(double frequencyHz, bool valid) {
+    const bool targetValid = valid && std::isfinite(frequencyHz);
+    if (analogPeakMeterTargetValid == targetValid &&
+        (!targetValid || qFuzzyCompare(analogPeakMeterTargetHz + 1.0, frequencyHz + 1.0))) return;
+    analogPeakMeterTargetValid = targetValid;
+    analogPeakMeterTargetHz = targetValid ? frequencyHz : 0.0;
     update();
 }
 
@@ -392,6 +454,7 @@ void MyGraphWidget::paintGL() {
     drawScienceMarkers(painter);
     drawBandwidthMeasurement(painter);
     drawHoverCursor(painter);
+    drawAnalogPeakMeter(painter);
     drawFpsOverlay(painter);
     drawExtendedInfoOverlay(painter);
 }
@@ -491,6 +554,111 @@ void MyGraphWidget::updateFpsCounter() {
     }
 }
 
+void MyGraphWidget::drawAnalogPeakMeter(QPainter &painter) const {
+    if (!analogPeakMeterEnabled || yData.empty() || fftLength <= 0 || qFuzzyCompare(yMin, yMax)) return;
+    const int count = std::min({fftLength, static_cast<int>(xData.size()), static_cast<int>(yData.size())});
+    if (count <= 0) return;
+
+    CursorPeak peak;
+    if (analogPeakMeterTargetValid) {
+        const double displayFrequency = displayFrequencyForActualFrequency(analogPeakMeterTargetHz);
+        peak = cursorPeakAtX(xForFrequency(displayFrequency));
+    }
+    if (!peak.valid) {
+        for (int index = 0; index < count; ++index) {
+            const float level = displayLevelAt(yData, index, count, dataDisplayOrdered);
+            const double displayFrequency = displayFrequencyAt(index, count);
+            if (!std::isfinite(level) || !std::isfinite(displayFrequency)) continue;
+            if (!peak.valid || level > peak.level) {
+                peak.valid = true;
+                peak.level = level;
+                peak.displayFrequency = displayFrequency;
+                peak.frequency = actualFrequencyForDisplayFrequency(displayFrequency);
+                peak.dataIndex = index;
+            }
+        }
+    }
+    if (!peak.valid) return;
+
+    const int meterWidth = (std::clamp)(width() / 4, 145, 210);
+    const int meterHeight = (std::clamp)(meterWidth * 54 / 100, 78, 112);
+    const QRect meterRect(8, 8, meterWidth, meterHeight);
+    const QPointF center(meterRect.center().x(), meterRect.bottom() - 14.0);
+    const qreal radius = (std::min)(meterRect.width() * 0.43, meterRect.height() * 0.80);
+    // Keep the instrument scale independent from a narrowly zoomed display range.
+    // dBFS cannot exceed 0 in an unclipped stream, while the lower bound follows
+    // the visible floor when the user needs more than the usual 120 dB span.
+    const double meterMinimum = (std::min)(double(yMin), -120.0);
+    const double meterMaximum = (std::max)(double(yMax), 0.0);
+    const double normalized = std::clamp((double(peak.level) - meterMinimum) /
+                                             (meterMaximum - meterMinimum), 0.0, 1.0);
+    constexpr double startDegrees = 210.0;
+    constexpr double sweepDegrees = 120.0;
+    constexpr double pi = 3.14159265358979323846;
+    const auto pointAt = [&](double degrees, double scale) {
+        const double radians = degrees * pi / 180.0;
+        return QPointF(center.x() + std::cos(radians) * radius * scale,
+                       center.y() + std::sin(radians) * radius * scale);
+    };
+
+    const bool retro = analogPeakMeterStyle == 1;
+    const QColor scaleColor = retro ? QColor(60, 45, 18) : QColor(183, 197, 210);
+    const QColor textColor = retro ? QColor(52, 37, 12) : QColor(226, 234, 241);
+    const QColor secondaryText = retro ? QColor(91, 62, 18) : QColor(146, 161, 177);
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    if (retro) {
+        painter.setPen(QPen(QColor(116, 79, 20), 1.2));
+        painter.setBrush(QColor(242, 190, 72, 232));
+        painter.drawRoundedRect(meterRect, 4.0, 4.0);
+    } else {
+        painter.setPen(QPen(QColor(140, 154, 169, 165), 1.0));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawRoundedRect(meterRect, 4.0, 4.0);
+    }
+    for (int tick = 0; tick <= 10; ++tick) {
+        const double degrees = startDegrees + sweepDegrees * tick / 10.0;
+        painter.setPen(QPen(tick >= 8 ? QColor(210, 51, 38) : scaleColor,
+                            tick % 5 == 0 ? 1.8 : 1.0));
+        painter.drawLine(pointAt(degrees, tick % 5 == 0 ? 0.76 : 0.82), pointAt(degrees, 0.96));
+        if (tick % 5 == 0) {
+            painter.save();
+            QFont scaleFont = painter.font();
+            scaleFont.setPointSizeF((std::max)(6.0, scaleFont.pointSizeF() - 2.0));
+            painter.setFont(scaleFont);
+            painter.setPen(scaleColor);
+            const QString label = QString::number(
+                meterMinimum + (meterMaximum - meterMinimum) * tick / 10.0, 'f', 0);
+            const QPointF labelCenter = pointAt(degrees, 0.60);
+            painter.drawText(QRectF(labelCenter.x() - 24.0, labelCenter.y() - 8.0, 48.0, 16.0),
+                             Qt::AlignCenter, label);
+            painter.restore();
+        }
+    }
+    painter.setPen(QPen(QColor(58, 210, 126), 2.0));
+    painter.drawArc(QRectF(center.x() - radius, center.y() - radius,
+                           radius * 2.0, radius * 2.0),
+                    int((180.0 - startDegrees) * 16.0), int(-sweepDegrees * 16.0));
+    const double needleDegrees = startDegrees + sweepDegrees * normalized;
+    painter.setPen(QPen(QColor(255, 91, 72), 2.1, Qt::SolidLine, Qt::RoundCap));
+    painter.drawLine(center, pointAt(needleDegrees, 0.83));
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(retro ? QColor(55, 39, 12) : QColor(226, 232, 238));
+    painter.drawEllipse(center, 3.5, 3.5);
+
+    QFont font = painter.font();
+    font.setPointSizeF((std::max)(7.0, font.pointSizeF() - 1.0));
+    painter.setFont(font);
+    painter.setPen(textColor);
+    const QString source = analogPeakMeterTargetValid ? QStringLiteral("MARKER") : QStringLiteral("PEAK");
+    painter.drawText(meterRect.adjusted(7, 3, -7, -3), Qt::AlignTop | Qt::AlignLeft,
+                     QStringLiteral("%1  %2 dBFS").arg(source).arg(peak.level, 0, 'f', 1));
+    painter.setPen(secondaryText);
+    painter.drawText(meterRect.adjusted(7, 3, -7, -5), Qt::AlignBottom | Qt::AlignCenter,
+                     formatFrequencyLabel(peak.frequency));
+    painter.restore();
+}
+
 void MyGraphWidget::drawFpsOverlay(QPainter &painter) const {
     if (!fpsOverlayEnabled) {
         return;
@@ -500,8 +668,9 @@ void MyGraphWidget::drawFpsOverlay(QPainter &painter) const {
                              : QStringLiteral("FPS --");
     const QFontMetrics metrics(painter.font());
     const QRect textRect = metrics.boundingRect(text).adjusted(-6, -3, 6, 3);
+    const int overlayY = pauseControl && pauseControl->isVisible() ? 36 : 8;
     const QRect overlayRect(width() - textRect.width() - 8,
-                            8,
+                            overlayY,
                             textRect.width(),
                             textRect.height());
     painter.fillRect(overlayRect, QColor(0, 0, 0, 180));

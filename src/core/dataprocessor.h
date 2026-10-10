@@ -26,6 +26,7 @@
 #include "receiverbackend.h"
 
 class ZoomSpectrumProcessor;
+struct HackRfDeviceDiagnostics;
 
 class DataProcessor : public QThread {
     Q_OBJECT
@@ -64,6 +65,8 @@ public:
     bool retuneCenterFrequency(double centerFrequencyHz);
     bool applyRtlGainSettings(bool agc, int gainTenthsDb);
     bool applyHackRfGainSettings(int lnaGainDb, int vgaGainDb);
+    bool queryHackRfDiagnostics(HackRfDeviceDiagnostics *diagnostics,
+                                QString *errorMessage = nullptr);
     void updateNetworkIqSettings(const RadioSettings &settings, bool channelizeFrames);
     void configureNetworkIqStreaming(const RadioSettings &settings, bool emitFrames, bool channelizeFrames);
     std::shared_ptr<ZoomSpectrumProcessor> zoomSpectrumProcessor() const { return zoomProcessor; }

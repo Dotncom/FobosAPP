@@ -95,6 +95,7 @@
 class ZeroSpanDialog;
 class ResearchAnalysisDialog;
 class ZoomSpectrumDialog;
+class ZoomDensityDialog;
 class TransmitDialog;
 class AudioFilterChainWidget;
 class DspFlowPanel;
@@ -157,6 +158,7 @@ class YourClassName : public QMainWindow {
 public:
    explicit YourClassName(QWidget *parent = nullptr);
     ~YourClassName();
+    void showConfiguredInterface();
      std::unique_ptr<FFTResult> fftResult;
      std::unique_ptr<SpectrumFftWorker> spectrumFftWorker;
     void onFrequencyEntered();
@@ -201,6 +203,7 @@ private slots:
     void pollStopCompletion();
     void checkStreamStartup();
     void openNetworkSettingsDialog();
+    void showHackRfRxSettings();
     void onNetworkStatusChanged(const QString &status);
     void onNetworkControlCommandReceived(const QJsonObject &command);
     void onAudioEnabledChanged(bool checked);
@@ -325,6 +328,7 @@ private:
     void exportScanMeasurementCsv();
     void updateSpectrumScience(const std::vector<float> &frequencies,
                                const std::vector<float> &levels);
+    bool spectrumScienceAnalysisRequired() const;
     void feedZeroSpanFrame(const std::vector<float> &frequencies,
                            const std::vector<float> &levels,
                            bool fftShiftedStorage);
@@ -378,11 +382,13 @@ private:
     void updateFrequencyPresetControls();
     void updateGraphBandMarkers();
     void applyAlternativeInterfaceMode();
+    void ensureDspFlowPanel();
     void setControlsPanelVisible(bool visible);
     QVector<QPair<QString, double>> presetMapToVector(const QMap<QString, double> &presets,
                                                       const QStringList &order) const;
     void openPresetManager();
     void openZoomSpectrum();
+    void openZoomDensity();
     void openTransmitDialog();
     void openApplicationSettings();
     bool isAnyVideoOutputVisible() const;
@@ -613,6 +619,9 @@ private:
     QComboBox *waterfallDisplayModeCombo = nullptr;
     QCheckBox *alternativeSpectrumGradientCheckbox = nullptr;
     QComboBox *waterfall3DResolutionCombo = nullptr;
+    QComboBox *waterfall3DSurfaceStyleCombo = nullptr;
+    QComboBox *waterfall3DSmoothingCombo = nullptr;
+    QComboBox *waterfall3DLightingCombo = nullptr;
     QComboBox *audioDeviceComboBox = nullptr;
     QComboBox *recordingModeCombo = nullptr;
     QComboBox *playbackFileCombo = nullptr;
@@ -646,6 +655,7 @@ private:
     QSpinBox *dmrTimingOffsetSpin = nullptr;
     QSpinBox *cwDecoderToneSpin = nullptr;
     QSpinBox *cwDecoderWpmSpin = nullptr;
+    QSpinBox *cwDecoderSelectivitySpin = nullptr;
     QComboBox *dmrPrivacyKeyIdCombo = nullptr;
     QDoubleSpinBox *dmrSlicerRatioSpin = nullptr;
     QSpinBox *gnssDopplerSpanSpin = nullptr;
@@ -658,6 +668,8 @@ private:
     QCheckBox *waterfall3DSpectrumSliceCaptureCheckbox = nullptr;
     QCheckBox *waterfall3DSpectrumSliceCaptureFixedCheckbox = nullptr;
     QCheckBox *waterfall3DFixedPlaneCheckbox = nullptr;
+    QCheckBox *waterfall3DMonochromeCheckbox = nullptr;
+    QCheckBox *waterfall3DAlternativeViewCheckbox = nullptr;
     QCheckBox *waterfall3DVncSliceInputCheckbox = nullptr;
     QCheckBox *dmrAdaptiveSlicerCheckbox = nullptr;
     QCheckBox *cwDecoderAdaptiveCheckbox = nullptr;
@@ -671,8 +683,10 @@ private:
     QPushButton *refreshButton = nullptr;
     QPushButton *fobosButton = nullptr;
     QPushButton *networkButton = nullptr;
+    QPushButton *hackRfSettingsButton = nullptr;
     QPushButton *presetManagerButton = nullptr;
     QPushButton *zoomSpectrumButton = nullptr;
+    QPushButton *zoomDensityButton = nullptr;
     QPushButton *transmitButton = nullptr;
     QPushButton *appSettingsButton = nullptr;
     QPushButton *dspPathButton = nullptr;
@@ -735,6 +749,7 @@ private:
     QCheckBox *listeningScanCheckbox = nullptr;
     QCheckBox *scanListeningLockCheckbox = nullptr;
     QCheckBox *scanMeasurementCheckbox = nullptr;
+    QCheckBox *waterfallAreaMeasurementCheckbox = nullptr;
     QCheckBox *spurSuppressionCheckbox = nullptr;
     QCheckBox *gnssMonitorCheckbox = nullptr;
     QCheckBox *gnssUseGpsCheckbox = nullptr;
@@ -910,6 +925,7 @@ private:
     QCheckBox *gnssSatelliteTableCheckbox = nullptr;
     QDialog *gnssSatelliteTableDialog = nullptr;
     ZoomSpectrumDialog *zoomSpectrumDialog = nullptr;
+    ZoomDensityDialog *zoomDensityDialog = nullptr;
     TransmitDialog *transmitDialog = nullptr;
     QTableWidget *gnssSatelliteTable = nullptr;
     QLabel *dsdNeoStatusLabel = nullptr;
@@ -1066,10 +1082,14 @@ private:
     int waterfallRowsPerFrame = 1;
     int waterfallDisplayMode = static_cast<int>(MyWaterfallWidget::DisplayMode::Waterfall2D);
     bool alternativeInterfaceMode = false;
+    bool waterfall3DAlternativeView = false;
     bool alternativeSpectrumGradientFill = false;
     int alternativeSpectrumGradientOpacity = 70;
     int waterfall3DResolutionDivisor = 4;
     int waterfall3DHistoryRows = 128;
+    int waterfall3DSurfaceStyle = 0;
+    int waterfall3DSmoothing = 0;
+    int waterfall3DLighting = 0;
     int waterfall3DSliceScrollStep = 1;
     int waterfall3DSliceWidth = 1;
     int waterfall3DSpectrumSliceScrollStep = 1;
@@ -1077,10 +1097,13 @@ private:
     bool waterfall3DSpectrumSliceCapture = false;
     bool waterfall3DSpectrumSliceCaptureFixed = false;
     bool waterfall3DFixedPlane = false;
+    bool waterfall3DMonochrome = false;
     bool waterfall3DVncSliceInput = false;
     bool experimentalGpuWaterfall = false;
     bool showSpectrumFps = false;
     bool showWaterfallFps = false;
+    bool showSpectrumPeakMeter = false;
+    int spectrumPeakMeterStyle = 0;
     bool showExtendedSpectrumInfo = false;
     SpectrumFrameRecorder spectrumFrameRecorder;
     SpectrumIqEventRecorder spectrumIqEventRecorder;
@@ -1097,12 +1120,14 @@ private:
     std::vector<float> spectrumFrequencyScratch;
     std::vector<float> spectrumMagnitudeScratch;
     std::vector<float> spectrumReferenceScratch;
+    std::uint64_t spectrumCalibrationFrameSerial = 0;
     std::vector<float> hfInterferenceLastFrequencies;
     std::vector<float> hfInterferenceLastMagnitudes;
     std::vector<float> hfInterferenceBaselineFrequencies;
     std::vector<float> hfInterferenceBaselineMagnitudes;
     std::vector<float> hfInterferenceVisualMagnitudes;
     bool scanMeasurementEnabled = true;
+    bool waterfallAreaMeasurementEnabled = false;
     bool scanMeasurementBaselineRecording = false;
     double scanMeasurementBinMhz = 0.1;
     int scanMeasurementUpdateIntervalMs = SCAN_MEASUREMENT_DEFAULT_UPDATE_MS;
@@ -1120,10 +1145,22 @@ private:
     bool spectrumPercentile90Enabled = false;
     bool spectrumPercentile99Enabled = false;
     int spectrumAmplitudeUnit = 0;
+    int spectrumDisplayReductionMode = 0;
     std::uint64_t lastSpectrumFftEpoch = 0;
     std::uint64_t lastSpectrumFftEndFloats = 0;
     int lastSpectrumFftLength = 0;
+    std::uint64_t lastIqDiscontinuityEpoch = 0;
+    std::uint64_t lastIqDroppedQueuedBlocks = 0;
+    std::uint64_t lastIqSkippedSnapshotBlocks = 0;
     int spectrumScienceActiveMarker = 0;
+    enum SpectrumSciencePendingAction {
+        SpectrumScienceActionNone = 0,
+        SpectrumScienceActionPeak,
+        SpectrumScienceActionPreviousPeak,
+        SpectrumScienceActionNextPeak
+    };
+    SpectrumSciencePendingAction spectrumSciencePendingAction = SpectrumScienceActionNone;
+    bool spectrumScienceExportPending = false;
     QCheckBox *spectrumScienceMaxHoldCheckbox = nullptr;
     QCheckBox *spectrumScienceMinHoldCheckbox = nullptr;
     QCheckBox *spectrumScienceAverageCheckbox = nullptr;

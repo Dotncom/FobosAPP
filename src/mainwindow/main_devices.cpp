@@ -707,6 +707,28 @@ ReceiverStreamDescriptor YourClassName::makeHackRfNativeStreamDescriptor(bool qu
     stream.hackRfNativeDeviceIndex = selectedHackRfNativeIndex();
     stream.hackRfLnaGainDb = (std::clamp)(pendingSettings.hackRfLnaGainDb, 0, 40) / 8 * 8;
     stream.hackRfVgaGainDb = (std::clamp)(pendingSettings.hackRfVgaGainDb, 0, 62) / 2 * 2;
+    stream.hackRfAmpEnabled = pendingSettings.hackRfAmpEnabled;
+    stream.hackRfBiasTeeEnabled = pendingSettings.hackRfBiasTeeEnabled;
+    stream.hackRfAutomaticBandwidth = pendingSettings.hackRfAutomaticBandwidth;
+    stream.hackRfBandwidthHz =
+        static_cast<std::uint32_t>((std::max)(0, pendingSettings.hackRfBandwidthHz));
+    stream.hackRfExplicitTuningEnabled = pendingSettings.hackRfExplicitTuningEnabled;
+    stream.hackRfExplicitIfHz = static_cast<std::uint64_t>(
+        (std::max)(0.0, pendingSettings.hackRfExplicitIfHz));
+    stream.hackRfExplicitLoHz = static_cast<std::uint64_t>(
+        (std::max)(0.0, pendingSettings.hackRfExplicitLoHz));
+    stream.hackRfExplicitPath = (std::clamp)(pendingSettings.hackRfExplicitPath, 0, 2);
+    stream.hackRfClockOutEnabled = pendingSettings.hackRfClockOutEnabled;
+    stream.hackRfHardwareSyncEnabled = pendingSettings.hackRfHardwareSyncEnabled;
+    stream.hackRfRxOverrunLimit =
+        static_cast<std::uint32_t>((std::max)(0, pendingSettings.hackRfRxOverrunLimit));
+    stream.hackRfOperaCakeEnabled = pendingSettings.hackRfOperaCakeEnabled;
+    stream.hackRfOperaCakeAddress = (std::clamp)(pendingSettings.hackRfOperaCakeAddress, 0, 7);
+    stream.hackRfOperaCakeMode = (std::clamp)(pendingSettings.hackRfOperaCakeMode, 0, 2);
+    stream.hackRfOperaCakePortA = (std::clamp)(pendingSettings.hackRfOperaCakePortA, 0, 7);
+    stream.hackRfOperaCakePortB = (std::clamp)(pendingSettings.hackRfOperaCakePortB, 0, 7);
+    stream.hackRfOperaCakeRangesJson = pendingSettings.hackRfOperaCakeRangesJson;
+    stream.hackRfOperaCakeDwellsJson = pendingSettings.hackRfOperaCakeDwellsJson;
     stream.syncReader = false;
     stream.queueAudioBlocks = queueAudioBlocks;
     stream.publishIqSnapshot = publishIqSnapshot;

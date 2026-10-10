@@ -28,8 +28,8 @@ std::deque<std::vector<float>> g_iqBlocks;
 std::deque<std::uint64_t> g_iqBlockSequences;
 std::deque<std::vector<float>> g_recycledIqBlocks;
 std::size_t g_iqQueuedFloatCount = 0;
-std::uint64_t g_droppedQueuedBlocks = 0;
-std::uint64_t g_droppedQueuedFloats = 0;
+std::atomic<std::uint64_t> g_droppedQueuedBlocks{0};
+std::atomic<std::uint64_t> g_droppedQueuedFloats{0};
 std::atomic<std::uint64_t> g_audioBlockSequence{0};
 std::atomic<std::uint64_t> g_skippedSnapshotBlocks{0};
 std::atomic<std::uint64_t> g_iqSequence{0};
@@ -326,8 +326,8 @@ bool publish(const float *samples,
                g_iqQueuedFloatCount > maxQueuedFloats) {
             const std::size_t droppedFloats = g_iqBlocks.front().size();
             g_iqQueuedFloatCount -= droppedFloats;
-            ++g_droppedQueuedBlocks;
-            g_droppedQueuedFloats += droppedFloats;
+            g_droppedQueuedBlocks.fetch_add(1, std::memory_order_relaxed);
+            g_droppedQueuedFloats.fetch_add(droppedFloats, std::memory_order_relaxed);
             recycleBlock(std::move(g_iqBlocks.front()));
             g_iqBlocks.pop_front();
             g_iqBlockSequences.pop_front();
@@ -479,8 +479,8 @@ void clear(std::uint64_t epoch) {
     }
     g_iqBlockSequences.clear();
     g_iqQueuedFloatCount = 0;
-    g_droppedQueuedBlocks = 0;
-    g_droppedQueuedFloats = 0;
+    g_droppedQueuedBlocks.store(0, std::memory_order_relaxed);
+    g_droppedQueuedFloats.store(0, std::memory_order_relaxed);
     g_audioBlockSequence.store(0, std::memory_order_relaxed);
     g_skippedSnapshotBlocks.store(0, std::memory_order_relaxed);
     g_latestMetadata = BlockMetadata();
@@ -528,10 +528,18 @@ Stats stats() {
     result.queuedFloatCount = g_iqQueuedFloatCount;
     result.sampleRateEstimate = g_sampleRateEstimate.load(std::memory_order_relaxed);
     result.totalFloatCount = g_totalSnapshotFloatCount;
-    result.droppedQueuedBlocks = g_droppedQueuedBlocks;
-    result.droppedQueuedFloats = g_droppedQueuedFloats;
+    result.droppedQueuedBlocks = g_droppedQueuedBlocks.load(std::memory_order_relaxed);
+    result.droppedQueuedFloats = g_droppedQueuedFloats.load(std::memory_order_relaxed);
     result.skippedSnapshotBlocks =
         g_skippedSnapshotBlocks.load(std::memory_order_relaxed);
+    return result;
+}
+
+DiscontinuityStats discontinuityStats() noexcept {
+    DiscontinuityStats result;
+    result.epoch = g_iqEpoch.load(std::memory_order_relaxed);
+    result.droppedQueuedBlocks = g_droppedQueuedBlocks.load(std::memory_order_relaxed);
+    result.skippedSnapshotBlocks = g_skippedSnapshotBlocks.load(std::memory_order_relaxed);
     return result;
 }
 

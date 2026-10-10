@@ -8,18 +8,27 @@
 #include <QCheckBox>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QDoubleSpinBox>
+#include <QElapsedTimer>
+#include <QEventLoop>
+#include <QFormLayout>
 #include <QHeaderView>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMessageBox>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QScopedValueRollback>
+#include <QSpinBox>
 #include <QTabWidget>
 #include <QTableWidget>
+#include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace {
 
@@ -35,6 +44,18 @@ public:
         return leftOk && rightOk ? left < right : QTableWidgetItem::operator<(other);
     }
 };
+
+double medianValue(QVector<double> values) {
+    if (values.isEmpty()) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    std::sort(values.begin(), values.end());
+    const int middle = values.size() / 2;
+    if ((values.size() & 1) != 0) {
+        return values.at(middle);
+    }
+    return (values.at(middle - 1) + values.at(middle)) * 0.5;
+}
 
 } // namespace
 
@@ -531,9 +552,12 @@ void YourClassName::openPresetManager() {
         QPushButton *removeButton = new QPushButton(uiText(QStringLiteral("remove"), QStringLiteral("Remove")), page);
         QPushButton *sortButton = new QPushButton(
             uiText(QStringLiteral("sort_by_frequency"), QStringLiteral("Sort by frequency")), page);
+        QPushButton *wizardButton = new QPushButton(
+            uiText(QStringLiteral("calibration_wizard"), QStringLiteral("Calibration wizard...")), page);
         buttonLayout->addWidget(addButton);
         buttonLayout->addWidget(removeButton);
         buttonLayout->addWidget(sortButton);
+        buttonLayout->addWidget(wizardButton);
         buttonLayout->addStretch();
         pageLayout->addWidget(table);
         pageLayout->addWidget(interpolationHint);
@@ -558,6 +582,222 @@ void YourClassName::openPresetManager() {
             table->setSortingEnabled(true);
             table->sortItems(0, Qt::AscendingOrder);
             table->setSortingEnabled(false);
+        });
+        QObject::connect(wizardButton, &QPushButton::clicked, page,
+                         [this, page, table, calibrationEnabledCheckbox]() {
+            QDialog wizard(page);
+            wizard.setWindowTitle(uiText(QStringLiteral("calibration_wizard"),
+                                         QStringLiteral("Calibration wizard")));
+            wizard.setMinimumWidth(460);
+
+            QVBoxLayout *layout = new QVBoxLayout(&wizard);
+            QLabel *intro = new QLabel(
+                uiText(QStringLiteral("calibration_wizard_intro"),
+                       QStringLiteral("Connect a stable generator, enter its reference frequency and level, then capture several live spectrum frames.")),
+                &wizard);
+            intro->setWordWrap(true);
+            layout->addWidget(intro);
+
+            QFormLayout *form = new QFormLayout();
+            QDoubleSpinBox *frequencySpin = new QDoubleSpinBox(&wizard);
+            frequencySpin->setDecimals(6);
+            frequencySpin->setRange(0.0, PRESET_RF_EXPERIMENTAL_MAX_FREQUENCY / 1000000.0);
+            const double seedFrequency = pendingSettings.listeningFrequency > 0.0
+                                             ? pendingSettings.listeningFrequency
+                                             : pendingSettings.centerFrequency;
+            frequencySpin->setValue((std::max)(0.0, seedFrequency) / 1000000.0);
+            frequencySpin->setSuffix(QStringLiteral(" MHz"));
+
+            QDoubleSpinBox *levelSpin = new QDoubleSpinBox(&wizard);
+            levelSpin->setDecimals(2);
+            levelSpin->setRange(-200.0, 50.0);
+            levelSpin->setValue(-60.0);
+            levelSpin->setSuffix(QStringLiteral(" dBm"));
+
+            QDoubleSpinBox *spanSpin = new QDoubleSpinBox(&wizard);
+            spanSpin->setDecimals(1);
+            spanSpin->setRange(0.1, 10000.0);
+            spanSpin->setValue(20.0);
+            spanSpin->setSuffix(QStringLiteral(" kHz"));
+
+            QSpinBox *framesSpin = new QSpinBox(&wizard);
+            framesSpin->setRange(1, 64);
+            framesSpin->setValue(8);
+
+            QDoubleSpinBox *uncertaintySpin = new QDoubleSpinBox(&wizard);
+            uncertaintySpin->setDecimals(2);
+            uncertaintySpin->setRange(0.0, 100.0);
+            uncertaintySpin->setValue(1.0);
+            uncertaintySpin->setSuffix(QStringLiteral(" dB"));
+
+            QLineEdit *noteEdit = new QLineEdit(&wizard);
+            noteEdit->setPlaceholderText(uiText(QStringLiteral("calibration_wizard_note_placeholder"),
+                                                QStringLiteral("Generator, cable, gain, temperature...")));
+
+            form->addRow(uiText(QStringLiteral("calibration_reference_frequency"), QStringLiteral("Reference frequency")), frequencySpin);
+            form->addRow(uiText(QStringLiteral("calibration_reference_level"), QStringLiteral("Reference level")), levelSpin);
+            form->addRow(uiText(QStringLiteral("calibration_search_span"), QStringLiteral("Peak search span")), spanSpin);
+            form->addRow(uiText(QStringLiteral("calibration_capture_frames"), QStringLiteral("Capture frames")), framesSpin);
+            form->addRow(uiText(QStringLiteral("calibration_uncertainty_db"), QStringLiteral("Uncertainty +/- dB")), uncertaintySpin);
+            form->addRow(uiText(QStringLiteral("note"), QStringLiteral("Note")), noteEdit);
+            layout->addLayout(form);
+
+            QProgressBar *progress = new QProgressBar(&wizard);
+            progress->setRange(0, framesSpin->value());
+            progress->setValue(0);
+            layout->addWidget(progress);
+
+            QLabel *resultLabel = new QLabel(
+                uiText(QStringLiteral("calibration_wizard_ready"),
+                       QStringLiteral("Ready to capture live spectrum frames.")),
+                &wizard);
+            resultLabel->setWordWrap(true);
+            layout->addWidget(resultLabel);
+
+            QHBoxLayout *actions = new QHBoxLayout();
+            QPushButton *captureButton = new QPushButton(
+                uiText(QStringLiteral("capture"), QStringLiteral("Capture")), &wizard);
+            QPushButton *addPointButton = new QPushButton(
+                uiText(QStringLiteral("calibration_add_point"), QStringLiteral("Add calibration point")), &wizard);
+            addPointButton->setEnabled(false);
+            actions->addWidget(captureButton);
+            actions->addWidget(addPointButton);
+            actions->addStretch();
+            layout->addLayout(actions);
+
+            QDialogButtonBox *buttons = new QDialogButtonBox(QDialogButtonBox::Close, &wizard);
+            if (QPushButton *closeButton = buttons->button(QDialogButtonBox::Close)) {
+                closeButton->setText(uiText(QStringLiteral("close"), QStringLiteral("Close")));
+            }
+            layout->addWidget(buttons);
+            QObject::connect(buttons, &QDialogButtonBox::rejected, &wizard, &QDialog::reject);
+
+            struct CaptureResult {
+                bool valid = false;
+                double referenceHz = 0.0;
+                double observedHz = 0.0;
+                double observedLevelDb = 0.0;
+                double frequencyOffsetHz = 0.0;
+                double amplitudeOffsetDb = 0.0;
+            } result;
+
+            QObject::connect(framesSpin, qOverload<int>(&QSpinBox::valueChanged), progress,
+                             [progress](int count) {
+                progress->setRange(0, count);
+                progress->setValue(0);
+            });
+
+            QObject::connect(captureButton, &QPushButton::clicked, &wizard,
+                             [this, &wizard, frequencySpin, levelSpin, spanSpin, framesSpin,
+                              progress, resultLabel, captureButton, addPointButton, &result]() {
+                result = CaptureResult{};
+                addPointButton->setEnabled(false);
+                captureButton->setEnabled(false);
+                const double referenceHz = frequencySpin->value() * 1000000.0;
+                const double halfSpanHz = spanSpin->value() * 500.0;
+                const int targetFrames = framesSpin->value();
+                progress->setRange(0, targetFrames);
+                progress->setValue(0);
+
+                QVector<double> peakFrequencies;
+                QVector<double> peakLevels;
+                std::uint64_t lastCapturedFrame = spectrumCalibrationFrameSerial;
+                QEventLoop captureLoop;
+                QTimer captureTimer;
+                captureTimer.setInterval(80);
+                QElapsedTimer timeout;
+                timeout.start();
+                QObject::connect(&captureTimer, &QTimer::timeout, &captureLoop, [&]() {
+                    if (spectrumCalibrationFrameSerial != lastCapturedFrame &&
+                        spectrumFrequencyScratch.size() == spectrumMagnitudeScratch.size() &&
+                        !spectrumFrequencyScratch.empty()) {
+                        lastCapturedFrame = spectrumCalibrationFrameSerial;
+                        double peakLevel = -std::numeric_limits<double>::infinity();
+                        double peakFrequency = 0.0;
+                        for (size_t index = 0; index < spectrumFrequencyScratch.size(); ++index) {
+                            const double frequency = spectrumFrequencyScratch[index];
+                            const double level = spectrumMagnitudeScratch[index];
+                            if (!std::isfinite(frequency) || !std::isfinite(level) ||
+                                std::abs(frequency - referenceHz) > halfSpanHz) {
+                                continue;
+                            }
+                            if (level > peakLevel) {
+                                peakLevel = level;
+                                peakFrequency = frequency;
+                            }
+                        }
+                        if (std::isfinite(peakLevel)) {
+                            peakFrequencies.append(peakFrequency);
+                            peakLevels.append(peakLevel);
+                            progress->setValue(peakLevels.size());
+                        }
+                    }
+                    if (peakLevels.size() >= targetFrames || timeout.elapsed() >= 5000) {
+                        captureLoop.quit();
+                    }
+                });
+                captureTimer.start();
+                captureLoop.exec();
+                captureTimer.stop();
+                captureButton->setEnabled(true);
+
+                if (peakLevels.isEmpty()) {
+                    resultLabel->setText(uiText(
+                        QStringLiteral("calibration_wizard_no_peak"),
+                        QStringLiteral("No finite peak was found in the selected span. Start the receiver or widen the search span.")));
+                    return;
+                }
+
+                result.referenceHz = referenceHz;
+                result.observedHz = medianValue(peakFrequencies);
+                result.observedLevelDb = medianValue(peakLevels);
+                double activeTableFrequencyOffset = 0.0;
+                double activeTableAmplitudeOffset = 0.0;
+                if (calibrationTableEnabled) {
+                    const ReceiverCalibrationCorrection current = receiverCalibrationTable.correctionAt(referenceHz);
+                    if (current.valid) {
+                        activeTableFrequencyOffset = current.frequencyOffsetHz;
+                        activeTableAmplitudeOffset = current.amplitudeOffsetDb;
+                    }
+                }
+                result.frequencyOffsetHz = activeTableFrequencyOffset + referenceHz - result.observedHz;
+                result.amplitudeOffsetDb = activeTableAmplitudeOffset + levelSpin->value() - result.observedLevelDb;
+                result.valid = std::isfinite(result.frequencyOffsetHz) &&
+                               std::isfinite(result.amplitudeOffsetDb);
+                addPointButton->setEnabled(result.valid);
+                resultLabel->setText(uiText(
+                    QStringLiteral("calibration_wizard_result"),
+                    QStringLiteral("Observed: %1 MHz, %2 dB. Proposed corrections: %3 Hz, %4 dB (%5/%6 frames)."))
+                    .arg(result.observedHz / 1000000.0, 0, 'f', 6)
+                    .arg(result.observedLevelDb, 0, 'f', 2)
+                    .arg(result.frequencyOffsetHz, 0, 'f', 3)
+                    .arg(result.amplitudeOffsetDb, 0, 'f', 3)
+                    .arg(peakLevels.size())
+                    .arg(targetFrames));
+            });
+
+            QObject::connect(addPointButton, &QPushButton::clicked, &wizard,
+                             [table, calibrationEnabledCheckbox, uncertaintySpin, noteEdit,
+                              addPointButton, &result]() {
+                if (!result.valid) return;
+                const int row = table->rowCount();
+                table->insertRow(row);
+                table->setItem(row, 0, new NumericTableWidgetItem(
+                    QString::number(result.referenceHz / 1000000.0, 'f', 6)));
+                table->setItem(row, 1, new QTableWidgetItem(
+                    QString::number(result.frequencyOffsetHz, 'f', 3)));
+                table->setItem(row, 2, new QTableWidgetItem(
+                    QString::number(result.amplitudeOffsetDb, 'f', 3)));
+                table->setItem(row, 3, new QTableWidgetItem(
+                    QString::number(uncertaintySpin->value(), 'f', 2)));
+                table->setItem(row, 4, new QTableWidgetItem(noteEdit->text().trimmed()));
+                table->setCurrentCell(row, 0);
+                calibrationEnabledCheckbox->setChecked(true);
+                addPointButton->setEnabled(false);
+                result.valid = false;
+            });
+
+            wizard.exec();
         });
 
         table->setProperty("pageWidget", QVariant::fromValue(static_cast<void*>(page)));

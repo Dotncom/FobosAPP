@@ -838,6 +838,9 @@ void YourClassName::updateSpectrum() {
     const bool spectrumWorkerAllowed =
         scanVisualSource == QStringLiteral("none") &&
         !networkSpectrumFrameMetadataValid;
+    const bool batchWaterfallRows =
+        spectrumSettings.fftLength < 8388608 &&
+        !spectrumSettings.simplifiedAudioChannelizer;
 
     if (spectrumWorkerAllowed) {
         if (!spectrumFftWorker) {
@@ -846,7 +849,7 @@ void YourClassName::updateSpectrum() {
                                        fftBackendPreference,
                                        updateTimer ? updateTimer->interval() : 0,
                                        spectrumFftOverlapPercent,
-                                       spectrumSettings.fftLength < 8388608);
+                                       batchWaterfallRows);
             finishTrace("fft_worker_start", spectrumFrequencies, spectrumMagnitudes);
             return;
         }
@@ -857,7 +860,7 @@ void YourClassName::updateSpectrum() {
                                        fftBackendPreference,
                                        updateTimer ? updateTimer->interval() : 0,
                                        spectrumFftOverlapPercent,
-                                       spectrumSettings.fftLength < 8388608);
+                                       batchWaterfallRows);
             finishTrace("fft_worker_pending", spectrumFrequencies, spectrumMagnitudes);
             return;
         }
@@ -877,7 +880,7 @@ void YourClassName::updateSpectrum() {
                                        fftBackendPreference,
                                        updateTimer ? updateTimer->interval() : 0,
                                        spectrumFftOverlapPercent,
-                                       spectrumSettings.fftLength < 8388608);
+                                       batchWaterfallRows);
             finishTrace("fft_worker_exception", spectrumFrequencies, spectrumMagnitudes);
             return;
         }
@@ -887,7 +890,7 @@ void YourClassName::updateSpectrum() {
                                        fftBackendPreference,
                                        updateTimer ? updateTimer->interval() : 0,
                                        spectrumFftOverlapPercent,
-                                       spectrumSettings.fftLength < 8388608);
+                                       batchWaterfallRows);
             finishTrace(frame.valid ? "fft_worker_stale" : "fft_worker_no_data",
                         spectrumFrequencies,
                         spectrumMagnitudes);
@@ -904,7 +907,7 @@ void YourClassName::updateSpectrum() {
                                    fftBackendPreference,
                                    updateTimer ? updateTimer->interval() : 0,
                                    spectrumFftOverlapPercent,
-                                   spectrumSettings.fftLength < 8388608);
+                                   batchWaterfallRows);
     } else {
         try {
             fftResult->setBackendPreference(fftBackendPreference);
@@ -949,19 +952,7 @@ void YourClassName::updateSpectrum() {
         spectrumAuxiliaryUiTimer.restart();
         refreshAuxiliaryUi = true;
     }
-    const bool continuousScienceAnalysis =
-        spectrumScienceMaxHoldEnabled ||
-        spectrumScienceMinHoldEnabled ||
-        spectrumScienceAverageEnabled ||
-        spectrumPercentile50Enabled ||
-        spectrumPercentile90Enabled ||
-        spectrumPercentile99Enabled ||
-        spectrumDetectorMode != SPECTRUM_DETECTOR_SAMPLE ||
-        spectrumVbwHz > 0.0 ||
-        spectrumAverageFrameCount > 0 ||
-        (researchAnalysisDialog && researchAnalysisDialog->isVisible()) ||
-        (zeroSpanDialog && zeroSpanDialog->isVisible());
-    const bool refreshAnalysis = refreshAuxiliaryUi || continuousScienceAnalysis;
+    const bool refreshAnalysis = spectrumScienceAnalysisRequired();
 
     // Gate successive FFT snapshots by the exact amount of newly published IQ.
     // This makes 0/25/50/75% overlap deterministic without copying or queuing
@@ -986,6 +977,7 @@ void YourClassName::updateSpectrum() {
         lastSpectrumFftEndFloats = frameEnd;
         lastSpectrumFftLength = spectrumSettings.fftLength;
     }
+    ++spectrumCalibrationFrameSerial;
 
     const bool profileDisplayFrame = verboseLogging &&
                                      spectrumSettings.fftLength >= 524288;
@@ -1223,13 +1215,13 @@ void YourClassName::updateSpectrum() {
     const std::vector<float> &fpvHunterMagnitudes = *fpvHunterMagnitudesPtr;
     const std::vector<float> &digitalVideoHunterFrequencies = *digitalVideoHunterFrequenciesPtr;
     const std::vector<float> &digitalVideoHunterMagnitudes = *digitalVideoHunterMagnitudesPtr;
-    if (refreshAuxiliaryUi || dmrHunterSettings.enabled) {
+    if (dmrHunterSettings.enabled) {
         updateDmrHunter(dmrHunterFrequencies, dmrHunterMagnitudes);
     }
-    if (refreshAuxiliaryUi || fpvHunterSettings.enabled) {
+    if (fpvHunterSettings.enabled) {
         updateFpvHunter(fpvHunterFrequencies, fpvHunterMagnitudes);
     }
-    if (refreshAuxiliaryUi || digitalVideoHunterSettings.enabled) {
+    if (digitalVideoHunterSettings.enabled) {
         updateDigitalVideoHunter(digitalVideoHunterFrequencies, digitalVideoHunterMagnitudes);
     }
 
@@ -1414,7 +1406,17 @@ void YourClassName::updateSpectrum() {
                                     displayMaxFrequency,
                                     displayTargetBins,
                                     displayLevelMin,
+                                    static_cast<SpectrumDisplayReduction>(spectrumDisplayReductionMode),
                                     preparedDisplayFrame);
+        if (dspFlowPanel && dspFlowPanel->shouldUpdateWorkspaceSpectrum()) {
+            dspFlowPanel->updateWorkspaceSpectrum(preparedDisplayFrame.frequencies,
+                                                  preparedDisplayFrame.levels,
+                                                  displayCenterFrequency,
+                                                  pendingSettings.listeningFrequency,
+                                                  spectrumSettings.sampleRate,
+                                                  pendingSettings.bandwidth,
+                                                  pendingSettings.modulationType);
+        }
         if (multiVfoWidget) {
             multiVfoWidget->setReceiverContext(displayCenterFrequency,
                                                spectrumSettings.sampleRate,
@@ -1423,7 +1425,7 @@ void YourClassName::updateSpectrum() {
                                                pendingSettings.modulationType);
             multiVfoWidget->updateSpectrum(displayFrequencies,
                                            visualMagnitudes);
-            if (dspFlowPanel && dspFlowPanel->isVisible()) {
+            if (dspFlowPanel && dspFlowPanel->shouldUpdateMultiVfoSpectrum()) {
                 dspFlowPanel->updateMultiVfoSpectrum(multiVfoWidget->configurationJson(),
                                                      displayFrequencies,
                                                      visualMagnitudes);
@@ -1482,6 +1484,22 @@ void YourClassName::updateSpectrum() {
                                                  spectrumSettings.sampleRate,
                                                  spectrumSettings.fftLength,
                                                  spectrumSettings.fftWindowType);
+            const IqBuffer::DiscontinuityStats discontinuity = IqBuffer::discontinuityStats();
+            if (discontinuity.epoch != lastIqDiscontinuityEpoch) {
+                lastIqDiscontinuityEpoch = discontinuity.epoch;
+                lastIqDroppedQueuedBlocks = discontinuity.droppedQueuedBlocks;
+                lastIqSkippedSnapshotBlocks = discontinuity.skippedSnapshotBlocks;
+            } else {
+                if (discontinuity.droppedQueuedBlocks > lastIqDroppedQueuedBlocks) {
+                    waterfallWidget->queueDiscontinuityRow(
+                        MyWaterfallWidget::DiscontinuityKind::ProcessingQueueDrop);
+                } else if (discontinuity.skippedSnapshotBlocks > lastIqSkippedSnapshotBlocks) {
+                    waterfallWidget->queueDiscontinuityRow(
+                        MyWaterfallWidget::DiscontinuityKind::VisualSnapshotSkip);
+                }
+                lastIqDroppedQueuedBlocks = discontinuity.droppedQueuedBlocks;
+                lastIqSkippedSnapshotBlocks = discontinuity.skippedSnapshotBlocks;
+            }
             // FFT production is independent from the OpenGL repaint cadence.
             // Feed every completed intermediate row into the widget's existing
             // bounded texture queue, then use the newest row for the graph and
@@ -1525,6 +1543,7 @@ void YourClassName::updateSpectrum() {
                                             displayMaxFrequency,
                                             displayTargetBins,
                                             displayLevelMin,
+                                            static_cast<SpectrumDisplayReduction>(spectrumDisplayReductionMode),
                                             historyDisplayFrame);
                 if (historyDisplayFrame.levels.empty()) {
                     continue;

@@ -53,7 +53,8 @@ private:
     void addChannel(double frequencyHz = 0.0,
                     double bandwidthHz = 12500.0,
                     int modulationType = 1,
-                    const QString &name = QString());
+                    const QString &name = QString(),
+                    const QString &channelId = QString());
     void removeSelectedChannel();
     void moveSelectedChannel(int direction);
     void updateHeaders();
@@ -65,6 +66,7 @@ private:
     void openMosaic();
     void openMosaicLevelEditor(int row);
     void rebuildMosaic();
+    void updateMosaicConfiguration();
 
     QCheckBox *enabledCheckBox = nullptr;
     QLabel *engineLabel = nullptr;

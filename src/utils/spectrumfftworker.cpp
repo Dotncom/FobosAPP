@@ -12,6 +12,12 @@
 #include <new>
 #include <utility>
 
+#ifdef __linux__
+#include <sys/resource.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
+
 namespace {
 std::size_t maxRowsPerFftBatch(int fftLength) {
     if (fftLength <= 32768) {
@@ -98,6 +104,11 @@ void SpectrumFftWorker::resetHfNoiseCancelState() {
 }
 
 void SpectrumFftWorker::run() {
+#ifdef __linux__
+    // Keep live audio responsive on small ARM systems. Linux applies nice
+    // values per thread, so only the background FFT worker is deprioritized.
+    setpriority(PRIO_PROCESS, static_cast<id_t>(syscall(SYS_gettid)), 5);
+#endif
     FFTResult fft(true);
     QElapsedTimer profileLogTimer;
     profileLogTimer.start();

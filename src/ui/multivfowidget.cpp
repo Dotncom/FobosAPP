@@ -6,6 +6,7 @@
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QHeaderView>
+#include <QHash>
 #include <QDialog>
 #include <QGridLayout>
 #include <QImage>
@@ -19,6 +20,7 @@
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QTableWidget>
+#include <QUuid>
 #include <QVBoxLayout>
 #include <QScrollArea>
 #include <QPainter>
@@ -35,6 +37,7 @@ constexpr int kMaximumVfos = 16;
 constexpr int kUiUpdateIntervalMs = 100;
 constexpr int kMinimumDbfsRole = Qt::UserRole + 1;
 constexpr int kMaximumDbfsRole = Qt::UserRole + 2;
+constexpr int kChannelIdRole = Qt::UserRole + 3;
 
 struct ModulationChoice {
     const char *name;
@@ -73,13 +76,26 @@ public:
         waterfall_.fill(QColor(4, 7, 12));
     }
 
-    void setChannel(int row, const QString &name, double centerHz, double bandwidthHz) {
-        row_ = row; name_ = name; centerHz_ = centerHz; bandwidthHz_ = bandwidthHz;
+    void setChannel(const QString &channelId, int row, const QString &name,
+                    double centerHz, double bandwidthHz) {
+        const bool mappingChanged = channelId_ != channelId ||
+                                    !qFuzzyCompare(centerHz_ + 1.0, centerHz + 1.0) ||
+                                    !qFuzzyCompare(bandwidthHz_ + 1.0, bandwidthHz + 1.0);
+        channelId_ = channelId; row_ = row; name_ = name;
+        centerHz_ = centerHz; bandwidthHz_ = bandwidthHz;
+        if (mappingChanged && mode_ != 0) waterfall_.fill(QColor(4, 7, 12));
+        update();
     }
     int channelRow() const { return row_; }
+    QString channelId() const { return channelId_; }
+    int mode() const { return mode_; }
     void setDbfsRange(float minimumDbfs, float maximumDbfs) {
-        minimumDbfs_ = std::clamp(minimumDbfs, -200.0f, 19.0f);
-        maximumDbfs_ = std::clamp(maximumDbfs, minimumDbfs_ + 1.0f, 20.0f);
+        minimumDbfs = std::clamp(minimumDbfs, -200.0f, 19.0f);
+        maximumDbfs = std::clamp(maximumDbfs, minimumDbfs + 1.0f, 20.0f);
+        if (qFuzzyCompare(minimumDbfs_ + 201.0f, minimumDbfs + 201.0f) &&
+            qFuzzyCompare(maximumDbfs_ + 201.0f, maximumDbfs + 201.0f)) return;
+        minimumDbfs_ = minimumDbfs;
+        maximumDbfs_ = maximumDbfs;
         waterfall_.fill(QColor(4, 7, 12));
         update();
     }
@@ -180,6 +196,7 @@ protected:
 private:
     int mode_ = 2;
     int row_ = -1;
+    QString channelId_;
     QString name_;
     double centerHz_ = 0.0;
     double bandwidthHz_ = 0.0;
@@ -323,7 +340,8 @@ void MultiVfoWidget::setReceiverContext(double centerFrequencyHz,
 void MultiVfoWidget::addChannel(double frequencyHz,
                                 double bandwidthHz,
                                 int modulationType,
-                                const QString &name) {
+                                const QString &name,
+                                const QString &channelId) {
     if (table->rowCount() >= kMaximumVfos) {
         return;
     }
@@ -343,6 +361,17 @@ void MultiVfoWidget::addChannel(double frequencyHz,
     auto *nameItem = new QTableWidgetItem(name.isEmpty()
                                               ? QStringLiteral("VFO %1").arg(row + 1)
                                               : name);
+    QString effectiveChannelId = channelId.trimmed();
+    bool duplicateId = effectiveChannelId.isEmpty();
+    for (int candidate = 0; !duplicateId && candidate < row; ++candidate) {
+        const QTableWidgetItem *candidateName = table->item(candidate, NameColumn);
+        duplicateId = candidateName &&
+                      candidateName->data(kChannelIdRole).toString() == effectiveChannelId;
+    }
+    if (duplicateId) {
+        effectiveChannelId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    }
+    nameItem->setData(kChannelIdRole, effectiveChannelId);
     table->setItem(row, NameColumn, nameItem);
 
     auto *frequency = new QDoubleSpinBox(table);
@@ -477,7 +506,7 @@ void MultiVfoWidget::updateStatus() {
 
 void MultiVfoWidget::emitConfigurationChanged() {
     if (!loading) {
-        if (mosaicDialog) rebuildMosaic();
+        if (mosaicDialog) updateMosaicConfiguration();
         emit configurationChanged(configurationJson());
     }
 }
@@ -591,7 +620,7 @@ void MultiVfoWidget::updateSpectrum(const std::vector<float> &frequencies,
 
 QString MultiVfoWidget::configurationJson() const {
     QJsonObject root;
-    root.insert(QStringLiteral("version"), 1);
+    root.insert(QStringLiteral("version"), 2);
     root.insert(QStringLiteral("enabled"), enabledCheckBox->isChecked());
     root.insert(QStringLiteral("viewMode"), viewModeCombo->currentData().toInt());
     QJsonArray channels;
@@ -609,6 +638,7 @@ QString MultiVfoWidget::configurationJson() const {
         QJsonObject channel;
         channel.insert(QStringLiteral("enabled"), enabled->isChecked());
         channel.insert(QStringLiteral("monitor"), monitor->isChecked());
+        channel.insert(QStringLiteral("id"), name->data(kChannelIdRole).toString());
         channel.insert(QStringLiteral("name"), name->text());
         channel.insert(QStringLiteral("frequencyHz"), frequency->value() * 1.0e6);
         channel.insert(QStringLiteral("bandwidthHz"), bandwidth->value() * 1000.0);
@@ -646,7 +676,8 @@ bool MultiVfoWidget::setConfigurationJson(const QString &json) {
         addChannel(channel.value(QStringLiteral("frequencyHz")).toDouble(receiverListeningHz),
                    channel.value(QStringLiteral("bandwidthHz")).toDouble(12500.0),
                    channel.value(QStringLiteral("modulation")).toInt(MOD_NFM),
-                   channel.value(QStringLiteral("name")).toString());
+                   channel.value(QStringLiteral("name")).toString(),
+                   channel.value(QStringLiteral("id")).toString());
         const int row = table->rowCount() - 1;
         checkBoxAt(table, row, EnabledColumn)->setChecked(channel.value(QStringLiteral("enabled")).toBool(true));
         doubleSpinAt(table, row, SquelchColumn)->setValue(channel.value(QStringLiteral("squelchDb")).toDouble(-95.0));
@@ -665,6 +696,7 @@ bool MultiVfoWidget::setConfigurationJson(const QString &json) {
                           std::numeric_limits<float>::quiet_NaN());
     loading = false;
     updateStatus();
+    if (mosaicDialog) updateMosaicConfiguration();
     return true;
 }
 
@@ -809,7 +841,8 @@ void MultiVfoWidget::rebuildMosaic() {
         preview->setToolTip(ukrainian
             ? QStringLiteral("Подвійний клік: налаштувати Min/Max dBFS")
             : QStringLiteral("Double-click: adjust Min/Max dBFS"));
-        preview->setChannel(row,
+        preview->setChannel(name->data(kChannelIdRole).toString(),
+                            row,
                             name->text(),
                             frequency->value() * 1.0e6,
                             bandwidth->value() * 1000.0);
@@ -832,6 +865,91 @@ void MultiVfoWidget::rebuildMosaic() {
     }
 }
 
+void MultiVfoWidget::updateMosaicConfiguration() {
+    if (!mosaicLayout) return;
+    const int mode = viewModeCombo->currentData().toInt();
+
+    struct ChannelView {
+        int row = -1;
+        QString id;
+    };
+    std::vector<ChannelView> enabledChannels;
+    enabledChannels.reserve(static_cast<std::size_t>(table->rowCount()));
+    for (int row = 0; row < table->rowCount(); ++row) {
+        QCheckBox *enabled = checkBoxAt(table, row, EnabledColumn);
+        QTableWidgetItem *name = table->item(row, NameColumn);
+        if (enabled && name && enabled->isChecked()) {
+            enabledChannels.push_back({row, name->data(kChannelIdRole).toString()});
+        }
+    }
+
+    QHash<QString, MultiVfoPreview *> reusable;
+    bool incompatibleMode = false;
+    for (QWidget *widget : mosaicViews) {
+        if (auto *preview = dynamic_cast<MultiVfoPreview *>(widget)) {
+            incompatibleMode = incompatibleMode || preview->mode() != mode || preview->channelId().isEmpty();
+            if (!preview->channelId().isEmpty()) reusable.insert(preview->channelId(), preview);
+        }
+    }
+    if (incompatibleMode) {
+        rebuildMosaic();
+        return;
+    }
+
+    while (QLayoutItem *item = mosaicLayout->takeAt(0)) delete item;
+    std::vector<QWidget *> updatedViews;
+    updatedViews.reserve((std::max)(std::size_t(1), enabledChannels.size()));
+
+    int viewIndex = 0;
+    for (const ChannelView &channel : enabledChannels) {
+        QTableWidgetItem *name = table->item(channel.row, NameColumn);
+        QDoubleSpinBox *frequency = doubleSpinAt(table, channel.row, FrequencyColumn);
+        QDoubleSpinBox *bandwidth = doubleSpinAt(table, channel.row, BandwidthColumn);
+        if (!name || !frequency || !bandwidth) continue;
+
+        MultiVfoPreview *preview = reusable.take(channel.id);
+        if (!preview) {
+            preview = new MultiVfoPreview(
+                mode,
+                [this](int channelRow) { openMosaicLevelEditor(channelRow); },
+                mosaicDialog);
+            preview->setToolTip(ukrainian
+                ? QStringLiteral("Подвійний клік: налаштувати Min/Max dBFS")
+                : QStringLiteral("Double-click: adjust Min/Max dBFS"));
+        }
+        preview->setChannel(channel.id, channel.row, name->text(),
+                            frequency->value() * 1.0e6, bandwidth->value() * 1000.0);
+        preview->setDbfsRange(
+            name->data(kMinimumDbfsRole).isValid()
+                ? static_cast<float>(name->data(kMinimumDbfsRole).toInt())
+                : -140.0f,
+            name->data(kMaximumDbfsRole).isValid()
+                ? static_cast<float>(name->data(kMaximumDbfsRole).toInt())
+                : -40.0f);
+        mosaicLayout->addWidget(preview, viewIndex / 2, viewIndex % 2);
+        updatedViews.push_back(preview);
+        ++viewIndex;
+    }
+
+    for (MultiVfoPreview *removed : reusable) {
+        removed->hide();
+        removed->deleteLater();
+    }
+    for (QWidget *oldWidget : mosaicViews) {
+        if (!dynamic_cast<MultiVfoPreview *>(oldWidget)) {
+            oldWidget->hide();
+            oldWidget->deleteLater();
+        }
+    }
+    if (updatedViews.empty()) {
+        auto *empty = new QLabel(ukrainian ? QStringLiteral("Немає увімкнених VFO")
+                                           : QStringLiteral("No enabled VFOs"), mosaicDialog);
+        empty->setAlignment(Qt::AlignCenter);
+        mosaicLayout->addWidget(empty, 0, 0);
+        updatedViews.push_back(empty);
+    }
+    mosaicViews = std::move(updatedViews);
+}
 int MultiVfoWidget::addSelection(double lowFrequencyHz, double highFrequencyHz) {
     if (!std::isfinite(lowFrequencyHz) || !std::isfinite(highFrequencyHz) ||
         table->rowCount() >= kMaximumVfos) return -1;

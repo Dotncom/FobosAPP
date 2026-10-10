@@ -448,6 +448,13 @@ bool FFTResult::storeFFTResults(const RadioSettings &settings,
     const double sampleRate = settings.sampleRate;
     double centerFrequency = settings.centerFrequency;
     const int inputMode = settings.inputMode;
+    auto processBins = [&](int count, auto function) {
+        if (settings.simplifiedAudioChannelizer) {
+            function(0, count);
+        } else {
+            parallelForBins(count, function);
+        }
+    };
 
     if (currentFftLength <= 0 || sampleRate <= 0.0) {
         outMagnitudes.clear();
@@ -557,7 +564,7 @@ bool FFTResult::storeFFTResults(const RadioSettings &settings,
             hf2Positive[k] = magnitudeDb(k);
         }
 
-        parallelForBins(currentFftLength, [&](int begin, int end) {
+        processBins(currentFftLength, [&](int begin, int end) {
             for (int i = begin; i < end; ++i) {
                 if (i < halfLength) {
                     shiftedMagnitude[i] = hf1Positive[halfLength - i];
@@ -665,7 +672,7 @@ bool FFTResult::storeFFTResults(const RadioSettings &settings,
             outReferenceMagnitudes->assign(currentFftLength, FFT_MAGNITUDE_FLOOR_DB);
         }
 
-        parallelForBins(currentFftLength, [&](int begin, int end) {
+        processBins(currentFftLength, [&](int begin, int end) {
             for (int i = begin; i < end; ++i) {
                 const std::complex<float> adjustedRef =
                     hfNoiseCancelReferenceCoefficient(settings, binFrequency(i)) * refSpectrum[i];
@@ -700,7 +707,7 @@ bool FFTResult::storeFFTResults(const RadioSettings &settings,
     if (profileFrame) {
         profileTimer.restart();
     }
-    parallelForBins(samplesToCopy, [&](int begin, int end) {
+    processBins(samplesToCopy, [&](int begin, int end) {
         for (int i = begin; i < end; ++i) {
             const int sourceIndex = sourceStart + i;
             const float coefficient = windowCoefficient(i);
@@ -734,7 +741,7 @@ bool FFTResult::storeFFTResults(const RadioSettings &settings,
     if (profileFrame) {
         profileTimer.restart();
     }
-    parallelForBins(currentFftLength, [&](int begin, int end) {
+    processBins(currentFftLength, [&](int begin, int end) {
         for (int i = begin; i < end; ++i) {
             outMagnitudes[i] = magnitudeDb(i);
             outFrequencies[i] =

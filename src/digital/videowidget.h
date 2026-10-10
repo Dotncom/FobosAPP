@@ -9,6 +9,7 @@ class VideoWidget : public QWidget {
 
 public:
     explicit VideoWidget(QWidget *parent = nullptr);
+    const QImage &frame() const;
 
 public slots:
     void setFrame(const QImage &frame);

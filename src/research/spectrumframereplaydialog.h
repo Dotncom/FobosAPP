@@ -8,6 +8,7 @@
 #include <QComboBox>
 #include <QImage>
 #include <QLabel>
+#include <QPoint>
 #include <QElapsedTimer>
 #include <QPushButton>
 #include <QSlider>
@@ -26,6 +27,7 @@ class FrequencyControl;
 class QResizeEvent;
 class QScrollArea;
 class QShowEvent;
+class QToolButton;
 class ScaleWidget;
 class Waterfall3DView;
 
@@ -105,6 +107,7 @@ private:
     QSlider *timelineSlider = nullptr;
     QPushButton *openButton = nullptr;
     QPushButton *playButton = nullptr;
+    QToolButton *waterfallPauseButton = nullptr;
     QCheckBox *replayAudioCheckbox = nullptr;
     QComboBox *speedCombo = nullptr;
     QComboBox *replayIqSourceCombo = nullptr;
@@ -117,6 +120,7 @@ private:
     QCheckBox *waterfall3DSpectrumSliceCaptureCheckbox = nullptr;
     QCheckBox *waterfall3DSpectrumSliceCaptureFixedCheckbox = nullptr;
     QCheckBox *waterfall3DVncSliceInputCheckbox = nullptr;
+    QCheckBox *waterfallAreaRulerCheckbox = nullptr;
     QSlider *zoomSlider = nullptr;
     QSlider *rowHeightSlider = nullptr;
     QSlider *contrastSlider = nullptr;
@@ -163,6 +167,10 @@ private:
     bool replay3DSpectrumSliceCapture = false;
     bool replay3DSpectrumSliceCaptureFixed = false;
     bool replay3DVncSliceInput = false;
+    bool replayAreaRulerEnabled = false;
+    bool replayAreaRulerDragging = false;
+    QPoint replayAreaRulerStart;
+    QPoint replayAreaRulerEnd;
     int replay3DWindowStart = -1;
     int replay3DWindowEnd = -1;
     float replayContrast = 10.0f;
@@ -183,6 +191,7 @@ private:
     bool localIqPlaybackActive = false;
     bool syncingHorizontalScroll = false;
     bool deferredRenderQueued = false;
+    bool replayWaterfallPaused = false;
 };
 
 #endif // SPECTRUMFRAMEREPLAYDIALOG_H
